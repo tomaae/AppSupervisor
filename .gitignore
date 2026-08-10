@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+artifacts/
+.vs/
+TestResults/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.agents/
+.codex/
+.sentry-native/
+AppSupervisor/config.json
+AppSupervisor/config.json.old

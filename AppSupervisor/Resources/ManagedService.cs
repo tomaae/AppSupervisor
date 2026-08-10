@@ -1,0 +1,479 @@
+using AppSupervisor.Core;
+using AppSupervisor.Notifications;
+using AppSupervisor.ServiceControl;
+
+namespace AppSupervisor.Resources;
+
+/// <summary>
+/// Supervises one Windows service by internal service name using the shared supervisor-profile tick.
+/// </summary>
+public sealed class ManagedService : IManagedResource
+{
+    private const int OperationTimeoutSeconds = 30;
+
+    private readonly TimeSpan _restartTimeout;
+    private readonly Func<string, IWindowsServiceController> _controllerFactory;
+
+    private IWindowsServiceController? _controller;
+    private DateTime? _missingSince;
+    private DateTime? _pendingOperationSince;
+    private DateTime? _stopStartedUtc;
+    private bool _available;
+    private bool _disposed;
+    private bool _startAfterStop;
+    private bool _stopCommandSent;
+    private bool _stopPending;
+    private bool _statusErrorReported;
+
+    /// <summary>
+    /// Creates a managed service that will connect to the native Service Control Manager during initialization.
+    /// </summary>
+    /// <param name="config">The service identity and restart behavior.</param>
+    /// <param name="restartTimeout">How long an unexpectedly stopped service may remain stopped before restart.</param>
+    public ManagedService(
+        ManagedServiceConfig config,
+        TimeSpan restartTimeout)
+        : this(
+            config,
+            restartTimeout,
+            serviceName => new WindowsServiceController(serviceName))
+    {
+    }
+
+    /// <summary>
+    /// Creates a managed service with an injectable controller factory for isolated lifecycle testing.
+    /// </summary>
+    /// <param name="config">The service identity and restart behavior.</param>
+    /// <param name="restartTimeout">How long an unexpectedly stopped service may remain stopped before restart.</param>
+    /// <param name="controllerFactory">Creates the platform-specific controller for the configured service.</param>
+    internal ManagedService(
+        ManagedServiceConfig config,
+        TimeSpan restartTimeout,
+        Func<string, IWindowsServiceController> controllerFactory)
+    {
+        Config = config;
+        _restartTimeout = restartTimeout;
+        _controllerFactory = controllerFactory;
+    }
+
+    /// <summary>Occurs when the service cannot complete a requested lifecycle operation.</summary>
+    public event Action<IManagedResource, string>? ErrorOccurred;
+
+    /// <summary>Gets the service identity, recovery, and notification settings.</summary>
+    public ManagedServiceConfig Config { get; }
+
+    /// <summary>Gets the internal Windows service name used in notifications.</summary>
+    public string DisplayName => Config.ServiceName;
+
+    /// <summary>
+    /// Gets the presentation targets configured specifically for this helper service.
+    /// </summary>
+    public IReadOnlyList<NotificationTarget> NotificationTargets => Config.Notifications.Target;
+
+    /// <summary>
+    /// Opens the service with all required rights and enforces Manual startup once for this runtime instance.
+    /// </summary>
+    public void Initialize()
+    {
+        if (_disposed)
+            return;
+
+        _controller?.Dispose();
+        _controller = null;
+        _available = false;
+
+        try
+        {
+            _controller = _controllerFactory(Config.ServiceName);
+            _controller.EnsureManualStartAndRequiredAccess();
+            _available = true;
+            _statusErrorReported = false;
+        }
+        catch (Exception ex)
+        {
+            _controller?.Dispose();
+            _controller = null;
+            ReportError(
+                $"Service initialization failed. AppSupervisor could not verify start/stop permissions " +
+                $"or enforce Manual startup. {ex.Message}"
+            );
+        }
+    }
+
+    /// <summary>
+    /// Ensures the service is running when its supervisor profile becomes active.
+    /// </summary>
+    public void Activate()
+    {
+        if (!_available || _disposed)
+            return;
+
+        _missingSince = null;
+
+        if (_stopPending)
+        {
+            _startAfterStop = true;
+            return;
+        }
+
+        ServiceRuntimeState? state = TryGetState();
+
+        if (state is null)
+            return;
+
+        switch (state.Value)
+        {
+            case ServiceRuntimeState.Running:
+                ClearPendingOperation();
+                break;
+
+            case ServiceRuntimeState.Stopped:
+                TryStart();
+                break;
+
+            case ServiceRuntimeState.Paused:
+                TryContinue();
+                break;
+
+            case ServiceRuntimeState.StopPending:
+                BeginObservedStop(restartAfterStop: true);
+                break;
+
+            case ServiceRuntimeState.StartPending:
+            case ServiceRuntimeState.ContinuePending:
+            case ServiceRuntimeState.PausePending:
+                TrackPendingOperation();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Monitors service state, waits through transient states, and restarts an unexpectedly stopped service after timeout.
+    /// </summary>
+    /// <returns><see cref="ManagedResourceUpdate.Restarted"/> when this cycle sends a successful replacement start request.</returns>
+    public ManagedResourceUpdate Supervise()
+    {
+        if (!_available || _disposed)
+            return ManagedResourceUpdate.None;
+
+        if (_stopPending)
+            return AdvanceStop(profileActive: true);
+
+        ServiceRuntimeState? state = TryGetState();
+
+        if (state is null)
+            return ManagedResourceUpdate.None;
+
+        switch (state.Value)
+        {
+            case ServiceRuntimeState.Running:
+                _missingSince = null;
+                ClearPendingOperation();
+                return ManagedResourceUpdate.None;
+
+            case ServiceRuntimeState.Stopped:
+                ClearPendingOperation();
+                return SuperviseStoppedService();
+
+            case ServiceRuntimeState.Paused:
+                ClearPendingOperation();
+                TryContinue();
+                return ManagedResourceUpdate.None;
+
+            case ServiceRuntimeState.StopPending:
+                BeginObservedStop(restartAfterStop: Config.Restart);
+                return ManagedResourceUpdate.None;
+
+            case ServiceRuntimeState.StartPending:
+            case ServiceRuntimeState.ContinuePending:
+            case ServiceRuntimeState.PausePending:
+                CheckPendingOperationTimeout(state.Value);
+                return ManagedResourceUpdate.None;
+
+            default:
+                return ManagedResourceUpdate.None;
+        }
+    }
+
+    /// <summary>
+    /// Cancels pending restart state immediately when the monitoring trigger disappears.
+    /// </summary>
+    public void CancelPendingRecovery()
+    {
+        _missingSince = null;
+        _startAfterStop = false;
+        ClearPendingOperation();
+    }
+
+    /// <summary>
+    /// Resets restart and pending-state timing while preserving any service command already accepted by Windows.
+    /// </summary>
+    public void SuspendMonitoring()
+    {
+        _missingSince = null;
+        ClearPendingOperation();
+    }
+
+    /// <summary>
+    /// Begins a graceful Service Control Manager stop request after the profile close timeout period expires.
+    /// </summary>
+    public void Deactivate()
+    {
+        if (!_available || _disposed)
+            return;
+
+        _missingSince = null;
+        _startAfterStop = false;
+
+        ServiceRuntimeState? state = TryGetState();
+
+        if (state is null)
+            return;
+
+        if (state == ServiceRuntimeState.Stopped)
+        {
+            ClearStopState();
+            return;
+        }
+
+        _stopPending = true;
+        _stopStartedUtc = DateTime.UtcNow;
+        _stopCommandSent = state == ServiceRuntimeState.StopPending;
+
+        if (state is ServiceRuntimeState.Running or ServiceRuntimeState.Paused)
+            TrySendStop();
+    }
+
+    /// <summary>
+    /// Confirms that a requested service stop completes and reports a non-destructive timeout failure.
+    /// </summary>
+    public void SuperviseDeactivation()
+    {
+        if (!_available || _disposed || !_stopPending)
+            return;
+
+        AdvanceStop(profileActive: false);
+    }
+
+    /// <summary>
+    /// Releases the service controller and removes event subscribers without changing service state.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _controller?.Dispose();
+        _controller = null;
+        ErrorOccurred = null;
+    }
+
+    /// <summary>
+    /// Applies restart timeout behavior after the service is confirmed stopped during active supervision.
+    /// </summary>
+    /// <returns><see cref="ManagedResourceUpdate.Restarted"/> when a restart request is sent successfully.</returns>
+    private ManagedResourceUpdate SuperviseStoppedService()
+    {
+        if (!Config.Restart)
+            return ManagedResourceUpdate.None;
+
+        if (_missingSince is null)
+        {
+            _missingSince = DateTime.UtcNow;
+            return ManagedResourceUpdate.None;
+        }
+
+        if (DateTime.UtcNow - _missingSince < _restartTimeout)
+            return ManagedResourceUpdate.None;
+
+        _missingSince = DateTime.UtcNow;
+
+        return TryStart()
+            ? ManagedResourceUpdate.Restarted
+            : ManagedResourceUpdate.None;
+    }
+
+    /// <summary>
+    /// Advances a pending stop and optionally starts the service again when an active profile returned during shutdown.
+    /// </summary>
+    /// <param name="profileActive">Whether starting after the confirmed stop is currently allowed.</param>
+    /// <returns><see cref="ManagedResourceUpdate.Restarted"/> when a replacement start request is sent.</returns>
+    private ManagedResourceUpdate AdvanceStop(bool profileActive)
+    {
+        ServiceRuntimeState? state = TryGetState();
+
+        if (state is null)
+            return ManagedResourceUpdate.None;
+
+        if (state == ServiceRuntimeState.Stopped)
+        {
+            bool shouldStart = profileActive && _startAfterStop;
+            ClearStopState();
+
+            return shouldStart && TryStart()
+                ? ManagedResourceUpdate.Restarted
+                : ManagedResourceUpdate.None;
+        }
+
+        if (!_stopCommandSent &&
+            state is ServiceRuntimeState.Running or ServiceRuntimeState.Paused)
+        {
+            TrySendStop();
+        }
+
+        if (_stopStartedUtc is not null &&
+            DateTime.UtcNow - _stopStartedUtc >= TimeSpan.FromSeconds(OperationTimeoutSeconds))
+        {
+            ReportError(
+                $"Could not stop service '{Config.ServiceName}' within {OperationTimeoutSeconds} seconds. " +
+                "No process termination was attempted."
+            );
+            ClearStopState();
+        }
+
+        return ManagedResourceUpdate.None;
+    }
+
+    /// <summary>
+    /// Records a stop already initiated outside AppSupervisor and waits to restart only if the profile remains active.
+    /// </summary>
+    /// <param name="restartAfterStop">Whether to start the service after the observed stop completes.</param>
+    private void BeginObservedStop(bool restartAfterStop)
+    {
+        _stopPending = true;
+        _stopCommandSent = true;
+        _startAfterStop = restartAfterStop;
+        _stopStartedUtc ??= DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Sends a service start request and converts any failure into a supervision error.
+    /// </summary>
+    /// <returns><see langword="true"/> when Windows accepts the start request.</returns>
+    private bool TryStart()
+    {
+        try
+        {
+            _controller!.Start();
+            _missingSince = null;
+            _pendingOperationSince = DateTime.UtcNow;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ReportError($"Could not start service '{Config.ServiceName}'. {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Sends a service stop request and converts any failure into a supervision error.
+    /// </summary>
+    private void TrySendStop()
+    {
+        try
+        {
+            _controller!.Stop();
+            _stopCommandSent = true;
+        }
+        catch (Exception ex)
+        {
+            ReportError($"Could not stop service '{Config.ServiceName}'. {ex.Message}");
+            ClearStopState();
+        }
+    }
+
+    /// <summary>
+    /// Sends Continue to a paused service and reports services that reject continuation.
+    /// </summary>
+    private void TryContinue()
+    {
+        try
+        {
+            _controller!.Continue();
+            _pendingOperationSince = DateTime.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            ReportError($"Could not continue paused service '{Config.ServiceName}'. {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Reads service state while suppressing repeated identical access failures on every supervisor tick.
+    /// </summary>
+    /// <returns>The current state, or <see langword="null"/> when querying fails.</returns>
+    private ServiceRuntimeState? TryGetState()
+    {
+        try
+        {
+            ServiceRuntimeState state = _controller!.GetState();
+            _statusErrorReported = false;
+            return state;
+        }
+        catch (Exception ex)
+        {
+            if (!_statusErrorReported)
+            {
+                _statusErrorReported = true;
+                ReportError($"Could not query service '{Config.ServiceName}'. {ex.Message}");
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Starts tracking how long Windows remains in a transitional service state.
+    /// </summary>
+    private void TrackPendingOperation()
+    {
+        _pendingOperationSince ??= DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Reports a service that remains indefinitely in a pending state.
+    /// </summary>
+    /// <param name="state">The transitional state currently reported by Windows.</param>
+    private void CheckPendingOperationTimeout(ServiceRuntimeState state)
+    {
+        TrackPendingOperation();
+
+        if (DateTime.UtcNow - _pendingOperationSince < TimeSpan.FromSeconds(OperationTimeoutSeconds))
+            return;
+
+        ReportError(
+            $"Service '{Config.ServiceName}' remained in {state} for more than {OperationTimeoutSeconds} seconds."
+        );
+        _pendingOperationSince = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Clears transitional start, continue, or pause timing state.
+    /// </summary>
+    private void ClearPendingOperation()
+    {
+        _pendingOperationSince = null;
+    }
+
+    /// <summary>
+    /// Clears all state associated with a completed, failed, or cancelled stop operation.
+    /// </summary>
+    private void ClearStopState()
+    {
+        _stopPending = false;
+        _stopCommandSent = false;
+        _startAfterStop = false;
+        _stopStartedUtc = null;
+    }
+
+    /// <summary>
+    /// Raises a user-visible service error without throwing from the shared timer tick.
+    /// </summary>
+    /// <param name="message">The error message forwarded to the supervisor profile.</param>
+    private void ReportError(string message)
+    {
+        ErrorOccurred?.Invoke(this, message);
+    }
+}

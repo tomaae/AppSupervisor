@@ -1,0 +1,1 @@
+global using AppSupervisor.Health;

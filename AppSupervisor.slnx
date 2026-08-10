@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="AppSupervisor/AppSupervisor.csproj" />
+  <Project Path="AppSupervisor.NotificationHost/AppSupervisor.NotificationHost.csproj" />
+  <Project Path="AppSupervisor.Tests/AppSupervisor.Tests.csproj" />
+</Solution>

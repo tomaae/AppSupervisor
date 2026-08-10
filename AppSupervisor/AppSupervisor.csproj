@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <NotificationHostFramework>net10.0-windows</NotificationHostFramework>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="VRChat.OSCQuery" Version="0.0.7" ExcludeAssets="contentFiles" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference
+      Include="..\AppSupervisor.NotificationHost\AppSupervisor.NotificationHost.csproj"
+      ReferenceOutputAssembly="false"
+      Private="false" />
+  </ItemGroup>
+  <Target
+    Name="CopyNotificationHostFiles"
+    AfterTargets="Build"
+    Condition="&apos;$(_IsPublishing)&apos; != &apos;true&apos;">
+    <ItemGroup>
+      <NotificationHostFile Include="..\AppSupervisor.NotificationHost\bin\$(Configuration)\$(NotificationHostFramework)\AppSupervisor.NotificationHost.exe" />
+      <NotificationHostFile Include="..\AppSupervisor.NotificationHost\bin\$(Configuration)\$(NotificationHostFramework)\AppSupervisor.NotificationHost.dll" />
+      <NotificationHostFile Include="..\AppSupervisor.NotificationHost\bin\$(Configuration)\$(NotificationHostFramework)\AppSupervisor.NotificationHost.deps.json" />
+      <NotificationHostFile Include="..\AppSupervisor.NotificationHost\bin\$(Configuration)\$(NotificationHostFramework)\AppSupervisor.NotificationHost.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(NotificationHostFile)"
+      DestinationFolder="$(OutDir)"
+      SkipUnchangedFiles="true" />
+  </Target>
+</Project>
