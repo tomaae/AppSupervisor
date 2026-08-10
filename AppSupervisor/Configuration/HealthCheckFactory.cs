@@ -7,6 +7,8 @@ namespace AppSupervisor.Configuration;
 /// </summary>
 public static class HealthCheckFactory
 {
+    private const string ResponsivenessCheckName = "Application responsiveness";
+
     /// <summary>Creates one runtime health check with the correct probe and automatic activation condition.</summary>
     /// <param name="config">The validated health-check configuration.</param>
     /// <returns>A fresh health-check runtime instance.</returns>
@@ -16,6 +18,34 @@ public static class HealthCheckFactory
             config,
             CreateProbe(config),
             CreateActivationCondition(config)
+        );
+    }
+
+    /// <summary>Creates the fixed, helper-level responsiveness check used by the Applications checkbox.</summary>
+    /// <param name="application">The helper whose notification targets are reused by responsiveness recovery.</param>
+    /// <returns>A conservative, independently debounced responsiveness check.</returns>
+    internal static ManagedHealthCheck CreateApplicationResponsiveness(
+        ManagedApplicationConfig application)
+    {
+        var config = new HealthCheckConfig
+        {
+            Enabled = true,
+            Name = ResponsivenessCheckName,
+            IntervalSeconds = 10,
+            TimeoutSeconds = 3,
+            FailureThreshold = 3,
+            StartupDelaySeconds = 20,
+            RestartOnFailure = true,
+            Notifications = new NotificationConfig
+            {
+                Target = [.. application.Notifications.Target]
+            }
+        };
+
+        return new ManagedHealthCheck(
+            config,
+            new ApplicationResponsivenessProbe(),
+            new AlwaysActiveCondition()
         );
     }
 

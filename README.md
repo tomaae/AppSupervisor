@@ -7,10 +7,11 @@ AppSupervisor is a lightweight, Windows-only tray application that starts, super
 
 ## Functionality summary
 
-- Runs from the Windows notification area with normal, paused, and error tray states.
+- Runs from the Windows notification area with waiting, supervising, paused, empty-configuration, and error tray states.
 - Organizes related helper applications and services into process-triggered profiles.
 - Starts profile resources when the monitored process appears and closes them after it disappears.
 - Restarts unexpectedly stopped helpers and services after a configurable timeout.
+- Optionally detects helper applications whose visible or hidden windows stop responding.
 - Manages ordinary executables, Steam applications, and Microsoft Store/MSIX applications.
 - Normalizes multiple instances of a helper by closing every instance before starting one fresh instance.
 - Uses graceful application close attempts by default; force-kill is available only when explicitly enabled.
@@ -40,6 +41,8 @@ Each profile watches one process name. When that process is present, AppSupervis
 
 When the monitored process disappears, pending recovery stops immediately. After the configured **Close timeout**, helper applications receive graceful close requests and services receive stop requests. Pausing or exiting AppSupervisor leaves external applications and services untouched.
 
+The tray icon uses a green play badge while at least one profile's monitored process is running, and a red X when no profiles are enabled. The yellow pause badge has priority over every other state when supervision is paused manually.
+
 ## Detailed functionality
 
 ### Helper applications
@@ -57,6 +60,8 @@ The Steam and Microsoft Store pickers list installed applications and fill the r
 If more than one matching helper instance is running, AppSupervisor closes every instance before starting one replacement. If graceful close attempts fail, it reports an error and leaves the process running unless **Allow force-kill after all graceful close attempts fail** is selected.
 
 Launch failures, missing paths, close failures, and minimization failures are contained and reported without terminating AppSupervisor. Pending minimize work is cancelled when the helper or profile becomes inactive, supervision is paused, or the runtime configuration is replaced.
+
+**Monitor application responsiveness** optionally probes the helper's visible and hidden windows. Three consecutive failures trigger the normal graceful all-instance restart and helper notification flow. The option is disabled by default, applies only to helper applications, and does not treat helpers without an owned window as frozen.
 
 ### Windows services
 
@@ -118,6 +123,7 @@ The left side lists helper applications in the selected profile and provides **A
 - **Arguments** are available only for direct executable launches.
 - **Restart after unexpected exit** enables ordinary process recovery while the profile remains active.
 - **Minimize windows after starting** begins a cancellable asynchronous minimize attempt after launch.
+- **Monitor application responsiveness** detects a helper whose windows stop processing Windows messages and gracefully restarts it after repeated failures. It is off by default and does not apply to the monitored profile process.
 - **Allow force-kill after all graceful close attempts fail** enables the destructive close fallback. It is intentionally off by default.
 - **Notifications** selects popup, Windows, and/or XSOverlay delivery for this helper's lifecycle events. **Test notification** exercises the same production routing and XSOverlay fallback behavior.
 

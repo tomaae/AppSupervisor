@@ -21,7 +21,7 @@ public sealed class ManagedHealthCheck : IDisposable
 
     /// <summary>Creates a health-check state machine around one probe and prerequisite condition.</summary>
     /// <param name="config">The validated check settings.</param>
-    /// <param name="probe">The network or OSCQuery probe.</param>
+    /// <param name="probe">The health signal probe.</param>
     /// <param name="activationCondition">The external prerequisite that gates the check.</param>
     public ManagedHealthCheck(
         HealthCheckConfig config,

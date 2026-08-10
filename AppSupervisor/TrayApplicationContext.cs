@@ -12,6 +12,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly Icon _appIcon;
     private readonly Icon _pausedIcon;
+    private readonly Icon _supervisingIcon;
     private readonly Icon _errorIcon;
     private readonly Form _dialogOwner;
     private readonly string _configPath;
@@ -23,6 +24,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private List<SupervisorProfile> _profiles = [];
     private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
     private bool _paused;
+    private bool _pausedManually;
     private bool _configurationError;
     private bool _runtimeError;
     private bool _hasValidConfiguration;
@@ -38,6 +40,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
             ?? (Icon)SystemIcons.Application.Clone();
         _pausedIcon = TrayIconFactory.CreatePausedIcon(_appIcon);
+        _supervisingIcon = TrayIconFactory.CreateSupervisingIcon(_appIcon);
         _errorIcon = TrayIconFactory.CreateErrorIcon(_appIcon);
 
         var contextMenu = new ContextMenuStrip();
@@ -130,6 +133,8 @@ public partial class TrayApplicationContext : ApplicationContext
                 );
             }
         }
+
+        UpdateTrayState();
     }
 
     /// <summary>
@@ -140,6 +145,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private void TogglePause(object? sender, EventArgs e)
     {
         _paused = !_paused;
+        _pausedManually = _paused;
 
         if (_paused)
         {
@@ -218,7 +224,10 @@ public partial class TrayApplicationContext : ApplicationContext
         _configurationError = true;
 
         if (!_hasValidConfiguration)
+        {
             _paused = true;
+            _pausedManually = false;
+        }
 
         UpdateTrayState();
 
@@ -365,7 +374,7 @@ public partial class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
-    /// Applies the normal, paused, configuration-error, or supervision-error icon and matching tray text.
+    /// Applies the highest-priority tray badge and text for pause, errors, configuration availability, or active supervision.
     /// </summary>
     private void UpdateTrayState()
     {
@@ -373,29 +382,40 @@ public partial class TrayApplicationContext : ApplicationContext
             ? "Resume"
             : "Pause";
 
-        if (_configurationError)
+        if (_pausedManually)
+        {
+            _trayIcon.Icon = _pausedIcon;
+            _trayIcon.Text = "AppSupervisor - Paused";
+        }
+        else if (_configurationError)
         {
             _trayIcon.Icon = _errorIcon;
-            _trayIcon.Text = _paused
-                ? "AppSupervisor - Configuration error - Paused"
-                : "AppSupervisor - Configuration error";
+            _trayIcon.Text = "AppSupervisor - Configuration error";
         }
         else if (_runtimeError || _activeHealthErrors.Count > 0)
         {
             _trayIcon.Icon = _errorIcon;
-            _trayIcon.Text = _paused
-                ? "AppSupervisor - Supervision error - Paused"
-                : "AppSupervisor - Supervision error";
+            _trayIcon.Text = "AppSupervisor - Supervision error";
+        }
+        else if (_profiles.Count == 0)
+        {
+            _trayIcon.Icon = _errorIcon;
+            _trayIcon.Text = "AppSupervisor - No enabled profiles";
         }
         else if (_paused)
         {
             _trayIcon.Icon = _pausedIcon;
             _trayIcon.Text = "AppSupervisor - Paused";
         }
+        else if (_profiles.Any(profile => profile.TriggerActive))
+        {
+            _trayIcon.Icon = _supervisingIcon;
+            _trayIcon.Text = "AppSupervisor - Supervising";
+        }
         else
         {
             _trayIcon.Icon = _appIcon;
-            _trayIcon.Text = "AppSupervisor";
+            _trayIcon.Text = "AppSupervisor - Waiting for monitored applications";
         }
     }
 
@@ -428,6 +448,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _errorIcon.Dispose();
         _pausedIcon.Dispose();
         _appIcon.Dispose();
+        _supervisingIcon.Dispose();
 
         ExitThread();
     }

@@ -3,12 +3,29 @@ using System.Runtime.InteropServices;
 namespace AppSupervisor;
 
 /// <summary>
-/// Provides the Win32 window-management functions used to close and minimize managed applications.
+/// Provides the Win32 window-management functions used to close, minimize, and probe managed applications.
 /// </summary>
 internal static class NativeMethods
 {
     public const int SW_MINIMIZE = 6;
+    public const uint WM_NULL = 0x0000;
     public const uint WM_CLOSE = 0x0010;
+    /// <summary>Identifies the shared parent used by Windows message-only windows.</summary>
+    public static readonly IntPtr HWND_MESSAGE = new(-3);
+
+    /// <summary>Selects timeout and hung-window handling for <see cref="SendMessageTimeout"/>.</summary>
+    [Flags]
+    public enum SendMessageTimeoutFlags : uint
+    {
+        /// <summary>Blocks reentrant nonqueued message processing while the probe is active.</summary>
+        Block = 0x0001,
+
+        /// <summary>Returns early when Windows already considers the destination thread hung.</summary>
+        AbortIfHung = 0x0002,
+
+        /// <summary>Reports failure when the destination window or thread exits during the probe.</summary>
+        ErrorOnExit = 0x0020
+    }
 
     /// <summary>
     /// Receives each top-level window discovered by <see cref="EnumWindows"/>.
@@ -32,10 +49,24 @@ internal static class NativeMethods
     /// <param name="lpEnumFunc">The callback invoked for each discovered window.</param>
     /// <param name="lParam">Caller-provided data passed to the callback.</param>
     /// <returns><see langword="true"/> when enumeration completes successfully.</returns>
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool EnumWindows(
         EnumWindowsProc lpEnumFunc,
         IntPtr lParam
+    );
+
+    /// <summary>Finds a child window after a previous child, including children of the message-only window parent.</summary>
+    /// <param name="parentWindow">The parent whose direct children are searched.</param>
+    /// <param name="childAfter">The previous child, or zero to begin the search.</param>
+    /// <param name="className">An optional window class name.</param>
+    /// <param name="windowName">An optional window caption.</param>
+    /// <returns>The next matching window, or zero when no further match exists.</returns>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr FindWindowEx(
+        IntPtr parentWindow,
+        IntPtr childAfter,
+        string? className,
+        string? windowName
     );
 
     /// <summary>
@@ -87,7 +118,29 @@ internal static class NativeMethods
     );
 
     /// <summary>
+    /// Sends a synchronous message with a strict timeout so an unresponsive destination cannot block AppSupervisor.
+    /// </summary>
+    /// <param name="hWnd">The destination window handle.</param>
+    /// <param name="msg">The native message identifier.</param>
+    /// <param name="wParam">Message-specific word data.</param>
+    /// <param name="lParam">Message-specific long data.</param>
+    /// <param name="flags">The timeout and hung-window behavior.</param>
+    /// <param name="timeoutMilliseconds">The maximum native wait in milliseconds.</param>
+    /// <param name="result">Receives the destination window procedure's result.</param>
+    /// <returns>A nonzero value when the destination processed the message.</returns>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        uint msg,
+        IntPtr wParam,
+        IntPtr lParam,
+        SendMessageTimeoutFlags flags,
+        uint timeoutMilliseconds,
+        out IntPtr result
+    );
     /// Releases a native icon handle created from a bitmap.
+
+    /// <summary>
     /// </summary>
     /// <param name="hIcon">The icon handle to release.</param>
     /// <returns><see langword="true"/> when the handle was destroyed successfully.</returns>

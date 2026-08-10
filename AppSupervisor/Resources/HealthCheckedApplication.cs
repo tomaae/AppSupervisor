@@ -5,7 +5,7 @@ using AppSupervisor.Notifications;
 namespace AppSupervisor.Resources;
 
 /// <summary>
-/// Decorates a managed application with independently targeted network health checks and graceful recovery.
+/// Decorates a managed application with independently targeted health checks and graceful recovery.
 /// </summary>
 public sealed class HealthCheckedApplication : IManagedResource, IResourceNotificationSource
 {

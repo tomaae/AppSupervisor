@@ -61,6 +61,11 @@ public sealed partial class ConfigurationEditorForm : Form
         Text = "Allow force-kill after all graceful close attempts fail",
         AutoSize = true
     };
+    private readonly CheckBox _applicationMonitorResponsiveness = new()
+    {
+        Text = "Monitor application responsiveness",
+        AutoSize = true
+    };
     private readonly NotificationTargetsControl _applicationNotifications = new();
     private readonly ListBox _healthCheckList = new() { Dock = DockStyle.Fill };
     private readonly Panel _applicationEditorPanel = new() { Dock = DockStyle.Fill };
@@ -332,6 +337,7 @@ public sealed partial class ConfigurationEditorForm : Form
             Text = "Use Pick Steam or Pick Store to fill both the app URI and real executable automatically. The executable remains the process AppSupervisor monitors. Arguments apply only to direct executable launches."
         });
         AddEditorRow(layout, "Restart", _applicationRestart);
+        AddEditorRow(layout, "Responsiveness", _applicationMonitorResponsiveness);
         AddEditorRow(layout, "After launch", _applicationMinimize);
         AddEditorRow(layout, "Close fallback", _applicationForceKill);
         AddEditorRow(layout, "Notifications", BuildNotificationTestPanel(
@@ -344,6 +350,13 @@ public sealed partial class ConfigurationEditorForm : Form
             MaximumSize = new Size(680, 0),
             ForeColor = SystemColors.GrayText,
             Text = "Force-kill is intentionally disabled by default. Without it, AppSupervisor reports an error when graceful close attempts fail and leaves the process running."
+        });
+        AddEditorRow(layout, "", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(680, 0),
+            ForeColor = SystemColors.GrayText,
+            Text = "Responsiveness monitoring checks hidden and visible helper windows. After three failed checks, AppSupervisor gracefully restarts the helper. Helpers without an owned window are not treated as frozen."
         });
         AddEditorRow(layout, "Health checks", BuildHealthCheckPanel());
         scrolling.Controls.Add(layout);
@@ -451,6 +464,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _applicationArguments.TextChanged += ApplicationFieldChanged;
         _applicationRestart.CheckedChanged += ApplicationFieldChanged;
         _applicationMinimize.CheckedChanged += ApplicationFieldChanged;
+        _applicationMonitorResponsiveness.CheckedChanged += ApplicationFieldChanged;
         _applicationForceKill.CheckedChanged += ApplicationFieldChanged;
         _applicationNotifications.TargetsChanged += ApplicationFieldChanged;
 
@@ -575,6 +589,7 @@ public sealed partial class ConfigurationEditorForm : Form
             _applicationArguments.Text = application?.Arguments ?? "";
             _applicationRestart.Checked = application?.Restart ?? true;
             _applicationMinimize.Checked = application?.MinimizeAfterStart ?? false;
+            _applicationMonitorResponsiveness.Checked = application?.MonitorResponsiveness ?? false;
             _applicationForceKill.Checked = application?.ForceKillAfterCloseFailure ?? false;
             _applicationNotifications.LoadTargets(
                 application?.Notifications.Target ?? []
@@ -661,6 +676,7 @@ public sealed partial class ConfigurationEditorForm : Form
         application.Arguments = _applicationArguments.Text;
         application.Restart = _applicationRestart.Checked;
         application.MinimizeAfterStart = _applicationMinimize.Checked;
+        application.MonitorResponsiveness = _applicationMonitorResponsiveness.Checked;
         application.ForceKillAfterCloseFailure = _applicationForceKill.Checked;
         application.Notifications.Target = [.. _applicationNotifications.SelectedTargets];
         _applicationList.Refresh();

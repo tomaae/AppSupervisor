@@ -1,6 +1,6 @@
 namespace AppSupervisor;
 
-/// <summary>Configures one executable helper, its launch mechanism, and optional network health checks.</summary>
+/// <summary>Configures one executable helper, its launch mechanism, and optional health monitoring.</summary>
 public class ManagedApplicationConfig
 {
     /// <summary>Gets or sets whether the helper is part of its supervisor profile.</summary>
@@ -32,6 +32,9 @@ public class ManagedApplicationConfig
 
     /// <summary>Gets or sets whether force-kill is permitted after all graceful close attempts fail.</summary>
     public bool ForceKillAfterCloseFailure { get; set; }
+
+    /// <summary>Gets or sets whether the helper's owned windows are monitored for responsiveness.</summary>
+    public bool MonitorResponsiveness { get; set; }
 
     /// <summary>Gets or sets helper-level notification targets.</summary>
     public NotificationConfig Notifications { get; set; } = new();

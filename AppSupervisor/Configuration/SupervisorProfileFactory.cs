@@ -34,12 +34,20 @@ public static class SupervisorProfileFactory
                 applicationConfig,
                 restartTimeout
             );
-            ManagedHealthCheck[] healthChecks = applicationConfig.HealthChecks
+            var healthChecks = applicationConfig.HealthChecks
                 .Where(healthCheck => healthCheck.Enabled)
                 .Select(HealthCheckFactory.Create)
-                .ToArray();
+                .ToList();
 
-            resources.Add(healthChecks.Length == 0
+            if (applicationConfig.MonitorResponsiveness)
+            {
+                healthChecks.Insert(
+                    0,
+                    HealthCheckFactory.CreateApplicationResponsiveness(applicationConfig)
+                );
+            }
+
+            resources.Add(healthChecks.Count == 0
                 ? application
                 : new HealthCheckedApplication(application, healthChecks));
         }

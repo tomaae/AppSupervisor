@@ -29,7 +29,31 @@ internal static class TrayIconFactory
     }
 
     /// <summary>
-    /// Creates an icon with a red error badge over the normal application icon.
+    /// Creates an icon with a green play badge over the normal application icon.
+    /// </summary>
+    /// <param name="baseIcon">The normal application icon.</param>
+    /// <returns>A standalone icon that can be disposed independently.</returns>
+    public static Icon CreateSupervisingIcon(Icon baseIcon)
+    {
+        return CreateOverlayIcon(baseIcon, Color.FromArgb(35, 165, 70), (graphics, bounds) =>
+        {
+            float left = bounds.Left + bounds.Width * 0.34f;
+            float right = bounds.Left + bounds.Width * 0.72f;
+            float top = bounds.Top + bounds.Height * 0.25f;
+            float bottom = bounds.Top + bounds.Height * 0.75f;
+
+            using var brush = new SolidBrush(Color.White);
+            graphics.FillPolygon(brush,
+            [
+                new PointF(left, top),
+                new PointF(right, bounds.Top + bounds.Height / 2f),
+                new PointF(left, bottom)
+            ]);
+        });
+    }
+
+    /// <summary>
+    /// Creates an icon with a red X badge over the normal application icon.
     /// </summary>
     /// <param name="baseIcon">The normal application icon.</param>
     /// <returns>A standalone icon that can be disposed independently.</returns>
