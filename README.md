@@ -241,4 +241,6 @@ Use this software at your own risk. Review the source and configuration before r
 
 ## License
 
-No license has been selected for this repository yet.
+Copyright 2026 Tomaae.
+
+Licensed under the [Apache License 2.0](LICENSE).
