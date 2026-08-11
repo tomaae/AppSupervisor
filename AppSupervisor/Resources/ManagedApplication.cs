@@ -10,7 +10,7 @@ namespace AppSupervisor.Resources;
 /// <summary>
 /// Supervises an executable identified by its full path and manages its start, restart, close, and minimization behavior.
 /// </summary>
-public sealed class ManagedApplication : IManagedApplicationLifecycle
+public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecoverableResourceErrorSource
 {
     private const int GracefulCloseTimeoutSeconds = 10;
     private const int GracefulCloseRetrySeconds = 2;
@@ -24,6 +24,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
     private HashSet<int>? _failedMultipleProcessIds;
     private DateTime? _missingSince;
     private bool _disposed;
+    private bool _errorActive;
 
     /// <summary>
     /// Creates a managed application with fresh restart, close, and minimization state.
@@ -55,6 +56,9 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
 
     /// <summary>Occurs when the helper cannot complete a requested lifecycle operation.</summary>
     public event Action<IManagedResource, string>? ErrorOccurred;
+
+    /// <summary>Occurs when ordinary process lifecycle supervision succeeds after an error.</summary>
+    public event Action<IManagedResource>? ErrorCleared;
 
     /// <summary>Gets the executable identity, launch, lifecycle, and notification settings.</summary>
     public ManagedApplicationConfig Config { get; }
@@ -159,6 +163,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
             if (processes.Count == 1)
             {
                 _missingSince = null;
+                ClearError();
                 return ManagedResourceUpdate.None;
             }
         }
@@ -231,6 +236,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
             if (processes.Count == 0)
             {
                 _closeOperation = null;
+                ClearError();
                 return;
             }
 
@@ -271,6 +277,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
         _closeOperation = null;
         CancelMinimizeAfterStart();
         ErrorOccurred = null;
+        ErrorCleared = null;
     }
 
     /// <summary>Checks the shared-profile guard conservatively before sending or advancing close requests.</summary>
@@ -315,6 +322,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
                 throw new InvalidOperationException("Windows did not return a process for the start request.");
 
             _missingSince = null;
+            ClearError();
 
             if (Config.MinimizeAfterStart)
                 StartMinimizeAfterStart();
@@ -665,7 +673,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
     }
 
     /// <summary>
-    /// Scans running processes for every executable whose full path matches the configured helper path.
+    /// Opens and revalidates process wrappers from the shared full-path candidate snapshot.
     /// </summary>
     /// <returns>All inspectable matching processes; the caller must dispose each returned object.</returns>
     private List<Process> FindRunningProcesses()
@@ -673,12 +681,14 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
         string targetPath = Path.GetFullPath(Config.Path);
         var matches = new List<Process>();
 
-        foreach (var process in Process.GetProcesses())
+        foreach (int processId in ProcessPathSnapshot.FindCandidateProcessIds(targetPath))
         {
             bool keepProcess = false;
+            Process? process = null;
 
             try
             {
+                process = Process.GetProcessById(processId);
                 string? processPath = process.MainModule?.FileName;
 
                 if (processPath is not null &&
@@ -698,7 +708,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
             finally
             {
                 if (!keepProcess)
-                    process.Dispose();
+                    process?.Dispose();
             }
         }
 
@@ -721,7 +731,18 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
     /// <param name="message">The error message to forward to the tray application.</param>
     private void ReportError(string message)
     {
+        _errorActive = true;
         ErrorOccurred?.Invoke(this, message);
+    }
+
+    /// <summary>Clears one active lifecycle error after the helper returns to a valid state.</summary>
+    private void ClearError()
+    {
+        if (!_errorActive)
+            return;
+
+        _errorActive = false;
+        ErrorCleared?.Invoke(this);
     }
 
     /// <summary>

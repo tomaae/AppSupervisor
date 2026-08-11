@@ -14,10 +14,10 @@ public sealed partial class HealthCheckEditorDialog : Form
         DropDownStyle = ComboBoxStyle.DropDownList,
         Dock = DockStyle.Fill
     };
-    private readonly NumericUpDown _intervalSeconds = CreatePositiveNumeric(1, 86400);
-    private readonly NumericUpDown _timeoutSeconds = CreatePositiveNumeric(1, 3600);
-    private readonly NumericUpDown _failureThreshold = CreatePositiveNumeric(1, 1000);
-    private readonly NumericUpDown _startupDelaySeconds = CreatePositiveNumeric(0, 86400);
+    private readonly NumericUpDown _intervalSeconds = CreatePositiveNumeric(1, ConfigurationLimits.MaximumHealthIntervalSeconds);
+    private readonly NumericUpDown _timeoutSeconds = CreatePositiveNumeric(1, ConfigurationLimits.MaximumHealthProbeTimeoutSeconds);
+    private readonly NumericUpDown _failureThreshold = CreatePositiveNumeric(1, ConfigurationLimits.MaximumHealthFailureThreshold);
+    private readonly NumericUpDown _startupDelaySeconds = CreatePositiveNumeric(0, ConfigurationLimits.MaximumHealthStartupDelaySeconds);
     private readonly CheckBox _restartOnFailureCheckBox = new()
     {
         Text = "Gracefully restart this helper after a confirmed failure",
@@ -43,7 +43,7 @@ public sealed partial class HealthCheckEditorDialog : Form
         Text = "Fail when a majority remain unchanged for",
         AutoSize = true
     };
-    private readonly NumericUpDown _staleSeconds = CreatePositiveNumeric(1, 86400);
+    private readonly NumericUpDown _staleSeconds = CreatePositiveNumeric(1, ConfigurationLimits.MaximumHealthStaleSeconds);
     private readonly NotificationTargetsControl _notificationTargets = new();
     private GroupBox _listenerGroup = null!;
     private GroupBox _vrcoscGroup = null!;

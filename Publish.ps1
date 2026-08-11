@@ -69,6 +69,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "Notification host publish failed with exit code $LASTEXITCODE."
 }
 
+Copy-Item -LiteralPath (Join-Path $workspaceRoot "LICENSE") -Destination $stagingRoot
+Copy-Item -LiteralPath (Join-Path $workspaceRoot "THIRD-PARTY-NOTICES.txt") -Destination $stagingRoot
+
 $forbiddenPackagedConfigPath = Join-Path $stagingRoot "config.json"
 if (Test-Path -LiteralPath $forbiddenPackagedConfigPath) {
     throw "Release packages must not contain config.json."
@@ -76,7 +79,9 @@ if (Test-Path -LiteralPath $forbiddenPackagedConfigPath) {
 
 $expectedFiles = @(
     "AppSupervisor.exe",
-    "AppSupervisor.NotificationHost.exe"
+    "AppSupervisor.NotificationHost.exe",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.txt"
 )
 
 $publishedFiles = @(Get-ChildItem -LiteralPath $stagingRoot -File -Recurse)

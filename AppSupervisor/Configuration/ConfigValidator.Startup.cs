@@ -5,8 +5,6 @@ namespace AppSupervisor.Configuration;
 /// </summary>
 public static partial class ConfigValidator
 {
-    private const int MaximumWaitAfterStartupMilliseconds = 3_600_000;
-
     /// <summary>Validates one profile's combined application and service startup sequence.</summary>
     /// <param name="profile">The enabled profile whose resources are being validated.</param>
     /// <param name="profileLabel">The user-readable profile identifier used in errors.</param>
@@ -66,11 +64,11 @@ public static partial class ConfigValidator
                 );
             }
 
-            if (resource.WaitAfterStartupMilliseconds is < 0 or > MaximumWaitAfterStartupMilliseconds)
+            if (resource.WaitAfterStartupMilliseconds is < 0 or > ConfigurationLimits.MaximumWaitAfterStartupMilliseconds)
             {
                 errors.Add(
                     $"{resourceLabel} waitAfterStartupMilliseconds must be between 0 and " +
-                    $"{MaximumWaitAfterStartupMilliseconds}."
+                    $"{ConfigurationLimits.MaximumWaitAfterStartupMilliseconds}."
                 );
             }
         }

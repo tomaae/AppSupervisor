@@ -1,0 +1,79 @@
+namespace AppSupervisor.Configuration;
+
+/// <summary>
+/// Normalizes user-entered identifiers after deserialization so matching and validation use consistent values.
+/// </summary>
+internal static class ConfigNormalizer
+{
+    /// <summary>Trims identifiers, paths, process names, and OSC parameter names in every non-null profile.</summary>
+    public static void Normalize(IReadOnlyList<SupervisorProfileConfig?> profiles)
+    {
+        foreach (SupervisorProfileConfig? profile in profiles)
+        {
+            if (profile is null)
+                continue;
+
+            profile.Name = NormalizeText(profile.Name);
+            profile.MonitorProcess = NormalizeText(profile.MonitorProcess);
+
+            if (profile.Applications is not null)
+            {
+                foreach (ManagedApplicationConfig? application in profile.Applications)
+                {
+                    if (application is null)
+                        continue;
+
+                    NormalizeResource(application);
+                    application.Path = NormalizeText(application.Path);
+                    application.AppUri = NormalizeNullableText(application.AppUri);
+                    application.PackageFamilyName = NormalizeNullableText(application.PackageFamilyName);
+                    application.PackageApplicationId = NormalizeNullableText(application.PackageApplicationId);
+                    application.PackageExecutable = NormalizeNullableText(application.PackageExecutable);
+
+                    if (application.HealthChecks is null)
+                        continue;
+
+                    foreach (HealthCheckConfig? healthCheck in application.HealthChecks)
+                    {
+                        if (healthCheck is null)
+                            continue;
+
+                        healthCheck.Name = NormalizeText(healthCheck.Name);
+                        healthCheck.ActiveWhenProcess = NormalizeText(healthCheck.ActiveWhenProcess);
+
+                        if (healthCheck.Parameters is not null)
+                        {
+                            for (int index = 0; index < healthCheck.Parameters.Count; index++)
+                                healthCheck.Parameters[index] = NormalizeText(healthCheck.Parameters[index]);
+                        }
+                    }
+                }
+            }
+
+            if (profile.Services is null)
+                continue;
+
+            foreach (ManagedServiceConfig? service in profile.Services)
+            {
+                if (service is null)
+                    continue;
+
+                NormalizeResource(service);
+                service.ServiceName = NormalizeText(service.ServiceName);
+            }
+        }
+    }
+
+    /// <summary>Normalizes fields shared by application and service resources.</summary>
+    private static void NormalizeResource(ManagedResourceConfig resource)
+    {
+        resource.ResourceId = NormalizeText(resource.ResourceId);
+        resource.DependencyResourceId = NormalizeNullableText(resource.DependencyResourceId);
+    }
+
+    /// <summary>Returns a trimmed string and converts null to an empty value for required fields.</summary>
+    private static string NormalizeText(string? value) => value?.Trim() ?? "";
+
+    /// <summary>Returns a trimmed optional string while preserving null.</summary>
+    private static string NormalizeNullableText(string? value) => value?.Trim() ?? "";
+}

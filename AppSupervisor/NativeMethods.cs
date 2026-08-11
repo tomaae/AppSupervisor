@@ -116,7 +116,6 @@ internal static class NativeMethods
         IntPtr wParam,
         IntPtr lParam
     );
-
     /// <summary>
     /// Sends a synchronous message with a strict timeout so an unresponsive destination cannot block AppSupervisor.
     /// </summary>
@@ -138,10 +137,7 @@ internal static class NativeMethods
         uint timeoutMilliseconds,
         out IntPtr result
     );
-    /// Releases a native icon handle created from a bitmap.
-
-    /// <summary>
-    /// </summary>
+    /// <summary>Releases a native icon handle created from a bitmap.</summary>
     /// <param name="hIcon">The icon handle to release.</param>
     /// <returns><see langword="true"/> when the handle was destroyed successfully.</returns>
     [DllImport("user32.dll", SetLastError = true)]

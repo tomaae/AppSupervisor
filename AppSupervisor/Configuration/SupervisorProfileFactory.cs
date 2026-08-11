@@ -86,9 +86,9 @@ public static class SupervisorProfileFactory
             .ThenBy(item => item.StableOrder)
             .Select(item => new ManagedResourceStartup(
                 item.Resource,
-                item.Config.ResourceId,
+                item.Config.ResourceId.Trim(),
                 item.Config.WaitAfterStartupMilliseconds,
-                item.Config.DependencyResourceId
+                (item.Config.DependencyResourceId ?? "").Trim()
             ))
             .ToArray();
 

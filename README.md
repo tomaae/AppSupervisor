@@ -176,7 +176,7 @@ The **Notifications** category independently selects where this health check rep
 - **Cancel** and the window close button ask before discarding unsaved changes.
 - Confirmation dialogs remain modal to the editor while the supervisor's nested Windows message loop continues monitoring.
 
-AppSupervisor constructs a complete replacement runtime graph only after the saved document loads and validates successfully. If applying it fails, the previous valid configuration remains active. A missing or invalid startup configuration leaves AppSupervisor running in a paused error state so it can still be repaired from the tray.
+AppSupervisor constructs a complete replacement runtime graph only after the saved document loads and validates successfully. If applying it fails, the previous valid configuration remains active. A missing or invalid startup configuration pauses supervision and shows the red error tray icon; applying a valid repair resumes supervision automatically unless it was manually paused.
 
 Unexpected failures are isolated to the affected resource or profile and reported without stopping supervision of the remaining profiles.
 
@@ -190,17 +190,21 @@ After the main message loop starts, AppSupervisor checks whether a current-user 
 
 The configuration UI stores its validated document in `config.json` beside `AppSupervisor.exe`. If the file does not exist, AppSupervisor creates a valid empty configuration automatically. Saving is atomic, and the last verified configuration is written to `config.json.old` during normal shutdown. Unknown or obsolete JSON fields are rejected rather than silently ignored.
 
+If the verified shutdown backup cannot be written safely, AppSupervisor records the failure in `%LOCALAPPDATA%\AppSupervisor\AppSupervisor.log` without blocking shutdown.
+
 Both `AppSupervisor/config.json` and `AppSupervisor/config.json.old` are ignored by Git so personal paths remain outside repository history. Release packages contain no configuration file; AppSupervisor creates an empty `config.json` beside the executable on first start.
 
 ## Running a packaged build
 
 The release package is Windows x64 and framework-dependent. Install the **.NET 10 Desktop Runtime** before running it.
 
-Keep these two files together:
+Keep all packaged files together:
 
 ```text
 AppSupervisor.exe
 AppSupervisor.NotificationHost.exe
+LICENSE
+THIRD-PARTY-NOTICES.txt
 ```
 
 Start `AppSupervisor.exe` and approve the UAC prompt. The application runs in the notification area rather than opening a main window.
@@ -239,7 +243,7 @@ artifacts/AppSupervisor/
 artifacts/AppSupervisor-win-x64.zip
 ```
 
-The audit fails if the package contains anything other than the two executables, including any `config.json`. If an existing extracted build is locked by a running AppSupervisor instance, the current build is left in `artifacts/AppSupervisor.staging/` while the ZIP is still updated.
+The audit fails if the package contains anything except the two executables and their required license notices, including any `config.json`. If an existing extracted build is locked by a running AppSupervisor instance, the current build is left in `artifacts/AppSupervisor.staging/` while the ZIP is still updated.
 
 ## Project structure
 

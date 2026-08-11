@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AppSupervisor.Core;
 
 namespace AppSupervisor.Health;
 
@@ -29,10 +30,12 @@ internal static class ProcessPathDiscovery
             return processIds;
         }
 
-        foreach (Process process in Process.GetProcesses())
+        foreach (int processId in ProcessPathSnapshot.FindCandidateProcessIds(expectedPath))
         {
+            Process? process = null;
             try
             {
+                process = Process.GetProcessById(processId);
                 string? processPath = process.MainModule?.FileName;
 
                 if (processPath is not null && string.Equals(
@@ -49,7 +52,7 @@ internal static class ProcessPathDiscovery
             }
             finally
             {
-                process.Dispose();
+                process?.Dispose();
             }
         }
 

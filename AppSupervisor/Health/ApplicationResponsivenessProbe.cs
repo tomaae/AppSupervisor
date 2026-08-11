@@ -136,9 +136,9 @@ internal sealed class ApplicationResponsivenessProbe : IHealthProbe
         IntPtr window,
         IReadOnlySet<int> ownerProcessIds)
     {
-        NativeMethods.GetWindowThreadProcessId(window, out uint processId);
+        uint threadId = NativeMethods.GetWindowThreadProcessId(window, out uint processId);
 
-        if (processId <= int.MaxValue && ownerProcessIds.Contains((int)processId))
+        if (threadId != 0 && processId <= int.MaxValue && ownerProcessIds.Contains((int)processId))
             windows.Add(window);
     }
 

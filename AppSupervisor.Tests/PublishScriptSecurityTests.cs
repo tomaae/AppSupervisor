@@ -24,6 +24,8 @@ public sealed class PublishScriptSecurityTests
             script,
             StringComparison.Ordinal
         );
+        Assert.Contains("LICENSE", script, StringComparison.Ordinal);
+        Assert.Contains("THIRD-PARTY-NOTICES.txt", script, StringComparison.Ordinal);
     }
 
     /// <summary>Finds Publish.ps1 by walking from the test output directory to the repository root.</summary>

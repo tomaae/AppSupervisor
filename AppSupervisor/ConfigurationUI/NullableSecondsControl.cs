@@ -1,3 +1,5 @@
+using AppSupervisor.Configuration;
+
 namespace AppSupervisor.ConfigurationUI;
 
 /// <summary>
@@ -33,7 +35,7 @@ public sealed class NullableSecondsControl : UserControl
         _seconds = new NumericUpDown
         {
             Minimum = 0,
-            Maximum = 86400,
+            Maximum = ConfigurationLimits.MaximumTimeoutSeconds,
             Width = 90,
             Enabled = false
         };

@@ -47,10 +47,15 @@ public static partial class ConfigValidator
             ValidatePositive(healthCheck.TimeoutSeconds, "timeoutSeconds", checkLabel, errors);
             ValidatePositive(healthCheck.FailureThreshold, "failureThreshold", checkLabel, errors);
 
-            if (healthCheck.StartupDelaySeconds < 0)
+            ValidateMaximum(healthCheck.IntervalSeconds, ConfigurationLimits.MaximumHealthIntervalSeconds, "intervalSeconds", checkLabel, errors);
+            ValidateMaximum(healthCheck.TimeoutSeconds, ConfigurationLimits.MaximumHealthProbeTimeoutSeconds, "timeoutSeconds", checkLabel, errors);
+            ValidateMaximum(healthCheck.FailureThreshold, ConfigurationLimits.MaximumHealthFailureThreshold, "failureThreshold", checkLabel, errors);
+
+            if (healthCheck.StartupDelaySeconds is < 0 or > ConfigurationLimits.MaximumHealthStartupDelaySeconds)
             {
                 errors.Add(
-                    $"{checkLabel} has an invalid startupDelaySeconds; the value must be zero or greater."
+                    $"{checkLabel} has an invalid startupDelaySeconds; the value must be between 0 and " +
+                    $"{ConfigurationLimits.MaximumHealthStartupDelaySeconds}."
                 );
             }
 
@@ -150,8 +155,12 @@ public static partial class ConfigValidator
             }
         }
 
-        if (healthCheck.StaleSeconds is <= 0)
-            errors.Add($"{checkLabel} staleSeconds must be greater than zero when specified.");
+        if (healthCheck.StaleSeconds is <= 0 or > ConfigurationLimits.MaximumHealthStaleSeconds)
+        {
+            errors.Add(
+                $"{checkLabel} staleSeconds must be between 1 and {ConfigurationLimits.MaximumHealthStaleSeconds} when specified."
+            );
+        }
 
         if (healthCheck.StaleSeconds is not null && parameterNames.Count < 2)
         {
@@ -174,6 +183,18 @@ public static partial class ConfigValidator
     {
         if (value <= 0)
             errors.Add($"{checkLabel} {propertyName} must be greater than zero.");
+    }
+
+    /// <summary>Validates the upper bound of a positive health-check setting.</summary>
+    private static void ValidateMaximum(
+        int value,
+        int maximum,
+        string propertyName,
+        string checkLabel,
+        ICollection<string> errors)
+    {
+        if (value > maximum)
+            errors.Add($"{checkLabel} {propertyName} must be {maximum} or less.");
     }
 
     /// <summary>Validates an optional process-gating name without requiring a full path or fixed address.</summary>

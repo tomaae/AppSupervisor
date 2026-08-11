@@ -48,6 +48,35 @@ public sealed class ManagedHealthCheckTests
         Assert.True(probe.Cancelled.Task.IsCompletedSuccessfully);
     }
 
+    /// <summary>Confirms a cancellation-ignoring probe cannot overlap and is disposed only after it completes.</summary>
+    [Fact]
+    public async Task Suspend_ProbeIgnoresCancellation_NoOverlapOrEarlyDispose()
+    {
+        var condition = new FakeCondition { Active = true };
+        var probe = new StubbornProbe();
+        var check = CreateCheck(probe, condition);
+        DateTime now = DateTime.UtcNow;
+
+        check.Poll(new HashSet<int> { 1 }, now);
+        condition.Active = false;
+        check.Poll(new HashSet<int> { 1 }, now.AddSeconds(1));
+        condition.Active = true;
+        check.Poll(new HashSet<int> { 1 }, now.AddSeconds(2));
+
+        Assert.Equal(1, probe.CallCount);
+
+        check.Dispose();
+        Assert.False(probe.Disposed);
+
+        probe.Release.TrySetResult(HealthProbeResult.Success());
+        await probe.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(SpinWait.SpinUntil(
+            () => probe.Disposed,
+            TimeSpan.FromSeconds(2)
+        ));
+    }
+
     /// <summary>Starts and completes one immediately resolved probe on two supervision ticks.</summary>
     /// <param name="check">The check to advance.</param>
     /// <param name="nowUtc">The probe start time.</param>
@@ -168,4 +197,50 @@ public sealed class ManagedHealthCheckTests
         /// <returns>The value of <see cref="Active"/>.</returns>
         public bool IsActive() => Active;
     }
+    /// <summary>Ignores cancellation until explicitly released to exercise defensive task retirement.</summary>
+    private sealed class StubbornProbe : IHealthProbe
+    {
+        /// <summary>Gets the number of probe invocations.</summary>
+        public int CallCount { get; private set; }
+
+        /// <summary>Gets whether disposal has occurred.</summary>
+        public bool Disposed { get; private set; }
+
+        /// <summary>Controls when the running probe completes.</summary>
+        public TaskCompletionSource<HealthProbeResult> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Signals that the running invocation has exited.</summary>
+        public TaskCompletionSource Completed { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Waits for explicit completion while deliberately ignoring cancellation.</summary>
+        public async Task<HealthProbeResult> CheckAsync(
+            IReadOnlySet<int> ownerProcessIds,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+
+            try
+            {
+                return await Release.Task;
+            }
+            finally
+            {
+                Completed.TrySetResult();
+            }
+        }
+
+        /// <summary>Clears no retained state.</summary>
+        public void Reset()
+        {
+        }
+
+        /// <summary>Records deferred disposal after the running invocation completes.</summary>
+        public void Dispose()
+        {
+            Disposed = true;
+        }
+    }
+
 }

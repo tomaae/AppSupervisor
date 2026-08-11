@@ -186,6 +186,82 @@ public sealed class ConfigLoaderTests
     }
 
     /// <summary>
+    /// <summary>Confirms disabled profiles still require structurally valid application and service arrays.</summary>
+    [Fact]
+    public void Load_DisabledProfileWithNullApplications_ThrowsValidationError()
+    {
+        using var file = TemporaryConfigFile.Create(new object[]
+        {
+            new
+            {
+                enabled = false,
+                name = "Disabled",
+                monitorProcess = "notepad.exe",
+                applications = (object?)null,
+                services = Array.Empty<object>()
+            }
+        });
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigLoader.Load(file.Path)
+        );
+
+        Assert.Contains("must contain an applications array", exception.Message);
+    }
+
+    /// <summary>Confirms surrounding whitespace is normalized before matching and validation.</summary>
+    [Fact]
+    public void Load_WhitespaceAroundIdentifiers_NormalizesValues()
+    {
+        using var file = TemporaryConfigFile.Create(new[]
+        {
+            new
+            {
+                name = "  Normalized  ",
+                monitorProcess = "  notepad.exe  ",
+                applications = new[]
+                {
+                    new
+                    {
+                        path = $"  {Environment.ProcessPath!}  ",
+                        notifications = new { target = Array.Empty<string>() }
+                    }
+                },
+                services = Array.Empty<object>()
+            }
+        });
+
+        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path);
+
+        Assert.Equal("Normalized", config[0].Name);
+        Assert.Equal("notepad.exe", config[0].MonitorProcess);
+        Assert.Equal(Environment.ProcessPath, config[0].Applications[0].Path);
+    }
+
+    /// <summary>Confirms timeout values beyond the editor's supported range are rejected.</summary>
+    [Fact]
+    public void Load_ExcessiveTimeout_ThrowsValidationError()
+    {
+        using var file = TemporaryConfigFile.Create(new[]
+        {
+            new
+            {
+                enabled = false,
+                name = "Excessive timeout",
+                monitorProcess = "notepad.exe",
+                closeTimeoutSeconds = 86_401,
+                applications = Array.Empty<object>(),
+                services = Array.Empty<object>()
+            }
+        });
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigLoader.Load(file.Path)
+        );
+
+        Assert.Contains("must be between 0 and 86400", exception.Message);
+    }
+
     /// Owns one temporary JSON file and removes its isolated directory after a test.
     /// </summary>
     private sealed class TemporaryConfigFile : IDisposable

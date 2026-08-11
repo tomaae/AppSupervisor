@@ -25,11 +25,21 @@ public static class ConfigLoader
         if (config is null)
             throw new ConfigValidationException(["The top-level JSON value must be an array."]);
 
+        ConfigNormalizer.Normalize(config);
         PackagedApplicationPathResolver.ResolvePaths(config);
 
         ConfigValidator.Validate(config);
         return config.Select(profile => profile!).ToList();
     }
+
+    /// <summary>Loads and validates configuration on a worker thread so Store package discovery cannot block supervision.</summary>
+    /// <param name="path">The path of the JSON configuration file.</param>
+    /// <param name="cancellationToken">Cancels waiting for the background load result.</param>
+    /// <returns>The validated supervisor-profile configuration.</returns>
+    public static Task<List<SupervisorProfileConfig>> LoadAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+        => Task.Run(() => Load(path), cancellationToken);
 
     /// <summary>
     /// Creates a valid empty configuration document when no configuration file exists yet.

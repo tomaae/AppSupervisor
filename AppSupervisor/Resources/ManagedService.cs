@@ -7,7 +7,7 @@ namespace AppSupervisor.Resources;
 /// <summary>
 /// Supervises one Windows service by internal service name using the shared supervisor-profile tick.
 /// </summary>
-public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
+public sealed class ManagedService : IManagedResource, IManagedResourceReadiness, IRecoverableResourceErrorSource
 {
     private const int OperationTimeoutSeconds = 30;
 
@@ -24,6 +24,8 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
     private bool _stopCommandSent;
     private bool _stopPending;
     private bool _statusErrorReported;
+    private bool _errorActive;
+    private ServiceErrorRecovery _errorRecovery;
 
     /// <summary>
     /// Creates a managed service that will connect to the native Service Control Manager during initialization.
@@ -58,6 +60,9 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
 
     /// <summary>Occurs when the service cannot complete a requested lifecycle operation.</summary>
     public event Action<IManagedResource, string>? ErrorOccurred;
+
+    /// <summary>Occurs when Windows service communication succeeds after an error.</summary>
+    public event Action<IManagedResource>? ErrorCleared;
 
     /// <summary>Gets the service identity, recovery, and notification settings.</summary>
     public ManagedServiceConfig Config { get; }
@@ -98,12 +103,14 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
             _controller.EnsureManualStartAndRequiredAccess();
             _available = true;
             _statusErrorReported = false;
+            ClearError();
         }
         catch (Exception ex)
         {
             _controller?.Dispose();
             _controller = null;
             ReportError(
+                ServiceErrorRecovery.Never,
                 $"Service initialization failed. AppSupervisor could not verify start/stop permissions " +
                 $"or enforce Manual startup. {ex.Message}"
             );
@@ -277,6 +284,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
         _controller?.Dispose();
         _controller = null;
         ErrorOccurred = null;
+        ErrorCleared = null;
     }
 
     /// <summary>
@@ -336,6 +344,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
             DateTime.UtcNow - _stopStartedUtc >= TimeSpan.FromSeconds(OperationTimeoutSeconds))
         {
             ReportError(
+                ServiceErrorRecovery.Stopped,
                 $"Could not stop service '{Config.ServiceName}' within {OperationTimeoutSeconds} seconds. " +
                 "No process termination was attempted."
             );
@@ -372,7 +381,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
         }
         catch (Exception ex)
         {
-            ReportError($"Could not start service '{Config.ServiceName}'. {ex.Message}");
+            ReportError(ServiceErrorRecovery.Running, $"Could not start service '{Config.ServiceName}'. {ex.Message}");
             return false;
         }
     }
@@ -389,7 +398,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
         }
         catch (Exception ex)
         {
-            ReportError($"Could not stop service '{Config.ServiceName}'. {ex.Message}");
+            ReportError(ServiceErrorRecovery.Stopped, $"Could not stop service '{Config.ServiceName}'. {ex.Message}");
             ClearStopState();
         }
     }
@@ -406,7 +415,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
         }
         catch (Exception ex)
         {
-            ReportError($"Could not continue paused service '{Config.ServiceName}'. {ex.Message}");
+            ReportError(ServiceErrorRecovery.Running, $"Could not continue paused service '{Config.ServiceName}'. {ex.Message}");
         }
     }
 
@@ -420,6 +429,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
         {
             ServiceRuntimeState state = _controller!.GetState();
             _statusErrorReported = false;
+            ClearErrorIfRecovered(state);
             return state;
         }
         catch (Exception ex)
@@ -427,7 +437,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
             if (!_statusErrorReported)
             {
                 _statusErrorReported = true;
-                ReportError($"Could not query service '{Config.ServiceName}'. {ex.Message}");
+                ReportError(ServiceErrorRecovery.AnySuccessfulQuery, $"Could not query service '{Config.ServiceName}'. {ex.Message}");
             }
 
             return null;
@@ -454,6 +464,7 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
             return;
 
         ReportError(
+            state == ServiceRuntimeState.StopPending ? ServiceErrorRecovery.Stopped : ServiceErrorRecovery.Running,
             $"Service '{Config.ServiceName}' remained in {state} for more than {OperationTimeoutSeconds} seconds."
         );
         _pendingOperationSince = DateTime.UtcNow;
@@ -482,8 +493,48 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
     /// Raises a user-visible service error without throwing from the shared timer tick.
     /// </summary>
     /// <param name="message">The error message forwarded to the supervisor profile.</param>
-    private void ReportError(string message)
+    /// <param name="recovery">The service state that proves this operation recovered.</param>
+    private void ReportError(
+        ServiceErrorRecovery recovery,
+        string message)
     {
+        _errorActive = true;
+        _errorRecovery = recovery;
         ErrorOccurred?.Invoke(this, message);
+    }
+
+    /// <summary>Clears one active service error after Windows service communication succeeds.</summary>
+    private void ClearError()
+    {
+        if (!_errorActive)
+            return;
+
+        _errorActive = false;
+        ErrorCleared?.Invoke(this);
+    }
+
+    /// <summary>Clears the active error only after the failed operation reaches its intended state.</summary>
+    /// <param name="state">The latest successfully queried service state.</param>
+    private void ClearErrorIfRecovered(ServiceRuntimeState state)
+    {
+        bool recovered = _errorRecovery switch
+        {
+            ServiceErrorRecovery.AnySuccessfulQuery => true,
+            ServiceErrorRecovery.Running => state == ServiceRuntimeState.Running,
+            ServiceErrorRecovery.Stopped => state == ServiceRuntimeState.Stopped,
+            _ => false
+        };
+
+        if (recovered)
+            ClearError();
+    }
+
+    /// <summary>Defines the state that proves recovery from one reported service operation error.</summary>
+    private enum ServiceErrorRecovery
+    {
+        Never,
+        AnySuccessfulQuery,
+        Running,
+        Stopped
     }
 }

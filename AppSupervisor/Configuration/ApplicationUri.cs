@@ -12,7 +12,7 @@ internal static class ApplicationUri
     /// <returns>A shell-enabled process start request.</returns>
     public static ProcessStartInfo CreateStartInfo(ManagedApplicationConfig configuration)
     {
-        string appUri = configuration.AppUri.Trim();
+        string appUri = configuration.AppUri?.Trim() ?? "";
 
         if (string.IsNullOrWhiteSpace(appUri))
         {

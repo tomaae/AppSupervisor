@@ -92,6 +92,34 @@ public sealed class HealthCheckedApplicationTests
         );
     }
 
+    /// <summary>Confirms a shared-helper close guard reports blocked recovery instead of a false restart.</summary>
+    [Fact]
+    public void Supervise_HealthRestartBlockedBySharedProfile_DoesNotReportRestart()
+    {
+        var application = new FakeApplicationLifecycle
+        {
+            Running = true,
+            BlockDeactivation = true
+        };
+        using HealthCheckedApplication wrapper = CreateWrapper(application);
+        var notifications = new List<ResourceNotification>();
+        wrapper.NotificationRequested += (_, notification) => notifications.Add(notification);
+
+        ConfirmHealthFailure(wrapper);
+        wrapper.Supervise();
+
+        Assert.Equal(1, application.DeactivateCalls);
+        Assert.True(application.Running);
+        Assert.Contains(
+            notifications,
+            notification => notification.Title == "Health-check recovery blocked"
+        );
+        Assert.DoesNotContain(
+            notifications,
+            notification => notification.Title == "Resource restarted"
+        );
+    }
+
     /// <summary>Creates a health-aware application with one immediately failing, restart-enabled check.</summary>
     /// <param name="application">The fake application lifecycle controlled by the test.</param>
     /// <returns>A wrapper using deterministic process discovery.</returns>
@@ -174,6 +202,9 @@ public sealed class HealthCheckedApplicationTests
             }
         };
 
+
+        /// <summary>Gets or sets whether another active profile blocks deactivation.</summary>
+        public bool BlockDeactivation { get; set; }
         /// <summary>Gets or sets whether process discovery reports the helper as running.</summary>
         public bool Running { get; set; }
 
@@ -235,6 +266,9 @@ public sealed class HealthCheckedApplicationTests
         public void Deactivate()
         {
             DeactivateCalls++;
+            if (BlockDeactivation)
+                return;
+
             CloseOperationPending = true;
         }
 

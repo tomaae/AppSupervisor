@@ -85,6 +85,9 @@ public sealed class SupervisorProfile : IDisposable
         {
             resource.ErrorOccurred += OnResourceError;
 
+            if (resource is IRecoverableResourceErrorSource recoverableSource)
+                recoverableSource.ErrorCleared += OnResourceErrorCleared;
+
             if (resource is IResourceNotificationSource notificationSource)
                 notificationSource.NotificationRequested += OnResourceNotification;
         }
@@ -95,6 +98,9 @@ public sealed class SupervisorProfile : IDisposable
 
     /// <summary>Occurs when ordinary resource supervision reports an unrecoverable operation failure.</summary>
     public event Action<SupervisorProfile, IManagedResource, string>? ErrorOccurred;
+
+    /// <summary>Occurs when a resource clears a previously reported ordinary supervision error.</summary>
+    public event Action<SupervisorProfile, IManagedResource>? ErrorCleared;
 
     /// <summary>Occurs when a resource publishes a check-specific notification and error-state transition.</summary>
     public event Action<SupervisorProfile, IManagedResource, ResourceNotification>?
@@ -273,6 +279,9 @@ public sealed class SupervisorProfile : IDisposable
         {
             resource.ErrorOccurred -= OnResourceError;
 
+            if (resource is IRecoverableResourceErrorSource recoverableSource)
+                recoverableSource.ErrorCleared -= OnResourceErrorCleared;
+
             if (resource is IResourceNotificationSource notificationSource)
                 notificationSource.NotificationRequested -= OnResourceNotification;
 
@@ -282,6 +291,7 @@ public sealed class SupervisorProfile : IDisposable
         ResourceRestarted = null;
         ErrorOccurred = null;
         ResourceNotificationRequested = null;
+        ErrorCleared = null;
     }
 
     /// <summary>Starts a fresh ordered activation sequence and immediately advances zero-delay entries.</summary>
@@ -397,6 +407,13 @@ public sealed class SupervisorProfile : IDisposable
     private void OnResourceError(IManagedResource resource, string message)
     {
         ErrorOccurred?.Invoke(this, resource, message);
+    }
+
+    /// <summary>Forwards resource recovery to the tray error-state tracker.</summary>
+    /// <param name="resource">The managed resource that recovered.</param>
+    private void OnResourceErrorCleared(IManagedResource resource)
+    {
+        ErrorCleared?.Invoke(this, resource);
     }
 
     /// <summary>Forwards a resource-specific notification without replacing its targets or error-state semantics.</summary>

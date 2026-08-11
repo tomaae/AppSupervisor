@@ -7,8 +7,9 @@ namespace AppSupervisor;
 /// </summary>
 public partial class TrayApplicationContext
 {
-    private readonly HashSet<string> _activeHealthErrors =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<HealthErrorIdentity> _activeHealthErrors = [];
+
+    private readonly record struct HealthErrorIdentity(SupervisorProfile Profile, IManagedResource Resource, string CheckKey);
 
     /// <summary>Applies a resource notification's error-state transition and publishes it through its own targets.</summary>
     /// <param name="profile">The supervisor profile that owns the resource.</param>
@@ -19,12 +20,7 @@ public partial class TrayApplicationContext
         IManagedResource resource,
         ResourceNotification notification)
     {
-        string errorKey = string.Join(
-            '\0',
-            profile.Name,
-            resource.DisplayName,
-            notification.Key
-        );
+        var errorKey = new HealthErrorIdentity(profile, resource, notification.Key);
 
         if (notification.ErrorState == ResourceErrorState.Set)
             _activeHealthErrors.Add(errorKey);

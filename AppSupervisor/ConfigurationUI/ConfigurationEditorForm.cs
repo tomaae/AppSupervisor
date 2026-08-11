@@ -37,7 +37,6 @@ public sealed partial class ConfigurationEditorForm : Form
     private readonly NullableSecondsControl _closeTimeout = new();
     private readonly NullableSecondsControl _restartTimeout = new();
 
-    private readonly ListBox _applicationList = new() { Dock = DockStyle.Fill };
     private readonly CheckBox _applicationEnabled = new()
     {
         Text = "Helper enabled",
@@ -75,7 +74,6 @@ public sealed partial class ConfigurationEditorForm : Form
     private readonly ListBox _healthCheckList = new() { Dock = DockStyle.Fill };
     private readonly Panel _applicationEditorPanel = new() { Dock = DockStyle.Fill };
 
-    private readonly ListBox _serviceList = new() { Dock = DockStyle.Fill };
     private readonly CheckBox _serviceEnabled = new()
     {
         Text = "Service enabled",
@@ -277,48 +275,6 @@ public sealed partial class ConfigurationEditorForm : Form
         return page;
     }
 
-    /// <summary>Builds the helper application list, lifecycle settings, notifications, and nested health-check editor.</summary>
-    /// <returns>The Applications tab page.</returns>
-    private TabPage BuildApplicationsPage()
-    {
-        var page = new TabPage("Applications");
-        var split = CreateListEditorSplit();
-        split.Panel1.Controls.Add(BuildApplicationListPanel());
-        split.Panel2.Controls.Add(BuildApplicationEditor());
-        page.Controls.Add(split);
-        return page;
-    }
-
-    /// <summary>Builds the service list and service lifecycle/notification settings.</summary>
-    /// <returns>The Services tab page.</returns>
-    private TabPage BuildServicesPage()
-    {
-        var page = new TabPage("Services");
-        var split = CreateListEditorSplit();
-        split.Panel1.Controls.Add(BuildServiceListPanel());
-        split.Panel2.Controls.Add(BuildServiceEditor());
-        page.Controls.Add(split);
-        return page;
-    }
-
-    /// <summary>Builds the left-side application list and collection commands.</summary>
-    /// <returns>The application collection panel.</returns>
-    private Control BuildApplicationListPanel()
-    {
-        var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
-        var buttons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            AutoSize = true,
-            FlowDirection = FlowDirection.LeftToRight
-        };
-        buttons.Controls.Add(CreateButton("Add", AddApplicationClicked));
-        buttons.Controls.Add(CreateButton("Remove", RemoveApplicationClicked));
-        panel.Controls.Add(_applicationList);
-        panel.Controls.Add(buttons);
-        return panel;
-    }
-
     /// <summary>Builds lifecycle, notification, and health-check fields for the selected application.</summary>
     /// <returns>The application editor panel.</returns>
     private Control BuildApplicationEditor()
@@ -418,24 +374,6 @@ public sealed partial class ConfigurationEditorForm : Form
         return panel;
     }
 
-    /// <summary>Builds the left-side service list and collection commands.</summary>
-    /// <returns>The service collection panel.</returns>
-    private Control BuildServiceListPanel()
-    {
-        var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
-        var buttons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            AutoSize = true,
-            FlowDirection = FlowDirection.LeftToRight
-        };
-        buttons.Controls.Add(CreateButton("Add", AddServiceClicked));
-        buttons.Controls.Add(CreateButton("Remove", RemoveServiceClicked));
-        panel.Controls.Add(_serviceList);
-        panel.Controls.Add(buttons);
-        return panel;
-    }
-
     /// <summary>Builds lifecycle and notification fields for the selected Windows service.</summary>
     /// <returns>The service editor panel.</returns>
     private Control BuildServiceEditor()
@@ -465,20 +403,14 @@ public sealed partial class ConfigurationEditorForm : Form
     {
         _profileSelector.FormattingEnabled = true;
         _resourceList.FormattingEnabled = true;
-        _applicationList.FormattingEnabled = true;
-        _serviceList.FormattingEnabled = true;
         _healthCheckList.FormattingEnabled = true;
         _profileSelector.SelectedIndexChanged += ProfileSelectionChanged;
         _profileSelector.Format += ProfileSelectorFormat;
         _resourceList.SelectedIndexChanged += ResourceSelectionChanged;
         _resourceList.Format += ResourceListFormat;
-        _applicationList.SelectedIndexChanged += ApplicationSelectionChanged;
-        _applicationList.Format += ApplicationListFormat;
         _resourceList.MouseDown += ResourceListMouseDown;
         _resourceList.MouseMove += ResourceListMouseMove;
         _resourceList.MouseUp += ResourceListMouseUp;
-        _serviceList.SelectedIndexChanged += ServiceSelectionChanged;
-        _serviceList.Format += ServiceListFormat;
         _healthCheckList.Format += HealthCheckListFormat;
         _healthCheckList.DoubleClick += EditHealthCheckClicked;
 
@@ -560,48 +492,6 @@ public sealed partial class ConfigurationEditorForm : Form
 
         LoadSelectedResource();
         UpdateStatus();
-    }
-
-    /// <summary>Rebuilds the selected profile's application list.</summary>
-    /// <param name="profile">The selected profile, or null when no profile exists.</param>
-    /// <param name="preferred">The application to keep selected.</param>
-    private void BindApplicationList(
-        SupervisorProfileConfig? profile,
-        ManagedApplicationConfig? preferred = null)
-    {
-        _applicationList.Items.Clear();
-
-        if (profile is null)
-            return;
-
-        foreach (ManagedApplicationConfig application in profile.Applications)
-            _applicationList.Items.Add(application);
-
-        if (preferred is not null && _applicationList.Items.Contains(preferred))
-            _applicationList.SelectedItem = preferred;
-        else if (_applicationList.Items.Count > 0)
-            _applicationList.SelectedIndex = 0;
-    }
-
-    /// <summary>Rebuilds the selected profile's service list.</summary>
-    /// <param name="profile">The selected profile, or null when no profile exists.</param>
-    /// <param name="preferred">The service to keep selected.</param>
-    private void BindServiceList(
-        SupervisorProfileConfig? profile,
-        ManagedServiceConfig? preferred = null)
-    {
-        _serviceList.Items.Clear();
-
-        if (profile is null)
-            return;
-
-        foreach (ManagedServiceConfig service in profile.Services)
-            _serviceList.Items.Add(service);
-
-        if (preferred is not null && _serviceList.Items.Contains(preferred))
-            _serviceList.SelectedItem = preferred;
-        else if (_serviceList.Items.Count > 0)
-            _serviceList.SelectedIndex = 0;
     }
 
     /// <summary>Loads the selected application's lifecycle, target, and health-check controls.</summary>
@@ -745,24 +635,6 @@ public sealed partial class ConfigurationEditorForm : Form
             LoadSelectedProfile();
     }
 
-    /// <summary>Loads a newly selected application.</summary>
-    /// <param name="sender">The application list.</param>
-    /// <param name="e">The selection-change event data.</param>
-    private void ApplicationSelectionChanged(object? sender, EventArgs e)
-    {
-        if (!_loadingControls)
-            LoadSelectedApplication();
-    }
-
-    /// <summary>Loads a newly selected service.</summary>
-    /// <param name="sender">The service list.</param>
-    /// <param name="e">The selection-change event data.</param>
-    private void ServiceSelectionChanged(object? sender, EventArgs e)
-    {
-        if (!_loadingControls)
-            LoadSelectedService();
-    }
-
     /// <summary>Formats one profile selector item using its name and disabled state.</summary>
     /// <param name="sender">The profile selector.</param>
     /// <param name="e">The list formatting event data.</param>
@@ -770,27 +642,6 @@ public sealed partial class ConfigurationEditorForm : Form
     {
         if (e.ListItem is SupervisorProfileConfig profile)
             e.Value = $"{DisplayName(profile.Name, "Unnamed profile")}{(profile.Enabled ? "" : " (disabled)")}";
-    }
-
-    /// <summary>Formats one application list item using its executable filename and disabled state.</summary>
-    /// <param name="sender">The application list.</param>
-    /// <param name="e">The list formatting event data.</param>
-    private void ApplicationListFormat(object? sender, ListControlConvertEventArgs e)
-    {
-        if (e.ListItem is ManagedApplicationConfig application)
-        {
-            string name = SafeFileName(application.Path, "New application");
-            e.Value = name + (application.Enabled ? "" : " (disabled)");
-        }
-    }
-
-    /// <summary>Formats one service list item using its service name and disabled state.</summary>
-    /// <param name="sender">The service list.</param>
-    /// <param name="e">The list formatting event data.</param>
-    private void ServiceListFormat(object? sender, ListControlConvertEventArgs e)
-    {
-        if (e.ListItem is ManagedServiceConfig service)
-            e.Value = $"{DisplayName(service.ServiceName, "New service")}{(service.Enabled ? "" : " (disabled)")}";
     }
 
     /// <summary>Formats one health-check list item using its name, type, and disabled state.</summary>

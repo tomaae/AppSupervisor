@@ -14,7 +14,7 @@ public partial class TrayApplicationContext
     /// <summary>Opens one structured editor from the tray menu or tray-icon double-click and reloads an accepted document.</summary>
     /// <param name="sender">The Configure menu item or tray icon.</param>
     /// <param name="e">The menu-click or tray-icon event data.</param>
-    private void OpenConfigurationEditor(object? sender, EventArgs e)
+    private async void OpenConfigurationEditor(object? sender, EventArgs e)
     {
         if (_configurationEditorOpen)
         {
@@ -38,7 +38,7 @@ public partial class TrayApplicationContext
             _configurationEditor = editor;
 
             if (editor.ShowDialog(_dialogOwner) == DialogResult.OK && !_exiting)
-                LoadConfiguration(showNotification: true);
+                await LoadConfigurationAsync(showNotification: true);
         }
         finally
         {
@@ -54,6 +54,7 @@ public partial class TrayApplicationContext
     {
         _exiting = true;
         Application.Idle -= ApplicationBecameIdle;
+        _configurationLoadGeneration++;
         CloseAllWindows();
         SaveVerifiedConfigurationBackup();
     }
@@ -71,16 +72,7 @@ public partial class TrayApplicationContext
         }
         catch (Exception ex)
         {
-            if (_dialogOwner.IsDisposed)
-                return;
-
-            MessageBox.Show(
-                _dialogOwner,
-                $"The verified configuration backup could not be saved to config.json.old.\n\n{ex.Message}",
-                "AppSupervisor backup error",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error
-            );
+            SupervisorLog.WriteError("The verified config.json.old backup could not be saved.", ex);
         }
     }
 }

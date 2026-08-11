@@ -28,12 +28,15 @@ public partial class TrayApplicationContext : ApplicationContext
     private ApplicationUsageRegistry _applicationUsageRegistry = new();
     private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
     private readonly HashSet<SupervisorProfile> _reportedStartupTickErrors = [];
-    private bool _paused;
+    private bool _paused = true;
     private bool _pausedManually;
     private bool _configurationError;
-    private bool _runtimeError;
+    private readonly HashSet<RuntimeErrorIdentity> _activeRuntimeErrors = [];
+    private bool _inactiveCleanupError;
+    private readonly record struct RuntimeErrorIdentity(SupervisorProfile Profile, IManagedResource Resource);
     private bool _hasValidConfiguration;
     private bool _configurationEditorOpen;
+    private int _configurationLoadGeneration;
     private bool _exiting;
 
     /// <summary>
@@ -102,7 +105,6 @@ public partial class TrayApplicationContext : ApplicationContext
         _startupTimer.Start();
         _ensureClosedTimer.Tick += EnsureClosedTimerTick;
         _ensureClosedTimer.Start();
-        LoadConfiguration(showNotification: false);
         Application.Idle += ApplicationBecameIdle;
     }
 
@@ -136,7 +138,6 @@ public partial class TrayApplicationContext : ApplicationContext
             }
             catch (Exception ex)
             {
-                _runtimeError = true;
                 UpdateTrayState();
 
                 if (!_reportedProfileTickErrors.Add(profile))
@@ -186,7 +187,6 @@ public partial class TrayApplicationContext : ApplicationContext
             }
             catch (Exception ex)
             {
-                _runtimeError = true;
                 UpdateTrayState();
 
                 if (!_reportedStartupTickErrors.Add(profile))
@@ -208,6 +208,9 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <param name="e">The menu-click event data.</param>
     private void TogglePause(object? sender, EventArgs e)
     {
+        if (_configurationError && !_hasValidConfiguration)
+            return;
+
         _paused = !_paused;
         _pausedManually = _paused;
 
@@ -231,15 +234,22 @@ public partial class TrayApplicationContext : ApplicationContext
     /// Builds a complete replacement configuration and swaps it into use only when loading and validation succeed.
     /// </summary>
     /// <param name="showNotification">Whether to notify after a successful manual reload.</param>
-    private void LoadConfiguration(bool showNotification)
+    private async Task LoadConfigurationAsync(bool showNotification)
     {
         var newProfiles = new List<SupervisorProfile>();
         var newApplicationUsageRegistry = new ApplicationUsageRegistry();
         List<SupervisorProfileConfig> newConfig;
+        int loadGeneration = ++_configurationLoadGeneration;
 
         try
         {
-            newConfig = ConfigLoader.Load(_configPath);
+            newConfig = await ConfigLoader.LoadAsync(_configPath);
+
+            if (_exiting || loadGeneration != _configurationLoadGeneration)
+            {
+                newApplicationUsageRegistry.Dispose();
+                return;
+            }
 
             foreach (var profileConfig in newConfig.Where(profile => profile.Enabled))
             {
@@ -259,13 +269,21 @@ public partial class TrayApplicationContext : ApplicationContext
                 profile.ResourceNotificationRequested += OnResourceNotificationRequested;
                 newProfiles.Add(profile);
                 newApplicationUsageRegistry.RegisterProfile(profileConfig, profile);
+                profile.ErrorCleared += OnSupervisionErrorCleared;
             }
 
             newApplicationUsageRegistry.CompleteRegistration();
             newApplicationUsageRegistry.CleanupFailed += OnInactiveApplicationCleanupFailed;
+            newApplicationUsageRegistry.CleanupRecovered += OnInactiveApplicationCleanupRecovered;
         }
         catch (Exception ex)
         {
+            if (_exiting || loadGeneration != _configurationLoadGeneration)
+            {
+                newApplicationUsageRegistry.Dispose();
+                return;
+            }
+
             foreach (var newProfile in newProfiles)
                 newProfile.Dispose();
 
@@ -282,16 +300,21 @@ public partial class TrayApplicationContext : ApplicationContext
         _applicationUsageRegistry = newApplicationUsageRegistry;
         _hasValidConfiguration = true;
         _configurationError = false;
-        _runtimeError = false;
+        if (_paused && !_pausedManually)
+            _paused = false;
+
+        _activeRuntimeErrors.Clear();
+        _inactiveCleanupError = false;
         _activeHealthErrors.Clear();
         _reportedProfileTickErrors.Clear();
-        UpdateTrayState();
         _reportedStartupTickErrors.Clear();
+        UpdateTrayState();
 
         foreach (SupervisorProfile oldProfile in oldProfiles)
             oldProfile.Dispose();
 
         oldApplicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
+        oldApplicationUsageRegistry.CleanupRecovered -= OnInactiveApplicationCleanupRecovered;
         oldApplicationUsageRegistry.Dispose();
 
         foreach (SupervisorProfile newProfile in _profiles)
@@ -365,7 +388,7 @@ public partial class TrayApplicationContext : ApplicationContext
         string message,
         IReadOnlyList<NotificationTarget> targets)
     {
-        _runtimeError = true;
+        _inactiveCleanupError = true;
         UpdateTrayState();
 
         PublishNotification(
@@ -374,6 +397,13 @@ public partial class TrayApplicationContext : ApplicationContext
             $"{displayName}\n{message}",
             targets
         );
+    }
+
+    /// <summary>Clears inactive-helper cleanup error state after a later sweep succeeds.</summary>
+    private void OnInactiveApplicationCleanupRecovered()
+    {
+        _inactiveCleanupError = false;
+        UpdateTrayState();
     }
 
     /// <summary>
@@ -387,7 +417,7 @@ public partial class TrayApplicationContext : ApplicationContext
         IManagedResource resource,
         string message)
     {
-        _runtimeError = true;
+        _activeRuntimeErrors.Add(new RuntimeErrorIdentity(profile, resource));
         UpdateTrayState();
 
         PublishNotification(
@@ -398,6 +428,16 @@ public partial class TrayApplicationContext : ApplicationContext
         );
     }
 
+    /// <summary>Clears a resource's ordinary tray error state after successful lifecycle supervision resumes.</summary>
+    /// <param name="profile">The supervisor profile that owns the recovered resource.</param>
+    /// <param name="resource">The managed resource that recovered.</param>
+    private void OnSupervisionErrorCleared(
+        SupervisorProfile profile,
+        IManagedResource resource)
+    {
+        _activeRuntimeErrors.Remove(new RuntimeErrorIdentity(profile, resource));
+        UpdateTrayState();
+    }
 
     /// <summary>
     /// Checks the current user's Windows startup registration and asks before enabling it when absent.
@@ -443,9 +483,14 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <summary>Runs the one-time startup-registration check only after the main application message loop has started.</summary>
     /// <param name="sender">The WinForms application lifecycle.</param>
     /// <param name="e">The idle event data.</param>
-    private void ApplicationBecameIdle(object? sender, EventArgs e)
+    private async void ApplicationBecameIdle(object? sender, EventArgs e)
     {
         Application.Idle -= ApplicationBecameIdle;
+
+        if (_exiting)
+            return;
+
+        await LoadConfigurationAsync(showNotification: false);
 
         if (!_exiting)
             CheckStartupRegistration();
@@ -494,6 +539,7 @@ public partial class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void UpdateTrayState()
     {
+        _pauseResumeItem.Enabled = !(_configurationError && !_hasValidConfiguration);
         _pauseResumeItem.Text = _paused
             ? "Resume"
             : "Pause";
@@ -508,7 +554,7 @@ public partial class TrayApplicationContext : ApplicationContext
             _trayIcon.Icon = _errorIcon;
             _trayIcon.Text = "AppSupervisor - Configuration error";
         }
-        else if (_runtimeError || _activeHealthErrors.Count > 0)
+        else if (_inactiveCleanupError || _activeRuntimeErrors.Count > 0 || _activeHealthErrors.Count > 0 || _reportedProfileTickErrors.Count > 0 || _reportedStartupTickErrors.Count > 0)
         {
             _trayIcon.Icon = _errorIcon;
             _trayIcon.Text = "AppSupervisor - Supervision error";
@@ -547,6 +593,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         _exiting = true;
         Application.Idle -= ApplicationBecameIdle;
+        _configurationLoadGeneration++;
         CloseAllWindows();
         SaveVerifiedConfigurationBackup();
         Application.ApplicationExit -= ApplicationExiting;
@@ -556,6 +603,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _ensureClosedTimer.Tick -= EnsureClosedTimerTick;
         _ensureClosedTimer.Dispose();
         _startupTimer.Dispose();
+        _applicationUsageRegistry.CleanupRecovered -= OnInactiveApplicationCleanupRecovered;
         _monitorTimer.Dispose();
         _applicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
         _applicationUsageRegistry.Dispose();

@@ -7,7 +7,7 @@ namespace AppSupervisor.Resources;
 /// <summary>
 /// Decorates a managed application with independently targeted health checks and graceful recovery.
 /// </summary>
-public sealed class HealthCheckedApplication : IManagedResource, IResourceNotificationSource, IManagedResourceReadiness
+public sealed class HealthCheckedApplication : IManagedResource, IResourceNotificationSource, IManagedResourceReadiness, IRecoverableResourceErrorSource
 {
     private readonly IManagedApplicationLifecycle _application;
     private readonly IReadOnlyList<ManagedHealthCheck> _healthChecks;
@@ -45,6 +45,9 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
         _processIdProvider = processIdProvider;
         _application.ErrorOccurred += OnApplicationError;
 
+        if (_application is IRecoverableResourceErrorSource recoverableSource)
+            recoverableSource.ErrorCleared += OnApplicationErrorCleared;
+
         foreach (ManagedHealthCheck healthCheck in _healthChecks)
         {
             healthCheck.Failed += OnHealthCheckFailed;
@@ -54,6 +57,9 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
 
     /// <summary>Occurs when ordinary application supervision fails outside health-check recovery.</summary>
     public event Action<IManagedResource, string>? ErrorOccurred;
+
+    /// <summary>Occurs when the wrapped application lifecycle recovers from an ordinary error.</summary>
+    public event Action<IManagedResource>? ErrorCleared;
 
     /// <summary>Occurs when a health check reports failure, recovery, restart success, or restart failure.</summary>
     public event Action<IManagedResource, ResourceNotification>? NotificationRequested;
@@ -158,6 +164,9 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
         _disposed = true;
         _application.ErrorOccurred -= OnApplicationError;
 
+        if (_application is IRecoverableResourceErrorSource recoverableSource)
+            recoverableSource.ErrorCleared -= OnApplicationErrorCleared;
+
         foreach (ManagedHealthCheck healthCheck in _healthChecks)
         {
             healthCheck.Failed -= OnHealthCheckFailed;
@@ -168,6 +177,7 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
         _application.Dispose();
         ErrorOccurred = null;
         NotificationRequested = null;
+        ErrorCleared = null;
     }
 
     /// <summary>Continues closing all helper instances, then starts exactly one replacement after confirming they are gone.</summary>
@@ -234,6 +244,18 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
         _restartCheck = healthCheck;
         _replacementStartRequested = false;
         _application.Deactivate();
+
+        if (!_application.CloseOperationPending && _application.IsRunning())
+        {
+            _restartCheck = null;
+            PublishHealthNotification(
+                healthCheck,
+                NotificationSeverity.Error,
+                "Health-check recovery blocked",
+                $"{DisplayName} - {healthCheck.Name}\nThe helper is still required by another active profile, so AppSupervisor left it running.",
+                ResourceErrorState.Set
+            );
+        }
     }
 
     /// <summary>Publishes confirmed recovery and clears the check's active tray error state.</summary>
@@ -271,6 +293,13 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
             $"{DisplayName} - {failedRecoveryCheck.Name}\n{message}",
             ResourceErrorState.Set
         );
+    }
+
+    /// <summary>Forwards recovery of an ordinary wrapped application lifecycle error.</summary>
+    /// <param name="resource">The wrapped application that recovered.</param>
+    private void OnApplicationErrorCleared(IManagedResource resource)
+    {
+        ErrorCleared?.Invoke(this);
     }
 
     /// <summary>Raises one check-specific resource notification with a stable error-state key.</summary>

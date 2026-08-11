@@ -18,6 +18,9 @@ internal sealed class ApplicationUsageRegistry : IDisposable
     /// <summary>Occurs when an inactive helper remains open after all configured close attempts.</summary>
     public event Action<string, string, IReadOnlyList<NotificationTarget>>? CleanupFailed;
 
+    /// <summary>Occurs when a later cleanup sweep confirms recovery from the last close failure.</summary>
+    public event Action? CleanupRecovered;
+
     /// <summary>Creates a registry that uses the production managed-application close lifecycle.</summary>
     public ApplicationUsageRegistry()
         : this(configuration => new ManagedApplication(configuration, TimeSpan.Zero))
@@ -68,7 +71,7 @@ internal sealed class ApplicationUsageRegistry : IDisposable
 
         if (!_usages.TryGetValue(key, out ApplicationUsage? usage))
         {
-            usage = new ApplicationUsage(key, ReportCleanupFailure);
+            usage = new ApplicationUsage(key, ReportCleanupFailure, ReportCleanupRecovery);
             _usages.Add(key, usage);
         }
 
@@ -153,6 +156,7 @@ internal sealed class ApplicationUsageRegistry : IDisposable
 
         _usages.Clear();
         CleanupFailed = null;
+        CleanupRecovered = null;
     }
 
     /// <summary>Normalizes executable paths into the case-insensitive identity used by the global index.</summary>
@@ -172,6 +176,12 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         CleanupFailed?.Invoke(displayName, message, targets);
     }
 
+    /// <summary>Forwards cleanup recovery after a later successful inactive-helper sweep.</summary>
+    private void ReportCleanupRecovery()
+    {
+        CleanupRecovered?.Invoke();
+    }
+
     /// <summary>Tracks every enabled profile reference and one optional cleanup lifecycle for an executable.</summary>
     private sealed class ApplicationUsage : IDisposable
     {
@@ -179,18 +189,22 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         private readonly Action<string, string, IReadOnlyList<NotificationTarget>> _reportFailure;
         private readonly List<ApplicationReference> _references = [];
 
+        private readonly Action _reportRecovery;
         private IManagedApplicationLifecycle? _cleanupApplication;
         private IReadOnlyList<NotificationTarget> _cleanupTargets = [];
 
         /// <summary>Creates an empty executable usage group.</summary>
         /// <param name="path">The canonical executable path.</param>
         /// <param name="reportFailure">Receives completed cleanup failures.</param>
+        /// <param name="reportRecovery">Receives recovery after a later successful cleanup sweep.</param>
         public ApplicationUsage(
             string path,
-            Action<string, string, IReadOnlyList<NotificationTarget>> reportFailure)
+            Action<string, string, IReadOnlyList<NotificationTarget>> reportFailure,
+            Action reportRecovery)
         {
             _path = path;
             _reportFailure = reportFailure;
+            _reportRecovery = reportRecovery;
         }
 
         /// <summary>Adds one enabled profile reference to this executable.</summary>
@@ -241,6 +255,9 @@ internal sealed class ApplicationUsageRegistry : IDisposable
 
             _cleanupApplication = cleanupFactory(cleanupConfiguration);
             _cleanupApplication.ErrorOccurred += CleanupApplicationFailed;
+
+            if (_cleanupApplication is IRecoverableResourceErrorSource recoverableSource)
+                recoverableSource.ErrorCleared += CleanupApplicationRecovered;
         }
 
         /// <summary>Checks whether a different profile still requires this executable.</summary>
@@ -300,6 +317,9 @@ internal sealed class ApplicationUsageRegistry : IDisposable
                 return;
 
             _cleanupApplication.ErrorOccurred -= CleanupApplicationFailed;
+
+            if (_cleanupApplication is IRecoverableResourceErrorSource recoverableSource)
+                recoverableSource.ErrorCleared -= CleanupApplicationRecovered;
             _cleanupApplication.Dispose();
             _cleanupApplication = null;
         }
@@ -321,6 +341,13 @@ internal sealed class ApplicationUsageRegistry : IDisposable
                 message,
                 _cleanupTargets
             );
+        }
+
+        /// <summary>Clears registry-level cleanup error state after a later successful sweep.</summary>
+        /// <param name="resource">The cleanup application that recovered.</param>
+        private void CleanupApplicationRecovered(IManagedResource resource)
+        {
+            _reportRecovery();
         }
     }
 

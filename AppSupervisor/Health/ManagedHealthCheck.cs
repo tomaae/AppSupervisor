@@ -17,6 +17,8 @@ public sealed class ManagedHealthCheck : IDisposable
     private DateTime _nextProbeUtc;
     private int _consecutiveFailures;
     private bool _unhealthy;
+    private bool _discardProbeResult;
+    private bool _resetProbeWhenCompleted;
     private bool _disposed;
 
     /// <summary>Creates a health-check state machine around one probe and prerequisite condition.</summary>
@@ -53,6 +55,8 @@ public sealed class ManagedHealthCheck : IDisposable
     /// <param name="nowUtc">The current UTC time supplied by the supervision tick.</param>
     public void Poll(IReadOnlySet<int> ownerProcessIds, DateTime nowUtc)
     {
+        FinalizeDiscardedProbeIfCompleted();
+
         if (_disposed)
             return;
 
@@ -68,8 +72,15 @@ public sealed class ManagedHealthCheck : IDisposable
         {
             if (!_probeTask.IsCompleted)
                 return;
+            if (_discardProbeResult)
+            {
+                FinalizeDiscardedProbeIfCompleted();
+            }
+            else
+            {
 
-            ProcessCompletedProbe(nowUtc);
+                ProcessCompletedProbe(nowUtc);
+            }
         }
 
         if (_probeTask is not null || nowUtc < _nextProbeUtc)
@@ -82,8 +93,13 @@ public sealed class ManagedHealthCheck : IDisposable
     /// <param name="clearError">Whether a previously reported unhealthy state should emit recovery-state clearing.</param>
     public void Suspend(bool clearError)
     {
-        CancelProbe();
-        _probe.Reset();
+        CancelAndDiscardProbe();
+
+        if (_probeTask is null)
+            _probe.Reset();
+        else
+            _resetProbeWhenCompleted = true;
+
         _activeSinceUtc = null;
         _nextProbeUtc = DateTime.MinValue;
         _consecutiveFailures = 0;
@@ -102,8 +118,32 @@ public sealed class ManagedHealthCheck : IDisposable
             return;
 
         _disposed = true;
-        CancelProbe();
-        _probe.Dispose();
+        _probeCancellation?.Cancel();
+
+        Task<HealthProbeResult>? pendingTask = _probeTask;
+        CancellationTokenSource? pendingCancellation = _probeCancellation;
+        _probeTask = null;
+        _probeCancellation = null;
+
+        if (pendingTask is null || pendingTask.IsCompleted)
+        {
+            pendingCancellation?.Dispose();
+            _probe.Dispose();
+        }
+        else
+        {
+            _ = pendingTask.ContinueWith(
+                _ =>
+                {
+                    pendingCancellation?.Dispose();
+                    _probe.Dispose();
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
+            );
+        }
+
         Failed = null;
         Recovered = null;
     }
@@ -187,12 +227,32 @@ public sealed class ManagedHealthCheck : IDisposable
         Failed?.Invoke(this, result.Detail);
     }
 
-    /// <summary>Cancels and forgets the current probe task without waiting on the UI thread.</summary>
-    private void CancelProbe()
+    /// <summary>Cancels the current probe and marks its eventual result as lifecycle noise.</summary>
+    private void CancelAndDiscardProbe()
     {
+        if (_probeTask is null)
+            return;
+
+        _discardProbeResult = true;
         _probeCancellation?.Cancel();
+        FinalizeDiscardedProbeIfCompleted();
+    }
+
+    /// <summary>Releases a cancelled probe only after its task has actually stopped using probe state.</summary>
+    private void FinalizeDiscardedProbeIfCompleted()
+    {
+        if (_probeTask is null || !_discardProbeResult || !_probeTask.IsCompleted)
+            return;
+
         _probeCancellation?.Dispose();
         _probeCancellation = null;
         _probeTask = null;
+        _discardProbeResult = false;
+
+        if (_resetProbeWhenCompleted)
+        {
+            _resetProbeWhenCompleted = false;
+            _probe.Reset();
+        }
     }
 }

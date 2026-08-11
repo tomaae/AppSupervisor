@@ -1,3 +1,5 @@
+using AppSupervisor.Configuration;
+
 namespace AppSupervisor.ConfigurationUI;
 
 /// <summary>
@@ -18,7 +20,7 @@ public sealed partial class ConfigurationEditorForm
     private readonly NumericUpDown _resourceWaitAfterStartup = new()
     {
         Minimum = 0,
-        Maximum = 3_600_000,
+        Maximum = ConfigurationLimits.MaximumWaitAfterStartupMilliseconds,
         Width = 120,
         ThousandsSeparator = true
     };

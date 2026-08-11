@@ -45,9 +45,6 @@ public static partial class ConfigValidator
             ValidateTimeoutValue(profile.CloseTimeoutSeconds, "closeTimeoutSeconds", profileLabel, errors);
             ValidateTimeoutValue(profile.RestartTimeoutSeconds, "restartTimeoutSeconds", profileLabel, errors);
 
-            if (!profile.Enabled)
-                continue;
-
             if (profile.Applications is null)
             {
                 errors.Add($"{profileLabel} must contain an applications array.");
@@ -58,7 +55,8 @@ public static partial class ConfigValidator
                     profile,
                     profileLabel,
                     errors,
-                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    profile.Enabled
                 );
             }
 
@@ -68,7 +66,7 @@ public static partial class ConfigValidator
             }
             else
             {
-                ValidateServices(profile, profileLabel, errors, activeServiceNames);
+                ValidateServices(profile, profileLabel, errors, activeServiceNames, profile.Enabled);
             }
 
             ValidateResourceStartup(profile, profileLabel, errors);
@@ -119,8 +117,13 @@ public static partial class ConfigValidator
         string profileLabel,
         ICollection<string> errors)
     {
-        if (value < 0)
-            errors.Add($"{profileLabel} has an invalid {propertyName}; the value must be zero or greater.");
+        if (value is < 0 or > ConfigurationLimits.MaximumTimeoutSeconds)
+        {
+            errors.Add(
+                $"{profileLabel} has an invalid {propertyName}; the value must be between 0 and " +
+                $"{ConfigurationLimits.MaximumTimeoutSeconds}."
+            );
+        }
     }
 
     /// <summary>
@@ -165,6 +168,7 @@ public static partial class ConfigValidator
     /// Validates helper entries, their notifications, and duplicate executable paths within one profile.
     /// </summary>
     /// <param name="profile">The enabled profile whose helper entries are being validated.</param>
+    /// <param name="profileEnabled">Whether active executable checks apply to this profile.</param>
     /// <param name="profileLabel">The user-readable profile identifier used in errors.</param>
     /// <param name="errors">The collection that receives validation errors.</param>
     /// <param name="activeApplicationPaths">Canonical paths already used within this profile.</param>
@@ -172,7 +176,8 @@ public static partial class ConfigValidator
         SupervisorProfileConfig profile,
         string profileLabel,
         ICollection<string> errors,
-        IDictionary<string, string> activeApplicationPaths)
+        IDictionary<string, string> activeApplicationPaths,
+        bool profileEnabled)
     {
         for (int applicationIndex = 0; applicationIndex < profile.Applications.Count; applicationIndex++)
         {
@@ -188,7 +193,7 @@ public static partial class ConfigValidator
             ValidateNotifications(application.Notifications, applicationLabel, errors);
             ValidateHealthChecks(application, applicationLabel, errors);
 
-            if (!application.Enabled)
+            if (!profileEnabled || !application.Enabled)
                 continue;
 
             if (string.IsNullOrWhiteSpace(application.Path))
@@ -234,6 +239,7 @@ public static partial class ConfigValidator
     /// <summary>
     /// Validates service entries, their notifications, and duplicate active service names.
     /// </summary>
+    /// <param name="profileEnabled">Whether active service checks apply to this profile.</param>
     /// <param name="profile">The enabled profile whose service entries are being validated.</param>
     /// <param name="profileLabel">The user-readable profile identifier used in errors.</param>
     /// <param name="errors">The collection that receives validation errors.</param>
@@ -242,7 +248,8 @@ public static partial class ConfigValidator
         SupervisorProfileConfig profile,
         string profileLabel,
         ICollection<string> errors,
-        IDictionary<string, string> activeServiceNames)
+        IDictionary<string, string> activeServiceNames,
+        bool profileEnabled)
     {
         for (int serviceIndex = 0; serviceIndex < profile.Services.Count; serviceIndex++)
         {
@@ -257,7 +264,7 @@ public static partial class ConfigValidator
             string serviceLabel = $"{profileLabel}, service entry {serviceIndex + 1}";
             ValidateNotifications(service.Notifications, serviceLabel, errors);
 
-            if (!service.Enabled)
+            if (!profileEnabled || !service.Enabled)
                 continue;
 
             if (string.IsNullOrWhiteSpace(service.ServiceName))
