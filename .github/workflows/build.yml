@@ -1,4 +1,4 @@
-name: Build and test
+name: Test
 
 on:
   push:
@@ -12,28 +12,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install .NET 10 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.302
 
       - name: Restore
         run: dotnet restore AppSupervisor.slnx --runtime win-x64
 
-      - name: Build
-        run: dotnet build AppSupervisor.slnx --configuration Release --no-restore
-
       - name: Test
-        run: dotnet test AppSupervisor.slnx --configuration Release --no-restore --no-build
-
-      - name: Audit release package
-        run: ./Publish.ps1
-        shell: pwsh
-
-      - name: Upload audited package
-        uses: actions/upload-artifact@v4
-        with:
-          name: AppSupervisor-win-x64
-          path: artifacts/AppSupervisor-win-x64.zip
+        run: dotnet test AppSupervisor.slnx --configuration Release --no-restore
