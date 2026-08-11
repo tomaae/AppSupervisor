@@ -42,6 +42,8 @@ Each profile watches one process name. When that process is present, AppSupervis
 
 When the monitored process disappears, pending recovery stops immediately. After the configured **Close timeout**, helper applications receive graceful close requests and services receive stop requests. Pausing or exiting AppSupervisor leaves external applications and services untouched.
 
+Applications with **Ensure closed until needed** are checked every five minutes and closed only when no enabled profile using that executable still needs them. The check and any pending close progression stop while AppSupervisor is paused.
+
 The tray icon uses a green play badge while at least one profile's monitored process is running, and a red X when no profiles are enabled. The yellow pause badge has priority over every other state when supervision is paused manually.
 
 ## Detailed functionality
@@ -130,6 +132,7 @@ Selecting an application shows:
 - **App URI** is empty for a normal executable launch. **Pick Steam...** lists installed Steam items and executable candidates, while **Pick Store...** lists launchable Microsoft Store/MSIX applications. These pickers fill both the executable and App URI automatically.
 - **Arguments** are available only for direct executable launches.
 - **Restart after unexpected exit** enables ordinary process recovery while the profile remains active.
+- **Ensure closed until needed** periodically closes the helper while no enabled profile using the same executable is active or waiting through its close timeout.
 - **Minimize windows after starting** begins a cancellable asynchronous minimize attempt after launch.
 - **Monitor application responsiveness** detects a helper whose windows stop processing Windows messages and gracefully restarts it after repeated failures. It is off by default and does not apply to the monitored profile process.
 - **Allow force-kill after all graceful close attempts fail** enables the destructive close fallback. It is intentionally off by default.

@@ -24,6 +24,9 @@ public class ManagedApplicationConfig : ManagedResourceConfig
     /// <summary>Gets or sets whether an unexpectedly exited helper should restart.</summary>
     public bool Restart { get; set; } = true;
 
+    /// <summary>Gets or sets whether the helper should be closed while no referencing profile needs it.</summary>
+    public bool EnsureClosedUntilNeeded { get; set; }
+
     /// <summary>Gets or sets whether newly started helper windows should be minimized.</summary>
     public bool MinimizeAfterStart { get; set; }
 

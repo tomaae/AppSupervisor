@@ -16,7 +16,6 @@ public static partial class ConfigValidator
     {
         var errors = new List<string>();
         var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var activeApplicationPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var activeServiceNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         for (int profileIndex = 0; profileIndex < profiles.Count; profileIndex++)
@@ -55,7 +54,12 @@ public static partial class ConfigValidator
             }
             else
             {
-                ValidateApplications(profile, profileLabel, errors, activeApplicationPaths);
+                ValidateApplications(
+                    profile,
+                    profileLabel,
+                    errors,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                );
             }
 
             if (profile.Services is null)
@@ -158,12 +162,12 @@ public static partial class ConfigValidator
     }
 
     /// <summary>
-    /// Validates helper entries, their notifications, and conflicting active executable paths.
+    /// Validates helper entries, their notifications, and duplicate executable paths within one profile.
     /// </summary>
     /// <param name="profile">The enabled profile whose helper entries are being validated.</param>
     /// <param name="profileLabel">The user-readable profile identifier used in errors.</param>
     /// <param name="errors">The collection that receives validation errors.</param>
-    /// <param name="activeApplicationPaths">Canonical paths already owned by active configuration entries.</param>
+    /// <param name="activeApplicationPaths">Canonical paths already used within this profile.</param>
     private static void ValidateApplications(
         SupervisorProfileConfig profile,
         string profileLabel,

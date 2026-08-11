@@ -18,6 +18,17 @@ public static class SupervisorProfileFactory
     /// <param name="config">The validated configuration entry to translate.</param>
     /// <returns>A fresh supervisor profile containing configured applications and Windows services.</returns>
     public static SupervisorProfile Create(SupervisorProfileConfig config)
+        => Create(config, _ => null);
+
+    /// <summary>
+    /// Builds a profile whose applications consult global shared-helper ownership before closing.
+    /// </summary>
+    /// <param name="config">The validated configuration entry to translate.</param>
+    /// <param name="closeGuardFactory">Creates the close guard for each enabled application entry.</param>
+    /// <returns>A fresh supervisor profile containing configured applications and Windows services.</returns>
+    internal static SupervisorProfile Create(
+        SupervisorProfileConfig config,
+        Func<ManagedApplicationConfig, Func<bool>?> closeGuardFactory)
     {
         var trigger = new ProcessTrigger(config.MonitorProcess);
 
@@ -36,7 +47,8 @@ public static class SupervisorProfileFactory
         {
             var application = new ManagedApplication(
                 applicationConfig,
-                restartTimeout
+                restartTimeout,
+                closeGuardFactory(applicationConfig)
             );
             var healthChecks = applicationConfig.HealthChecks
                 .Where(healthCheck => healthCheck.Enabled)

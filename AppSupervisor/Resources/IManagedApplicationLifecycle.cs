@@ -14,10 +14,10 @@ internal interface IManagedApplicationLifecycle : IManagedResource, IManagedReso
     bool CloseOperationPending { get; }
 
     /// <summary>Checks whether at least one matching helper process is currently running.</summary>
+    /// <returns><see langword="true"/> when a matching process exists.</returns>
+    bool IsRunning();
 
     /// <summary>Uses process presence as the default dependency-readiness signal.</summary>
     /// <returns><see langword="true"/> when at least one matching process exists.</returns>
     bool IManagedResourceReadiness.IsStarted() => IsRunning();
-    /// <returns><see langword="true"/> when a matching process exists.</returns>
-    bool IsRunning();
 }

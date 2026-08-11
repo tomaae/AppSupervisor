@@ -115,6 +115,31 @@ public sealed class SupervisorProfile : IDisposable
     public bool TriggerActive { get; private set; }
 
     /// <summary>
+    /// Checks whether this profile currently requires its resources to remain available.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> while the trigger is present, its close timeout is still running,
+    /// or trigger state cannot be checked safely.
+    /// </returns>
+    internal bool KeepsResourcesActive()
+    {
+        if (_disposed)
+            return false;
+
+        if (TriggerActive || (_triggerMissingSince is not null && !_deactivationStarted))
+            return true;
+
+        try
+        {
+            return _trigger.IsActive();
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Performs one-time initialization for every resource after the complete configuration is accepted.
     /// </summary>
     public void InitializeResources()

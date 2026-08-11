@@ -53,6 +53,7 @@ public sealed class ConfigurationEditorFeatureSmokeTests
                     Assert.Contains("Pick Steam...", buttonTexts);
 
                     Assert.Contains("Pick Store...", buttonTexts);
+                    Assert.Contains("Ensure closed until needed", visibleTexts);
 
                     Assert.True(buttonTexts.Count(text => text == "Test notification") >= 3);
                     Assert.Contains("Test check", buttonTexts);

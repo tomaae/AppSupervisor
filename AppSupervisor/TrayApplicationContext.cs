@@ -19,11 +19,13 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly string _configPath;
     private readonly System.Windows.Forms.Timer _monitorTimer;
     private readonly System.Windows.Forms.Timer _startupTimer;
+    private readonly System.Windows.Forms.Timer _ensureClosedTimer;
     private readonly ToolStripMenuItem _pauseResumeItem;
     private readonly NotificationService _notificationService;
 
     private List<SupervisorProfileConfig> _config = [];
     private List<SupervisorProfile> _profiles = [];
+    private ApplicationUsageRegistry _applicationUsageRegistry = new();
     private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
     private readonly HashSet<SupervisorProfile> _reportedStartupTickErrors = [];
     private bool _paused;
@@ -35,7 +37,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private bool _exiting;
 
     /// <summary>
-    /// Creates the tray UI, notification providers, safe configuration loader, supervision timer, and startup check.
+    /// Creates the tray UI, notification providers, safe configuration loader, supervision timers, and startup check.
     /// </summary>
     public TrayApplicationContext()
     {
@@ -89,11 +91,17 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             Interval = 100
         };
+        _ensureClosedTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 5 * 60 * 1000
+        };
         _monitorTimer.Tick += MonitorTimerTick;
         _monitorTimer.Start();
 
         _startupTimer.Tick += StartupTimerTick;
         _startupTimer.Start();
+        _ensureClosedTimer.Tick += EnsureClosedTimerTick;
+        _ensureClosedTimer.Start();
         LoadConfiguration(showNotification: false);
         Application.Idle += ApplicationBecameIdle;
     }
@@ -143,7 +151,20 @@ public partial class TrayApplicationContext : ApplicationContext
             }
         }
 
+        _applicationUsageRegistry.AdvanceCleanup();
+
         UpdateTrayState();
+    }
+
+    /// <summary>Starts one nonblocking five-minute cleanup sweep for opted-in inactive helper applications.</summary>
+    /// <param name="sender">The dedicated cleanup timer.</param>
+    /// <param name="e">The timer event data.</param>
+    private void EnsureClosedTimerTick(object? sender, EventArgs e)
+    {
+        if (_paused)
+            return;
+
+        _applicationUsageRegistry.Sweep();
     }
 
     /// <summary>Advances dependency and millisecond-delay startup sequences without running full supervision polling.</summary>
@@ -182,7 +203,6 @@ public partial class TrayApplicationContext : ApplicationContext
     }
     /// <summary>
     /// Toggles supervision without starting, closing, or otherwise altering managed resources.
-
     /// </summary>
     /// <param name="sender">The Pause or Resume menu item.</param>
     /// <param name="e">The menu-click event data.</param>
@@ -193,8 +213,15 @@ public partial class TrayApplicationContext : ApplicationContext
 
         if (_paused)
         {
+            _applicationUsageRegistry.SuspendCleanup();
+
             foreach (SupervisorProfile profile in _profiles)
                 profile.SuspendMonitoring();
+        }
+        else
+        {
+            _ensureClosedTimer.Stop();
+            _ensureClosedTimer.Start();
         }
 
         UpdateTrayState();
@@ -207,6 +234,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private void LoadConfiguration(bool showNotification)
     {
         var newProfiles = new List<SupervisorProfile>();
+        var newApplicationUsageRegistry = new ApplicationUsageRegistry();
         List<SupervisorProfileConfig> newConfig;
 
         try
@@ -215,26 +243,43 @@ public partial class TrayApplicationContext : ApplicationContext
 
             foreach (var profileConfig in newConfig.Where(profile => profile.Enabled))
             {
-                var profile = SupervisorProfileFactory.Create(profileConfig);
+                SupervisorProfile? profile = null;
+                profile = SupervisorProfileFactory.Create(
+                    profileConfig,
+                    applicationConfig => () =>
+                        newApplicationUsageRegistry.IsRequiredByAnotherProfile(
+                            applicationConfig.Path,
+                            profile ?? throw new InvalidOperationException(
+                                "The profile close guard was evaluated before profile construction completed."
+                            )
+                        )
+                );
                 profile.ResourceRestarted += OnResourceRestarted;
                 profile.ErrorOccurred += OnSupervisionError;
                 profile.ResourceNotificationRequested += OnResourceNotificationRequested;
                 newProfiles.Add(profile);
+                newApplicationUsageRegistry.RegisterProfile(profileConfig, profile);
             }
+
+            newApplicationUsageRegistry.CompleteRegistration();
+            newApplicationUsageRegistry.CleanupFailed += OnInactiveApplicationCleanupFailed;
         }
         catch (Exception ex)
         {
             foreach (var newProfile in newProfiles)
                 newProfile.Dispose();
 
+            newApplicationUsageRegistry.Dispose();
             HandleConfigurationLoadFailure(ex);
             return;
         }
 
         List<SupervisorProfile> oldProfiles = _profiles;
+        ApplicationUsageRegistry oldApplicationUsageRegistry = _applicationUsageRegistry;
 
         _config = newConfig;
         _profiles = newProfiles;
+        _applicationUsageRegistry = newApplicationUsageRegistry;
         _hasValidConfiguration = true;
         _configurationError = false;
         _runtimeError = false;
@@ -246,8 +291,14 @@ public partial class TrayApplicationContext : ApplicationContext
         foreach (SupervisorProfile oldProfile in oldProfiles)
             oldProfile.Dispose();
 
+        oldApplicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
+        oldApplicationUsageRegistry.Dispose();
+
         foreach (SupervisorProfile newProfile in _profiles)
             newProfile.InitializeResources();
+
+        _ensureClosedTimer.Stop();
+        _ensureClosedTimer.Start();
 
         if (showNotification)
         {
@@ -302,6 +353,26 @@ public partial class TrayApplicationContext : ApplicationContext
             "Resource restarted",
             $"{profile.Name}: {resource.DisplayName} was restarted.",
             resource.NotificationTargets
+        );
+    }
+
+    /// <summary>Reports a failed inactive-helper cleanup through its merged application notification targets.</summary>
+    /// <param name="displayName">The helper executable filename.</param>
+    /// <param name="message">The close failure reported after all configured attempts.</param>
+    /// <param name="targets">The combined notification targets from opted-in entries.</param>
+    private void OnInactiveApplicationCleanupFailed(
+        string displayName,
+        string message,
+        IReadOnlyList<NotificationTarget> targets)
+    {
+        _runtimeError = true;
+        UpdateTrayState();
+
+        PublishNotification(
+            NotificationSeverity.Error,
+            "Inactive helper close failed",
+            $"{displayName}\n{message}",
+            targets
         );
     }
 
@@ -481,8 +552,13 @@ public partial class TrayApplicationContext : ApplicationContext
         Application.ApplicationExit -= ApplicationExiting;
         _monitorTimer.Stop();
         _startupTimer.Stop();
+        _ensureClosedTimer.Stop();
+        _ensureClosedTimer.Tick -= EnsureClosedTimerTick;
+        _ensureClosedTimer.Dispose();
         _startupTimer.Dispose();
         _monitorTimer.Dispose();
+        _applicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
+        _applicationUsageRegistry.Dispose();
 
         foreach (var profile in _profiles)
             profile.Dispose();

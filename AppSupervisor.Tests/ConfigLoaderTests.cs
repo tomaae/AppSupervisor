@@ -41,6 +41,7 @@ public sealed class ConfigLoaderTests
                     new
                     {
                         path = Environment.ProcessPath!,
+                        ensureClosedUntilNeeded = true,
                         notifications = new { target = new[] { "popup", "windows" } }
                     }
                 },
@@ -62,6 +63,7 @@ public sealed class ConfigLoaderTests
             [NotificationTarget.Popup, NotificationTarget.Windows],
             config[0].Applications[0].Notifications.Target
         );
+        Assert.True(config[0].Applications[0].EnsureClosedUntilNeeded);
         Assert.Equal(
             [NotificationTarget.XsOverlay],
             config[0].Services[0].Notifications.Target

@@ -51,6 +51,11 @@ public sealed partial class ConfigurationEditorForm : Form
         Text = "Restart after unexpected exit",
         AutoSize = true
     };
+    private readonly CheckBox _applicationEnsureClosedUntilNeeded = new()
+    {
+        Text = "Ensure closed until needed",
+        AutoSize = true
+    };
     private readonly CheckBox _applicationMinimize = new()
     {
         Text = "Minimize windows after starting",
@@ -348,6 +353,14 @@ public sealed partial class ConfigurationEditorForm : Form
             Text = "Use Pick Steam or Pick Store to fill both the app URI and real executable automatically. The executable remains the process AppSupervisor monitors. Arguments apply only to direct executable launches."
         });
         AddEditorRow(layout, "Restart", _applicationRestart);
+        AddEditorRow(layout, "When inactive", _applicationEnsureClosedUntilNeeded);
+        AddEditorRow(layout, "", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(680, 0),
+            ForeColor = SystemColors.GrayText,
+            Text = "Every five minutes, AppSupervisor closes this helper only when no enabled profile using the same executable needs it. Pausing AppSupervisor also pauses this check."
+        });
         AddEditorRow(layout, "Responsiveness", _applicationMonitorResponsiveness);
         AddEditorRow(layout, "After launch", _applicationMinimize);
         AddEditorRow(layout, "Close fallback", _applicationForceKill);
@@ -483,6 +496,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _applicationAppUri.TextChanged += ApplicationFieldChanged;
         _applicationArguments.TextChanged += ApplicationFieldChanged;
         _applicationRestart.CheckedChanged += ApplicationFieldChanged;
+        _applicationEnsureClosedUntilNeeded.CheckedChanged += ApplicationFieldChanged;
         _applicationMinimize.CheckedChanged += ApplicationFieldChanged;
         _applicationMonitorResponsiveness.CheckedChanged += ApplicationFieldChanged;
         _applicationForceKill.CheckedChanged += ApplicationFieldChanged;
@@ -606,6 +620,8 @@ public sealed partial class ConfigurationEditorForm : Form
             _applicationArguments.Enabled = string.IsNullOrWhiteSpace(_applicationAppUri.Text);
             _applicationArguments.Text = application?.Arguments ?? "";
             _applicationRestart.Checked = application?.Restart ?? true;
+            _applicationEnsureClosedUntilNeeded.Checked =
+                application?.EnsureClosedUntilNeeded ?? false;
             _applicationMinimize.Checked = application?.MinimizeAfterStart ?? false;
             _applicationMonitorResponsiveness.Checked = application?.MonitorResponsiveness ?? false;
             _applicationForceKill.Checked = application?.ForceKillAfterCloseFailure ?? false;
@@ -693,6 +709,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _applicationArguments.Enabled = string.IsNullOrWhiteSpace(_applicationAppUri.Text);
         application.Arguments = _applicationArguments.Text;
         application.Restart = _applicationRestart.Checked;
+        application.EnsureClosedUntilNeeded = _applicationEnsureClosedUntilNeeded.Checked;
         application.MinimizeAfterStart = _applicationMinimize.Checked;
         application.MonitorResponsiveness = _applicationMonitorResponsiveness.Checked;
         application.ForceKillAfterCloseFailure = _applicationForceKill.Checked;

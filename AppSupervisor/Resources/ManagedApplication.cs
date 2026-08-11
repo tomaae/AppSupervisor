@@ -17,6 +17,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
     private const int ForceKillConfirmationTimeoutSeconds = 5;
 
     private readonly TimeSpan _restartTimeout;
+    private readonly Func<bool>? _shouldRemainRunning;
 
     private CancellationTokenSource? _minimizeCancellation;
     private CloseOperation? _closeOperation;
@@ -32,9 +33,24 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
     public ManagedApplication(
         ManagedApplicationConfig config,
         TimeSpan restartTimeout)
+        : this(config, restartTimeout, shouldRemainRunning: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a managed application with an optional shared-profile close guard.
+    /// </summary>
+    /// <param name="config">The executable and supervision settings for the application.</param>
+    /// <param name="restartTimeout">How long an unexpectedly missing application may remain absent before restart.</param>
+    /// <param name="shouldRemainRunning">Returns whether another profile still needs this executable.</param>
+    internal ManagedApplication(
+        ManagedApplicationConfig config,
+        TimeSpan restartTimeout,
+        Func<bool>? shouldRemainRunning)
     {
         Config = config;
         _restartTimeout = restartTimeout;
+        _shouldRemainRunning = shouldRemainRunning;
     }
 
     /// <summary>Occurs when the helper cannot complete a requested lifecycle operation.</summary>
@@ -202,6 +218,12 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
 
+        if (ShouldRemainRunning())
+        {
+            _closeOperation = null;
+            return;
+        }
+
         var processes = FindRunningProcesses();
 
         try
@@ -228,6 +250,12 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
         if (_disposed || _closeOperation is null)
             return;
 
+        if (ShouldRemainRunning())
+        {
+            _closeOperation = null;
+            return;
+        }
+
         AdvanceCloseOperation(profileActive: false);
     }
 
@@ -243,6 +271,20 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
         _closeOperation = null;
         CancelMinimizeAfterStart();
         ErrorOccurred = null;
+    }
+
+    /// <summary>Checks the shared-profile guard conservatively before sending or advancing close requests.</summary>
+    /// <returns><see langword="true"/> when another profile still needs this executable.</returns>
+    private bool ShouldRemainRunning()
+    {
+        try
+        {
+            return _shouldRemainRunning?.Invoke() == true;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     /// <summary>
