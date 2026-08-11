@@ -190,18 +190,17 @@ After the main message loop starts, AppSupervisor checks whether a current-user 
 
 The configuration UI stores its validated document in `config.json` beside `AppSupervisor.exe`. If the file does not exist, AppSupervisor creates a valid empty configuration automatically. Saving is atomic, and the last verified configuration is written to `config.json.old` during normal shutdown. Unknown or obsolete JSON fields are rejected rather than silently ignored.
 
-Both `AppSupervisor/config.json` and `AppSupervisor/config.json.old` are ignored by Git so personal paths remain outside repository history. Release packages always contain a fresh empty `config.json`; the local configuration is never copied into delivery artifacts.
+Both `AppSupervisor/config.json` and `AppSupervisor/config.json.old` are ignored by Git so personal paths remain outside repository history. Release packages contain no configuration file; AppSupervisor creates an empty `config.json` beside the executable on first start.
 
 ## Running a packaged build
 
 The release package is Windows x64 and framework-dependent. Install the **.NET 10 Desktop Runtime** before running it.
 
-Keep these three files together:
+Keep these two files together:
 
 ```text
 AppSupervisor.exe
 AppSupervisor.NotificationHost.exe
-config.json
 ```
 
 Start `AppSupervisor.exe` and approve the UAC prompt. The application runs in the notification area rather than opening a main window.
@@ -240,7 +239,7 @@ artifacts/AppSupervisor/
 artifacts/AppSupervisor-win-x64.zip
 ```
 
-The audit fails if the package contains anything other than the two executables and `config.json`. If an existing extracted build is locked by a running AppSupervisor instance, the current build is left in `artifacts/AppSupervisor.staging/` while the ZIP is still updated.
+The audit fails if the package contains anything other than the two executables, including any `config.json`. If an existing extracted build is locked by a running AppSupervisor instance, the current build is left in `artifacts/AppSupervisor.staging/` while the ZIP is still updated.
 
 ## Project structure
 

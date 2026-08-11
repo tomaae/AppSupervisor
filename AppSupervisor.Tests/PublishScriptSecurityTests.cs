@@ -1,13 +1,13 @@
 namespace AppSupervisor.Tests;
 
 /// <summary>
-/// Protects the release packaging script from copying a developer's personal configuration into delivery artifacts.
+/// Protects release artifacts from containing either personal or generated configuration files.
 /// </summary>
 public sealed class PublishScriptSecurityTests
 {
-    /// <summary>Confirms packaging always creates and audits an empty configuration instead of referencing the local file.</summary>
+    /// <summary>Confirms packaging rejects every configuration file instead of referencing or generating one.</summary>
     [Fact]
-    public void Script_PersonalConfigurationNeverCopiedIntoPackage()
+    public void Script_ConfigurationFileExcludedFromPackage()
     {
         string script = File.ReadAllText(FindPublishScript());
 
@@ -17,9 +17,10 @@ public sealed class PublishScriptSecurityTests
             script,
             StringComparison.OrdinalIgnoreCase
         );
-        Assert.Contains("$emptyPackagedConfiguration", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("$emptyPackagedConfiguration", script, StringComparison.Ordinal);
+        Assert.Contains("$forbiddenPackagedConfigPath", script, StringComparison.Ordinal);
         Assert.Contains(
-            "The packaged config.json is not the required empty configuration.",
+            "Release packages must not contain config.json.",
             script,
             StringComparison.Ordinal
         );
