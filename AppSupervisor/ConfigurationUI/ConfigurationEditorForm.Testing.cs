@@ -44,6 +44,7 @@ public sealed partial class ConfigurationEditorForm
             WrapContents = false,
             Margin = Padding.Empty
         };
+        selector.Margin = Padding.Empty;
         panel.Controls.Add(selector);
         panel.Controls.Add(CreateButton("Test notification", testHandler));
         return panel;

@@ -5,7 +5,7 @@ namespace AppSupervisor.Resources;
 /// <summary>
 /// Exposes the process lifecycle state required by the health-check recovery wrapper.
 /// </summary>
-internal interface IManagedApplicationLifecycle : IManagedResource
+internal interface IManagedApplicationLifecycle : IManagedResource, IManagedResourceReadiness
 {
     /// <summary>Gets the helper configuration used for identity and process discovery.</summary>
     ManagedApplicationConfig Config { get; }
@@ -14,6 +14,10 @@ internal interface IManagedApplicationLifecycle : IManagedResource
     bool CloseOperationPending { get; }
 
     /// <summary>Checks whether at least one matching helper process is currently running.</summary>
+
+    /// <summary>Uses process presence as the default dependency-readiness signal.</summary>
+    /// <returns><see langword="true"/> when at least one matching process exists.</returns>
+    bool IManagedResourceReadiness.IsStarted() => IsRunning();
     /// <returns><see langword="true"/> when a matching process exists.</returns>
     bool IsRunning();
 }

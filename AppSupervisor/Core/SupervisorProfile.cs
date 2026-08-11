@@ -8,10 +8,16 @@ namespace AppSupervisor.Core;
 public sealed class SupervisorProfile : IDisposable
 {
     private readonly ITrigger _trigger;
+    private readonly IReadOnlyList<ManagedResourceStartup> _startupResources;
+    private readonly IReadOnlyDictionary<string, ManagedResourceStartup> _startupResourcesById;
     private readonly IReadOnlyList<IManagedResource> _resources;
+    private readonly List<IManagedResource> _activatedResources = [];
     private readonly TimeSpan _closeTimeout;
 
     private DateTime? _triggerMissingSince;
+    private DateTime _nextStartupUtc;
+    private int _nextStartupIndex;
+    private bool _startupPending;
     private bool _deactivationStarted;
     private bool _initialized;
     private bool _disposed;
@@ -30,11 +36,45 @@ public sealed class SupervisorProfile : IDisposable
         ITrigger trigger,
         IEnumerable<IManagedResource> resources,
         TimeSpan closeTimeout)
+        : this(
+            name,
+            triggerDisplayName,
+            trigger,
+            resources.Select((resource, index) => new ManagedResourceStartup(
+                resource,
+                string.Concat("resource-", index),
+                waitAfterStartupMilliseconds: 0,
+                dependencyResourceId: ""
+            )),
+            closeTimeout
+        )
+    {
+    }
+
+    /// <summary>Creates a profile with explicit cross-type startup sequencing metadata.</summary>
+    /// <param name="name">The human-readable profile name.</param>
+    /// <param name="triggerDisplayName">The trigger name shown in status notifications.</param>
+    /// <param name="trigger">The condition that determines whether the profile is active.</param>
+    /// <param name="startupResources">The resources in startup order with delay and dependency settings.</param>
+    /// <param name="closeTimeout">How long the trigger may remain inactive before resources are closed.</param>
+    internal SupervisorProfile(
+        string name,
+        string triggerDisplayName,
+        ITrigger trigger,
+        IEnumerable<ManagedResourceStartup> startupResources,
+        TimeSpan closeTimeout)
     {
         Name = name;
         TriggerDisplayName = triggerDisplayName;
         _trigger = trigger;
-        _resources = resources.ToList();
+        _startupResources = startupResources.ToList();
+        _startupResourcesById = _startupResources.ToDictionary(
+            startup => startup.ResourceId,
+            StringComparer.OrdinalIgnoreCase
+        );
+        _resources = _startupResources
+            .Select(startup => startup.Resource)
+            .ToList();
         NotificationTargets = _resources
             .SelectMany(resource => resource.NotificationTargets)
             .Distinct()
@@ -103,7 +143,7 @@ public sealed class SupervisorProfile : IDisposable
             _initialized = true;
 
             if (isActive)
-                ActivateResources();
+                BeginStartupSequence();
 
             return false;
         }
@@ -116,11 +156,11 @@ public sealed class SupervisorProfile : IDisposable
             if (!TriggerActive)
             {
                 TriggerActive = true;
-                ActivateResources();
+                BeginStartupSequence();
                 return true;
             }
 
-            foreach (IManagedResource resource in _resources)
+            foreach (IManagedResource resource in _activatedResources)
             {
                 try
                 {
@@ -140,6 +180,7 @@ public sealed class SupervisorProfile : IDisposable
         {
             TriggerActive = false;
             _triggerMissingSince = DateTime.UtcNow;
+            CancelStartupSequence();
             _deactivationStarted = false;
 
             foreach (IManagedResource resource in _resources)
@@ -156,7 +197,7 @@ public sealed class SupervisorProfile : IDisposable
 
         if (_deactivationStarted)
         {
-            foreach (IManagedResource resource in _resources)
+            foreach (IManagedResource resource in _activatedResources)
             {
                 RunResourceOperation(
                     resource,
@@ -199,6 +240,8 @@ public sealed class SupervisorProfile : IDisposable
         if (_disposed)
             return;
 
+        CancelStartupSequence();
+        _activatedResources.Clear();
         _disposed = true;
 
         foreach (IManagedResource resource in _resources)
@@ -216,17 +259,89 @@ public sealed class SupervisorProfile : IDisposable
         ResourceNotificationRequested = null;
     }
 
-    /// <summary>Ensures every managed resource is active when the trigger is present.</summary>
-    private void ActivateResources()
+    /// <summary>Starts a fresh ordered activation sequence and immediately advances zero-delay entries.</summary>
+    private void BeginStartupSequence()
     {
-        foreach (IManagedResource resource in _resources)
-            RunResourceOperation(resource, resource.Activate, "activation");
+        _activatedResources.Clear();
+        _nextStartupIndex = 0;
+        _nextStartupUtc = DateTime.MinValue;
+        _startupPending = _startupResources.Count > 0;
+        AdvanceStartup(DateTime.UtcNow);
     }
 
-    /// <summary>Begins gracefully closing every managed resource after the trigger's close timeout period.</summary>
+    /// <summary>Advances timestamp and dependency-gated startup without sleeping or blocking another profile.</summary>
+    /// <param name="nowUtc">The current UTC time supplied by the startup timer or profile activation.</param>
+    internal void AdvanceStartup(DateTime nowUtc)
+    {
+        if (_disposed || !TriggerActive || !_startupPending || nowUtc < _nextStartupUtc)
+            return;
+
+        while (_nextStartupIndex < _startupResources.Count)
+        {
+            ManagedResourceStartup startup = _startupResources[_nextStartupIndex];
+
+            if (!string.IsNullOrWhiteSpace(startup.DependencyResourceId) &&
+                !IsDependencyStarted(startup.DependencyResourceId))
+            {
+                return;
+            }
+
+            RunResourceOperation(startup.Resource, startup.Resource.Activate, "activation");
+
+            if (!_activatedResources.Contains(startup.Resource))
+                _activatedResources.Add(startup.Resource);
+
+            _nextStartupIndex++;
+            _nextStartupUtc = nowUtc +
+                TimeSpan.FromMilliseconds(startup.WaitAfterStartupMilliseconds);
+
+            if (startup.WaitAfterStartupMilliseconds > 0)
+                return;
+        }
+
+        _startupPending = false;
+    }
+
+    /// <summary>Checks whether an earlier activated resource is ready for a dependent startup entry.</summary>
+    /// <param name="dependencyResourceId">The stable profile-local dependency identifier.</param>
+    /// <returns><see langword="true"/> when the dependency has been activated and reports started.</returns>
+    private bool IsDependencyStarted(string dependencyResourceId)
+    {
+        if (!_startupResourcesById.TryGetValue(dependencyResourceId, out ManagedResourceStartup? dependency) ||
+            !_activatedResources.Contains(dependency.Resource))
+        {
+            return false;
+        }
+
+        if (dependency.Resource is not IManagedResourceReadiness readiness)
+            return true;
+
+        try
+        {
+            return readiness.IsStarted();
+        }
+        catch (Exception ex)
+        {
+            OnResourceError(
+                dependency.Resource,
+                $"Unexpected dependency readiness failure: {ex.Message}"
+            );
+            return false;
+        }
+    }
+
+    /// <summary>Cancels unissued startup entries while leaving already activated resources untouched.</summary>
+    private void CancelStartupSequence()
+    {
+        _startupPending = false;
+        _nextStartupIndex = 0;
+        _nextStartupUtc = DateTime.MinValue;
+    }
+
+    /// <summary>Begins gracefully closing resources reached by the current activation sequence.</summary>
     private void DeactivateResources()
     {
-        foreach (IManagedResource resource in _resources)
+        foreach (IManagedResource resource in _activatedResources)
             RunResourceOperation(resource, resource.Deactivate, "deactivation");
     }
 

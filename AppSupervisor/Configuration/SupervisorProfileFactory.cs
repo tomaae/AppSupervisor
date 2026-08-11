@@ -25,7 +25,11 @@ public static class SupervisorProfileFactory
             config.RestartTimeoutSeconds ?? DefaultRestartTimeoutSeconds;
         var restartTimeout = TimeSpan.FromSeconds(restartTimeoutSeconds);
 
-        var resources = new List<IManagedResource>();
+        var configuredResources = new List<(
+            ManagedResourceConfig Config,
+            IManagedResource Resource,
+            int StableOrder)>();
+        int stableOrder = 0;
 
         foreach (ManagedApplicationConfig applicationConfig in
             config.Applications.Where(application => application.Enabled))
@@ -47,17 +51,34 @@ public static class SupervisorProfileFactory
                 );
             }
 
-            resources.Add(healthChecks.Count == 0
+            IManagedResource resource = healthChecks.Count == 0
                 ? application
-                : new HealthCheckedApplication(application, healthChecks));
+                : new HealthCheckedApplication(application, healthChecks);
+            configuredResources.Add((applicationConfig, resource, stableOrder++));
         }
 
-        resources.AddRange(config.Services
-            .Where(service => service.Enabled)
-            .Select(service => (IManagedResource)new ManagedService(
-                service,
-                restartTimeout
-            )));
+        foreach (ManagedServiceConfig serviceConfig in
+            config.Services.Where(service => service.Enabled))
+        {
+            configuredResources.Add((
+                serviceConfig,
+                new ManagedService(serviceConfig, restartTimeout),
+                stableOrder++
+            ));
+        }
+
+        ManagedResourceStartup[] startupResources = configuredResources
+            .OrderBy(item => item.Config.StartupOrder < 0
+                ? int.MaxValue
+                : item.Config.StartupOrder)
+            .ThenBy(item => item.StableOrder)
+            .Select(item => new ManagedResourceStartup(
+                item.Resource,
+                item.Config.ResourceId,
+                item.Config.WaitAfterStartupMilliseconds,
+                item.Config.DependencyResourceId
+            ))
+            .ToArray();
 
         int closeTimeoutSeconds =
             config.CloseTimeoutSeconds ?? DefaultCloseTimeoutSeconds;
@@ -66,7 +87,7 @@ public static class SupervisorProfileFactory
             config.Name,
             config.MonitorProcess,
             trigger,
-            resources,
+            startupResources,
             TimeSpan.FromSeconds(closeTimeoutSeconds)
         );
     }

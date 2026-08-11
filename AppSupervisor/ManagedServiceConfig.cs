@@ -1,11 +1,8 @@
 namespace AppSupervisor;
 
 /// <summary>Configures one Windows service supervised as part of a profile.</summary>
-public class ManagedServiceConfig
+public class ManagedServiceConfig : ManagedResourceConfig
 {
-    /// <summary>Gets or sets whether the service participates in supervision.</summary>
-    public bool Enabled { get; set; } = true;
-
     /// <summary>Gets or sets the internal Windows service name used by service-control APIs.</summary>
     public string ServiceName { get; set; } = "";
 

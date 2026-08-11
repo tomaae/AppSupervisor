@@ -98,6 +98,11 @@ public sealed partial class ConfigurationEditorForm : Form
     private DateTime? _loadedWriteTimeUtc;
     private string? _loadError;
     private bool _loadingControls;
+    private string _unchangedConfigurationState = "";
+    private bool _hasUnsavedChanges;
+    private bool _closeWithoutUnsavedChangesPrompt;
+    private Button _validateButton = null!;
+    private Button _saveButton = null!;
 
     /// <summary>Loads a detached configuration document and constructs all editor pages.</summary>
     /// <param name="configPath">The active config.json path.</param>
@@ -153,13 +158,13 @@ public sealed partial class ConfigurationEditorForm : Form
         Controls.Add(BuildHeader());
         Controls.Add(BuildFooter());
         _tabs.TabPages.Add(BuildProfilePage());
-        _tabs.TabPages.Add(BuildApplicationsPage());
-        _tabs.TabPages.Add(BuildServicesPage());
+        _tabs.TabPages.Add(BuildResourcesPage());
         WireEvents();
 
         BeginRefreshInstalledServices(showErrors: false);
 
         BindProfileSelector();
+        _unchangedConfigurationState = SerializeEditingState();
         UpdateStatus();
     }
 
@@ -212,16 +217,20 @@ public sealed partial class ConfigurationEditorForm : Form
         {
             Text = "Cancel",
             DialogResult = DialogResult.Cancel,
-            AutoSize = true
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(72, 27),
+            Margin = new Padding(6, 0, 0, 0),
+            Padding = new Padding(8, 0, 8, 0)
         };
-        var saveButton = CreateButton("Save && Apply", SaveClicked);
-        var validateButton = CreateButton("Validate", ValidateClicked);
+        _saveButton = CreateButton("Save && Apply", SaveClicked);
+        _validateButton = CreateButton("Validate", ValidateClicked);
         buttons.Controls.Add(cancelButton);
-        buttons.Controls.Add(saveButton);
-        buttons.Controls.Add(validateButton);
+        buttons.Controls.Add(_saveButton);
+        buttons.Controls.Add(_validateButton);
         panel.Controls.Add(_statusLabel, 0, 0);
         panel.Controls.Add(buttons, 1, 0);
-        AcceptButton = saveButton;
+        AcceptButton = _saveButton;
         CancelButton = cancelButton;
         return panel;
     }
@@ -245,6 +254,7 @@ public sealed partial class ConfigurationEditorForm : Form
         monitorPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         monitorPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         monitorPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _monitorProcess.Margin = Padding.Empty;
         monitorPanel.Controls.Add(_monitorProcess, 0, 0);
         monitorPanel.Controls.Add(CreateButton("Browse...", BrowseMonitorProcessClicked), 1, 0);
         monitorPanel.Controls.Add(CreateButton("Pick running...", PickMonitorProcessClicked), 2, 0);
@@ -324,6 +334,7 @@ public sealed partial class ConfigurationEditorForm : Form
         pathPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         pathPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         pathPanel.Controls.Add(_applicationPath, 0, 0);
+        _applicationPath.Margin = Padding.Empty;
         pathPanel.Controls.Add(CreateButton("Browse...", BrowseApplicationClicked), 1, 0);
         pathPanel.Controls.Add(CreateButton("Pick running...", PickApplicationProcessClicked), 2, 0);
         AddEditorRow(layout, "Executable", pathPanel);
@@ -440,13 +451,19 @@ public sealed partial class ConfigurationEditorForm : Form
     private void WireEvents()
     {
         _profileSelector.FormattingEnabled = true;
+        _resourceList.FormattingEnabled = true;
         _applicationList.FormattingEnabled = true;
         _serviceList.FormattingEnabled = true;
         _healthCheckList.FormattingEnabled = true;
         _profileSelector.SelectedIndexChanged += ProfileSelectionChanged;
         _profileSelector.Format += ProfileSelectorFormat;
+        _resourceList.SelectedIndexChanged += ResourceSelectionChanged;
+        _resourceList.Format += ResourceListFormat;
         _applicationList.SelectedIndexChanged += ApplicationSelectionChanged;
         _applicationList.Format += ApplicationListFormat;
+        _resourceList.MouseDown += ResourceListMouseDown;
+        _resourceList.MouseMove += ResourceListMouseMove;
+        _resourceList.MouseUp += ResourceListMouseUp;
         _serviceList.SelectedIndexChanged += ServiceSelectionChanged;
         _serviceList.Format += ServiceListFormat;
         _healthCheckList.Format += HealthCheckListFormat;
@@ -457,6 +474,9 @@ public sealed partial class ConfigurationEditorForm : Form
         _monitorProcess.TextChanged += ProfileFieldChanged;
         _closeTimeout.ValueChanged += ProfileFieldChanged;
         _restartTimeout.ValueChanged += ProfileFieldChanged;
+
+        _resourceDependency.SelectedIndexChanged += ResourceStartupFieldChanged;
+        _resourceWaitAfterStartup.ValueChanged += ResourceStartupFieldChanged;
 
         _applicationEnabled.CheckedChanged += ApplicationFieldChanged;
         _applicationPath.TextChanged += ApplicationFieldChanged;
@@ -517,16 +537,14 @@ public sealed partial class ConfigurationEditorForm : Form
             _monitorProcess.Text = profile?.MonitorProcess ?? "";
             _closeTimeout.Value = profile?.CloseTimeoutSeconds;
             _restartTimeout.Value = profile?.RestartTimeoutSeconds;
-            BindApplicationList(profile);
-            BindServiceList(profile);
+            BindResourceList(profile);
         }
         finally
         {
             _loadingControls = false;
         }
 
-        LoadSelectedApplication();
-        LoadSelectedService();
+        LoadSelectedResource();
         UpdateStatus();
     }
 
@@ -679,7 +697,7 @@ public sealed partial class ConfigurationEditorForm : Form
         application.MonitorResponsiveness = _applicationMonitorResponsiveness.Checked;
         application.ForceKillAfterCloseFailure = _applicationForceKill.Checked;
         application.Notifications.Target = [.. _applicationNotifications.SelectedTargets];
-        _applicationList.Refresh();
+        _resourceList.Refresh();
         UpdateStatus();
     }
 
@@ -697,7 +715,7 @@ public sealed partial class ConfigurationEditorForm : Form
             service.ServiceName = installedService.ServiceName;
         service.Restart = _serviceRestart.Checked;
         service.Notifications.Target = [.. _serviceNotifications.SelectedTargets];
-        _serviceList.Refresh();
+        _resourceList.Refresh();
         UpdateStatus();
     }
 
@@ -827,9 +845,10 @@ public sealed partial class ConfigurationEditorForm : Form
 
         var application = new ManagedApplicationConfig();
         profile.Applications.Add(application);
-        BindApplicationList(profile, application);
-        LoadSelectedApplication();
+        BindResourceList(profile, application);
+        LoadSelectedResource();
         _applicationPath.Focus();
+        UpdateStatus();
     }
 
     /// <summary>Removes the selected application after explicit confirmation.</summary>
@@ -845,8 +864,10 @@ public sealed partial class ConfigurationEditorForm : Form
         }
 
         profile.Applications.Remove(selected);
-        BindApplicationList(profile);
-        LoadSelectedApplication();
+        ClearRemovedResourceDependencies(profile, selected.ResourceId);
+        BindResourceList(profile);
+        LoadSelectedResource();
+        UpdateStatus();
     }
 
     /// <summary>Lets the user choose an application executable through the standard file picker.</summary>
@@ -891,6 +912,7 @@ public sealed partial class ConfigurationEditorForm : Form
 
         application.HealthChecks.Add(dialog.Result);
         BindHealthCheckList(application, dialog.Result);
+        UpdateStatus();
     }
 
     /// <summary>Edits the selected health check in a detached type-aware dialog.</summary>
@@ -912,6 +934,7 @@ public sealed partial class ConfigurationEditorForm : Form
 
         application.HealthChecks[index] = dialog.Result;
         BindHealthCheckList(application, dialog.Result);
+        UpdateStatus();
     }
 
     /// <summary>Removes the selected health check after explicit confirmation.</summary>
@@ -928,6 +951,7 @@ public sealed partial class ConfigurationEditorForm : Form
 
         application.HealthChecks.Remove(selected);
         BindHealthCheckList(application);
+        UpdateStatus();
     }
 
     /// <summary>Adds and selects a new Windows service in the current profile.</summary>
@@ -992,9 +1016,10 @@ public sealed partial class ConfigurationEditorForm : Form
         };
 
         profile.Services.Add(service);
-        BindServiceList(profile, service);
-        LoadSelectedService();
+        BindResourceList(profile, service);
+        LoadSelectedResource();
         _serviceName.Focus();
+        UpdateStatus();
     }
 
     /// <summary>Removes the selected service after explicit confirmation.</summary>
@@ -1010,8 +1035,10 @@ public sealed partial class ConfigurationEditorForm : Form
         }
 
         profile.Services.Remove(selected);
-        BindServiceList(profile);
-        LoadSelectedService();
+        ClearRemovedResourceDependencies(profile, selected.ResourceId);
+        BindResourceList(profile);
+        LoadSelectedResource();
+        UpdateStatus();
     }
 
     /// <summary>Chooses the profile trigger from a searchable list of running processes.</summary>
@@ -1070,6 +1097,8 @@ public sealed partial class ConfigurationEditorForm : Form
 
             ConfigFileWriter.SaveAtomic(_configPath, _profiles);
             _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
+            _hasUnsavedChanges = false;
+            _closeWithoutUnsavedChangesPrompt = true;
             DialogResult = DialogResult.OK;
             Close();
         }
@@ -1095,6 +1124,7 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <summary>Updates the footer with load warnings and current document counts.</summary>
     private void UpdateStatus()
     {
+        UpdateDirtyState();
         if (_loadError is not null)
         {
             _statusLabel.ForeColor = Color.DarkRed;
@@ -1109,6 +1139,65 @@ public sealed partial class ConfigurationEditorForm : Form
             profile.Applications.Sum(application => application.HealthChecks.Count));
         _statusLabel.ForeColor = SystemColors.ControlText;
         _statusLabel.Text = $"{_profiles.Count} profile(s), {applications} application(s), {services} service(s), {healthChecks} health check(s)";
+    }
+
+    /// <summary>Serializes the editable model without requiring it to be currently valid.</summary>
+    /// <returns>A stable JSON representation used only for change detection.</returns>
+    private string SerializeEditingState()
+    {
+        return System.Text.Json.JsonSerializer.Serialize(
+            _profiles,
+            ConfigJson.CreateOptions()
+        );
+    }
+
+    /// <summary>Compares the current editor model with its opening state and updates change actions.</summary>
+    private void UpdateDirtyState()
+    {
+        _hasUnsavedChanges = _loadError is not null ||
+            (_unchangedConfigurationState.Length > 0 &&
+                !string.Equals(
+                    SerializeEditingState(),
+                    _unchangedConfigurationState,
+                    StringComparison.Ordinal
+                ));
+        _validateButton.Enabled = _hasUnsavedChanges;
+        _saveButton.Enabled = _hasUnsavedChanges;
+    }
+
+    /// <summary>Asks before closing an editor that contains unsaved configuration changes.</summary>
+    /// <param name="e">The requested form-close operation.</param>
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!_closeWithoutUnsavedChangesPrompt && _hasUnsavedChanges)
+        {
+            DialogResult discardResult = MessageBox.Show(
+                this,
+                "The configuration contains unsaved changes. Close and discard them?",
+                "Discard unsaved changes?",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2
+            );
+
+            if (discardResult != DialogResult.Yes)
+            {
+                DialogResult = DialogResult.None;
+                e.Cancel = true;
+                return;
+            }
+
+            _closeWithoutUnsavedChangesPrompt = true;
+        }
+
+        base.OnFormClosing(e);
+    }
+
+    /// <summary>Closes the editor immediately during complete supervisor shutdown.</summary>
+    internal void CloseWithoutUnsavedChangesPrompt()
+    {
+        _closeWithoutUnsavedChangesPrompt = true;
+        Close();
     }
 
     /// <summary>Returns whether the destination's write timestamp differs from the file loaded by this editor.</summary>
@@ -1239,7 +1328,10 @@ public sealed partial class ConfigurationEditorForm : Form
         {
             Text = text,
             AutoSize = true,
-            Margin = new Padding(6, 0, 0, 0)
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(72, 27),
+            Margin = new Padding(6, 0, 0, 0),
+            Padding = new Padding(8, 0, 8, 0)
         };
         button.Click += clickHandler;
         return button;
@@ -1301,13 +1393,17 @@ public sealed partial class ConfigurationEditorForm : Form
     private SupervisorProfileConfig? SelectedProfile =>
         _profileSelector.SelectedItem as SupervisorProfileConfig;
 
+    /// <summary>Gets the currently selected helper application or service.</summary>
+    private ManagedResourceConfig? SelectedResource =>
+        _resourceList.SelectedItem as ManagedResourceConfig;
+
     /// <summary>Gets the currently selected helper application.</summary>
     private ManagedApplicationConfig? SelectedApplication =>
-        _applicationList.SelectedItem as ManagedApplicationConfig;
+        SelectedResource as ManagedApplicationConfig;
 
     /// <summary>Gets the currently selected service.</summary>
     private ManagedServiceConfig? SelectedService =>
-        _serviceList.SelectedItem as ManagedServiceConfig;
+        SelectedResource as ManagedServiceConfig;
 
     /// <summary>Gets the currently selected health check.</summary>
     private HealthCheckConfig? SelectedHealthCheck =>

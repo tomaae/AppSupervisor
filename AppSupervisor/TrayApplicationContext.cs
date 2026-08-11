@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
 
@@ -17,12 +18,14 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly Form _dialogOwner;
     private readonly string _configPath;
     private readonly System.Windows.Forms.Timer _monitorTimer;
+    private readonly System.Windows.Forms.Timer _startupTimer;
     private readonly ToolStripMenuItem _pauseResumeItem;
     private readonly NotificationService _notificationService;
 
     private List<SupervisorProfileConfig> _config = [];
     private List<SupervisorProfile> _profiles = [];
     private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
+    private readonly HashSet<SupervisorProfile> _reportedStartupTickErrors = [];
     private bool _paused;
     private bool _pausedManually;
     private bool _configurationError;
@@ -82,9 +85,15 @@ public partial class TrayApplicationContext : ApplicationContext
         };
 
         Application.ApplicationExit += ApplicationExiting;
+        _startupTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 100
+        };
         _monitorTimer.Tick += MonitorTimerTick;
         _monitorTimer.Start();
 
+        _startupTimer.Tick += StartupTimerTick;
+        _startupTimer.Start();
         LoadConfiguration(showNotification: false);
         Application.Idle += ApplicationBecameIdle;
     }
@@ -137,8 +146,43 @@ public partial class TrayApplicationContext : ApplicationContext
         UpdateTrayState();
     }
 
+    /// <summary>Advances dependency and millisecond-delay startup sequences without running full supervision polling.</summary>
+    /// <param name="sender">The lightweight WinForms startup timer.</param>
+    /// <param name="e">The timer event data.</param>
+    private void StartupTimerTick(object? sender, EventArgs e)
+    {
+        if (_paused)
+            return;
+
+        DateTime nowUtc = DateTime.UtcNow;
+
+        foreach (SupervisorProfile profile in _profiles)
+        {
+            try
+            {
+                profile.AdvanceStartup(nowUtc);
+                _reportedStartupTickErrors.Remove(profile);
+            }
+            catch (Exception ex)
+            {
+                _runtimeError = true;
+                UpdateTrayState();
+
+                if (!_reportedStartupTickErrors.Add(profile))
+                    continue;
+
+                PublishNotification(
+                    NotificationSeverity.Error,
+                    "Supervision error",
+                    $"{profile.Name}\nUnexpected startup sequencing failure: {ex.Message}",
+                    profile.NotificationTargets
+                );
+            }
+        }
+    }
     /// <summary>
     /// Toggles supervision without starting, closing, or otherwise altering managed resources.
+
     /// </summary>
     /// <param name="sender">The Pause or Resume menu item.</param>
     /// <param name="e">The menu-click event data.</param>
@@ -197,6 +241,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _activeHealthErrors.Clear();
         _reportedProfileTickErrors.Clear();
         UpdateTrayState();
+        _reportedStartupTickErrors.Clear();
 
         foreach (SupervisorProfile oldProfile in oldProfiles)
             oldProfile.Dispose();
@@ -435,6 +480,8 @@ public partial class TrayApplicationContext : ApplicationContext
         SaveVerifiedConfigurationBackup();
         Application.ApplicationExit -= ApplicationExiting;
         _monitorTimer.Stop();
+        _startupTimer.Stop();
+        _startupTimer.Dispose();
         _monitorTimer.Dispose();
 
         foreach (var profile in _profiles)
@@ -477,7 +524,12 @@ public partial class TrayApplicationContext : ApplicationContext
         foreach (Form form in Application.OpenForms.Cast<Form>().ToArray())
         {
             if (!form.IsDisposed && !form.InvokeRequired)
-                form.Close();
+            {
+                if (form is ConfigurationEditorForm configurationEditor)
+                    configurationEditor.CloseWithoutUnsavedChangesPrompt();
+                else
+                    form.Close();
+            }
         }
 
         if (!_dialogOwner.IsDisposed)

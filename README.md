@@ -9,7 +9,8 @@ AppSupervisor is a lightweight, Windows-only tray application that starts, super
 
 - Runs from the Windows notification area with waiting, supervising, paused, empty-configuration, and error tray states.
 - Organizes related helper applications and services into process-triggered profiles.
-- Starts profile resources when the monitored process appears and closes them after it disappears.
+- Starts applications and services in one configurable order when the monitored process appears.
+- Supports per-resource startup waits and a single earlier-resource dependency.
 - Restarts unexpectedly stopped helpers and services after a configurable timeout.
 - Optionally detects helper applications whose visible or hidden windows stop responding.
 - Manages ordinary executables, Steam applications, and Microsoft Store/MSIX applications.
@@ -37,7 +38,7 @@ flowchart LR
     E -->|confirmed failure| H["Notify and optionally restart helper"]
 ```
 
-Each profile watches one process name. When that process is present, AppSupervisor activates every enabled helper application and service in the profile. While the profile remains active, missing resources can be restarted and application health checks continue to run.
+Each profile watches one process name. When that process is present, AppSupervisor activates enabled applications and services from top to bottom. A resource can wait for one earlier dependency to report started, and **Wait after startup** can delay the next resource in that profile without blocking other profiles. While the profile remains active, missing resources can be restarted and application health checks continue to run.
 
 When the monitored process disappears, pending recovery stops immediately. After the configured **Close timeout**, helper applications receive graceful close requests and services receive stop requests. Pausing or exiting AppSupervisor leaves external applications and services untouched.
 
@@ -103,7 +104,7 @@ Popup notification modals run away from the supervision thread so they cannot bl
 
 Open the editor with **Configure...** in the tray menu or by double-clicking the tray icon. Only one configuration window can be open at a time.
 
-The **Profile** selector at the top chooses the profile being edited. **Add profile**, **Duplicate**, and **Remove** manage complete profiles, including their applications, services, health checks, and notification selections. The main editor is divided into three tabs.
+The **Profile** selector at the top chooses the profile being edited. **Add profile**, **Duplicate**, and **Remove** manage complete profiles, including their applications, services, health checks, and notification selections. The main editor is divided into two tabs.
 
 #### Profile settings tab
 
@@ -113,9 +114,16 @@ The **Profile** selector at the top chooses the profile being edited. **Add prof
 - **Close timeout** controls how long the monitor may remain absent before helpers and services are closed. Clear **Override default** to use the built-in value.
 - **Restart timeout** controls how long an unexpectedly missing helper or stopped service may remain unavailable before restart. It can also use the built-in default.
 
-#### Applications tab
+#### Resources tab
 
-The left side lists helper applications in the selected profile and provides **Add** and **Remove** commands. Selecting a helper opens its settings on the right:
+The left side lists applications and services together in startup order. Drag entries or use **Move up** and **Move down** to reorder them; **Add application**, **Add service**, and **Remove** manage the list.
+
+Shared settings appear above the application or service details:
+
+- **Dependency** optionally waits until one earlier application is running or service is Running.
+- **Wait after startup** delays the next resource in this profile by the selected milliseconds. It does not block other profiles.
+
+Selecting an application shows:
 
 - **Helper enabled** excludes the helper without deleting it.
 - **Executable** is the real process AppSupervisor monitors, closes, and health-checks. It can be entered with **Browse...** or selected from deduplicated running applications with **Pick running...**.
@@ -129,9 +137,9 @@ The left side lists helper applications in the selected profile and provides **A
 
 The **Health checks** area lists checks belonging to the selected helper. It provides **Add check**, **Edit**, **Remove**, **Test check**, and **Test notification**. Double-clicking a check also opens it for editing. A one-shot test does not change failure counters, recovery state, or external processes.
 
-#### Services tab
+##### Service settings
 
-The left side lists services assigned to the selected profile and provides **Add** and **Remove** commands. The service editor contains:
+Selecting a service shows:
 
 - **Service enabled** to exclude the entry without deleting it.
 - **Installed service**, a prepopulated non-editable list of installed third-party services. Standard Microsoft/Windows services are filtered out. **Refresh list** rescans services asynchronously without blocking the editor.
@@ -160,9 +168,10 @@ The **Notifications** category independently selects where this health check rep
 
 #### Validation and saving
 
-- **Validate** checks the complete document without writing it.
-- **Save & Apply** validates, detects external file changes, writes atomically, closes the editor, and asks the running supervisor to apply the new document.
-- **Cancel** closes the editor without applying the detached working copy.
+- **Validate** checks the complete document without writing it. It is disabled until the document changes.
+- **Save & Apply** validates, detects external file changes, writes atomically, closes the editor, and asks the running supervisor to apply the new document. It is also disabled while unchanged.
+- **Cancel** and the window close button ask before discarding unsaved changes.
+- Confirmation dialogs remain modal to the editor while the supervisor's nested Windows message loop continues monitoring.
 
 AppSupervisor constructs a complete replacement runtime graph only after the saved document loads and validates successfully. If applying it fails, the previous valid configuration remains active. A missing or invalid startup configuration leaves AppSupervisor running in a paused error state so it can still be repaired from the tray.
 

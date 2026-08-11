@@ -7,7 +7,7 @@ namespace AppSupervisor.Resources;
 /// <summary>
 /// Supervises one Windows service by internal service name using the shared supervisor-profile tick.
 /// </summary>
-public sealed class ManagedService : IManagedResource
+public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
 {
     private const int OperationTimeoutSeconds = 30;
 
@@ -69,6 +69,16 @@ public sealed class ManagedService : IManagedResource
     /// Gets the presentation targets configured specifically for this helper service.
     /// </summary>
     public IReadOnlyList<NotificationTarget> NotificationTargets => Config.Notifications.Target;
+
+    /// <summary>Checks whether the service has reached the running state for dependency sequencing.</summary>
+    /// <returns><see langword="true"/> when Windows reports the service as running.</returns>
+    public bool IsStarted()
+    {
+        if (!_available || _disposed)
+            return false;
+
+        return TryGetState() == ServiceRuntimeState.Running;
+    }
 
     /// <summary>
     /// Opens the service with all required rights and enforces Manual startup once for this runtime instance.

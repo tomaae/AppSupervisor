@@ -18,6 +18,7 @@ public sealed partial class ConfigurationEditorForm
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         panel.Controls.Add(_applicationAppUri, 0, 0);
+        _applicationAppUri.Margin = Padding.Empty;
         panel.Controls.Add(CreateButton("Pick Steam...", PickSteamApplicationClicked), 1, 0);
         panel.Controls.Add(CreateButton("Pick Store...", PickStoreApplicationClicked), 2, 0);
         _applicationPath.TextChanged += ClearPackageIdentityWhenAppFieldsEdited;

@@ -1,11 +1,8 @@
 namespace AppSupervisor;
 
 /// <summary>Configures one executable helper, its launch mechanism, and optional health monitoring.</summary>
-public class ManagedApplicationConfig
+public class ManagedApplicationConfig : ManagedResourceConfig
 {
-    /// <summary>Gets or sets whether the helper is part of its supervisor profile.</summary>
-    public bool Enabled { get; set; } = true;
-
     /// <summary>Gets or sets the fully qualified helper executable path used as process identity.</summary>
     public string Path { get; set; } = "";
 

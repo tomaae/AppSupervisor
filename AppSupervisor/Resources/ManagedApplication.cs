@@ -72,6 +72,10 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle
         }
     }
 
+    /// <summary>Checks whether the helper process is started for dependency sequencing.</summary>
+    /// <returns><see langword="true"/> when at least one matching helper process is running.</returns>
+    public bool IsStarted() => IsRunning();
+
     /// <summary>
     /// Ensures one helper instance is available, normalizing multiple instances before starting a fresh one.
     /// </summary>

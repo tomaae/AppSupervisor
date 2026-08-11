@@ -66,6 +66,8 @@ public static partial class ConfigValidator
             {
                 ValidateServices(profile, profileLabel, errors, activeServiceNames);
             }
+
+            ValidateResourceStartup(profile, profileLabel, errors);
         }
 
         if (errors.Count > 0)
