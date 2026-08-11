@@ -69,19 +69,13 @@ if ($LASTEXITCODE -ne 0) {
     throw "Notification host publish failed with exit code $LASTEXITCODE."
 }
 
-$sourceConfigPath = Join-Path $workspaceRoot "AppSupervisor\config.json"
 $packagedConfigPath = Join-Path $stagingRoot "config.json"
-
-if (Test-Path -LiteralPath $sourceConfigPath -PathType Leaf) {
-    Copy-Item -LiteralPath $sourceConfigPath -Destination $packagedConfigPath -Force
-}
-else {
-    [IO.File]::WriteAllText(
-        $packagedConfigPath,
-        "[]$([Environment]::NewLine)",
-        [Text.UTF8Encoding]::new($false)
-    )
-}
+$emptyPackagedConfiguration = "[]$([Environment]::NewLine)"
+[IO.File]::WriteAllText(
+    $packagedConfigPath,
+    $emptyPackagedConfiguration,
+    [Text.UTF8Encoding]::new($false)
+)
 
 $expectedFiles = @(
     "AppSupervisor.exe",
@@ -101,6 +95,15 @@ if ($unexpectedFiles.Count -gt 0) {
 
 if ($missingFiles.Count -gt 0) {
     throw "Missing publish files: $($missingFiles -join ', ')"
+}
+
+$packagedConfiguration = [IO.File]::ReadAllText($packagedConfigPath)
+if (-not [string]::Equals(
+    $packagedConfiguration,
+    $emptyPackagedConfiguration,
+    [StringComparison]::Ordinal
+)) {
+    throw "The packaged config.json is not the required empty configuration."
 }
 
 if (Test-Path -LiteralPath $temporaryArchivePath) {

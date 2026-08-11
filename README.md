@@ -190,7 +190,7 @@ After the main message loop starts, AppSupervisor checks whether a current-user 
 
 The configuration UI stores its validated document in `config.json` beside `AppSupervisor.exe`. If the file does not exist, AppSupervisor creates a valid empty configuration automatically. Saving is atomic, and the last verified configuration is written to `config.json.old` during normal shutdown. Unknown or obsolete JSON fields are rejected rather than silently ignored.
 
-Both `AppSupervisor/config.json` and `AppSupervisor/config.json.old` are ignored by Git so personal paths remain outside repository history. The packaging script includes the local configuration when present or generates an empty one when it is absent.
+Both `AppSupervisor/config.json` and `AppSupervisor/config.json.old` are ignored by Git so personal paths remain outside repository history. Release packages always contain a fresh empty `config.json`; the local configuration is never copied into delivery artifacts.
 
 ## Running a packaged build
 
