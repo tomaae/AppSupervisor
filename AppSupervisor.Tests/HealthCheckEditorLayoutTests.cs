@@ -54,8 +54,11 @@ public sealed class HealthCheckEditorLayoutTests
     }
 
     /// <summary>Confirms the laid-out dialog uses one group width and keeps notifications below their caption.</summary>
-    [Fact]
-    public void Constructor_VisibleLayout_AlignsGroupsAndEditors()
+    /// <param name="type">The health-check view whose visible groups are verified.</param>
+    [Theory]
+    [InlineData(HealthCheckType.Listener)]
+    [InlineData(HealthCheckType.Vrcosc)]
+    public void Constructor_VisibleLayout_AlignsGroupsAndEditors(HealthCheckType type)
     {
         Exception? threadException = null;
 
@@ -66,9 +69,10 @@ public sealed class HealthCheckEditorLayoutTests
                 using var form = new HealthCheckEditorDialog(new HealthCheckConfig
                 {
                     Name = "Layout check",
-                    Type = HealthCheckType.Listener,
+                    Type = type,
                     Protocol = ListenerProtocol.Tcp,
                     Port = 12345,
+                    Parameters = ["JawOpen", "JawX"],
                     Notifications = new NotificationConfig { Target = [] }
                 });
                 form.ShowInTaskbar = false;
@@ -106,6 +110,11 @@ public sealed class HealthCheckEditorLayoutTests
                 Assert.True(
                     notificationContent.Top >= notifications.DisplayRectangle.Top,
                     "Notification choices must start below the group-box caption."
+                );
+                Assert.InRange(
+                    notifications.DisplayRectangle.Bottom - notificationContent.Bottom,
+                    0,
+                    24
                 );
             }
             catch (Exception exception)

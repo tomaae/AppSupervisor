@@ -65,7 +65,7 @@ The Steam and Microsoft Store pickers list installed applications and fill the r
 
 If more than one matching helper instance is running, AppSupervisor closes every instance before starting one replacement. If graceful close attempts fail, it reports an error and leaves the process running unless **Allow force-kill after all graceful close attempts fail** is selected.
 
-Launch failures, missing paths, close failures, and minimization failures are contained and reported without terminating AppSupervisor. Pending minimize work is cancelled when the helper or profile becomes inactive, supervision is paused, or the runtime configuration is replaced.
+Graceful close first asks visible helper windows to close. For Qt tray helpers, AppSupervisor can then invoke an accessible menu command explicitly named **Quit** or **Exit** without blocking supervision. Launch failures, missing paths, close failures, and minimization failures are contained and reported without terminating AppSupervisor. Pending close and minimize work is cancelled when the helper or profile becomes active elsewhere, supervision is paused, or the runtime configuration is replaced.
 
 **Monitor application responsiveness** optionally probes the helper's visible and hidden windows. Three consecutive failures trigger the normal graceful all-instance restart and helper notification flow. The option is disabled by default, applies only to helper applications, and does not treat helpers without an owned window as frozen.
 

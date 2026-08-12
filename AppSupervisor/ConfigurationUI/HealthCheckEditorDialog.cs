@@ -183,11 +183,16 @@ public sealed partial class HealthCheckEditorDialog : Form
     {
         GroupBox group = CreateGroup("VRChat OSCQuery");
         TableLayoutPanel layout = CreateSettingsTable();
+        AddRow(layout, "Runs only while", new Label
+        {
+            AutoSize = true,
+            Text = "VRChat.exe is running"
+        });
         AddSpanningRow(layout, new Label
         {
             AutoSize = true,
             MaximumSize = new Size(610, 0),
-            Text = "OSCQuery discovers VRChat's HTTP and OSC endpoints automatically. This check only runs while VRChat.exe is running; no address, port, or protocol is configured."
+            Text = "OSCQuery discovers VRChat's HTTP and OSC endpoints automatically; no address, port, or protocol is configured."
         });
         AddRow(layout, "Parameter leaf names", _parametersTextBox);
         AddSpanningRow(layout, new Label
@@ -229,6 +234,7 @@ public sealed partial class HealthCheckEditorDialog : Form
     private Control BuildNotificationsGroup()
     {
         GroupBox group = CreateGroup("Notifications");
+        group.Dock = DockStyle.Top;
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,

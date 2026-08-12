@@ -19,6 +19,9 @@
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="VRChat.OSCQuery" Version="0.0.7" ExcludeAssets="contentFiles" />
   </ItemGroup>
   <ItemGroup>

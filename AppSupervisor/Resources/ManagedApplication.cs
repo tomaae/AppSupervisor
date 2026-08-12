@@ -197,7 +197,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     public void CancelPendingRecovery()
     {
         _missingSince = null;
-        _closeOperation = null;
+        CancelCloseOperation();
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
     }
@@ -225,7 +225,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         if (ShouldRemainRunning())
         {
-            _closeOperation = null;
+            CancelCloseOperation();
             return;
         }
 
@@ -235,7 +235,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         {
             if (processes.Count == 0)
             {
-                _closeOperation = null;
+                CancelCloseOperation();
                 ClearError();
                 return;
             }
@@ -258,7 +258,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         if (ShouldRemainRunning())
         {
-            _closeOperation = null;
+            CancelCloseOperation();
             return;
         }
 
@@ -274,7 +274,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             return;
 
         _disposed = true;
-        _closeOperation = null;
+        CancelCloseOperation();
         CancelMinimizeAfterStart();
         ErrorOccurred = null;
         ErrorCleared = null;
@@ -346,6 +346,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         bool restartAfterClose)
     {
         CancelMinimizeAfterStart();
+        CancelCloseOperation();
 
         var now = DateTime.UtcNow;
         _closeOperation = new CloseOperation
@@ -378,7 +379,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             if (processes.Count == 0)
             {
                 bool restart = profileActive && operation.RestartAfterClose;
-                _closeOperation = null;
+                CancelCloseOperation();
                 _failedMultipleProcessIds = null;
 
                 return restart && TryStart()
@@ -419,6 +420,12 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             if (now - operation.LastGracefulAttemptUtc >=
                 TimeSpan.FromSeconds(GracefulCloseRetrySeconds))
             {
+                if (operation.GracefulAttemptCount >= 2 &&
+                    operation.TrayExitTask is null)
+                {
+                    StartTrayExitFallback(processes, operation);
+                }
+
                 RequestGracefulClose(processes, operation.GracefulAttemptCount);
                 operation.GracefulAttemptCount++;
                 operation.LastGracefulAttemptUtc = now;
@@ -433,7 +440,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     }
 
     /// <summary>
-    /// Uses WM_CLOSE, CloseMainWindow, and later combined retries to request graceful process shutdown.
+    /// Uses visible-window WM_CLOSE and CloseMainWindow retries to request graceful process shutdown.
     /// </summary>
     /// <param name="processes">Every matching process that is still running.</param>
     /// <param name="attemptNumber">The zero-based graceful attempt number.</param>
@@ -445,10 +452,9 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         {
             try
             {
-                if (attemptNumber == 0 || attemptNumber >= 2)
-                    PostCloseToVisibleWindows(process);
-
-                if (attemptNumber >= 1)
+                if (attemptNumber == 0)
+                    PostCloseToOwnedWindows(process);
+                else
                     process.CloseMainWindow();
             }
             catch
@@ -459,10 +465,10 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     }
 
     /// <summary>
-    /// Posts WM_CLOSE to every visible top-level window owned by a process.
+    /// Posts WM_CLOSE to qualifying top-level windows owned by a process.
     /// </summary>
     /// <param name="process">The process whose windows should receive the close request.</param>
-    private static void PostCloseToVisibleWindows(Process process)
+    private static void PostCloseToOwnedWindows(Process process)
     {
         uint processId = (uint)process.Id;
 
@@ -473,9 +479,11 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
                 out uint windowProcessId
             );
 
-            if (windowThreadId != 0 &&
-                windowProcessId == processId &&
-                NativeMethods.IsWindowVisible(hWnd))
+            if (IsOwnedCloseTarget(
+                processId,
+                windowThreadId,
+                windowProcessId,
+                NativeMethods.IsWindowVisible(hWnd)))
             {
                 NativeMethods.PostMessage(
                     hWnd,
@@ -487,6 +495,61 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
             return true;
         }, IntPtr.Zero);
+    }
+
+    /// <summary>Determines whether one enumerated window should receive the current graceful close attempt.</summary>
+    /// <param name="targetProcessId">The helper process being closed.</param>
+    /// <param name="windowThreadId">The identifier of the thread that owns the candidate window.</param>
+    /// <param name="windowProcessId">The process identifier reported for the candidate window.</param>
+    /// <param name="isVisible">Whether the candidate is currently visible.</param>
+    /// <returns><see langword="true"/> when the owned window should receive WM_CLOSE.</returns>
+    internal static bool IsOwnedCloseTarget(
+        uint targetProcessId,
+        uint windowThreadId,
+        uint windowProcessId,
+        bool isVisible)
+    {
+        return windowThreadId != 0 &&
+            windowProcessId == targetProcessId &&
+            isVisible;
+    }
+
+    /// <summary>
+    /// Starts one cancellation-aware background tray Exit request for every still-running match.
+    /// </summary>
+    /// <param name="processes">The matching helper processes that may expose tray menus.</param>
+    /// <param name="operation">The close operation that owns and cancels the background requests.</param>
+    private static void StartTrayExitFallback(
+        IEnumerable<Process> processes,
+        CloseOperation operation)
+    {
+        int[] processIds = processes
+            .Select(process => process.Id)
+            .ToArray();
+        CancellationToken cancellationToken = operation.Cancellation.Token;
+
+        operation.TrayExitTask = Task.WhenAll(
+            processIds.Select(processId =>
+                Task.Run(
+                    () => TrayExitCloser.TryRequestExitAsync(
+                        processId,
+                        cancellationToken),
+                    cancellationToken)));
+    }
+
+    /// <summary>
+    /// Cancels an in-progress close and prevents its background tray request from invoking a stale command.
+    /// </summary>
+    private void CancelCloseOperation()
+    {
+        CloseOperation? operation = _closeOperation;
+        _closeOperation = null;
+
+        if (operation is null)
+            return;
+
+        operation.Cancellation.Cancel();
+        operation.Cancellation.Dispose();
     }
 
     /// <summary>
@@ -530,7 +593,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             $"Could not close {DisplayName}; {processes.Count} matching process(es) are still running. {finalAction}"
         );
 
-        _closeOperation = null;
+        CancelCloseOperation();
     }
 
     /// <summary>
@@ -767,5 +830,11 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         /// <summary>Gets or sets when the force-kill request was sent.</summary>
         public DateTime ForceKillAttemptedUtc { get; set; }
+
+        /// <summary>Gets the cancellation source that prevents a stale background tray command.</summary>
+        public CancellationTokenSource Cancellation { get; } = new();
+
+        /// <summary>Gets or sets the one background tray Exit request batch started for this operation.</summary>
+        public Task? TrayExitTask { get; set; }
     }
 }
