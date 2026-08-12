@@ -5,18 +5,18 @@ namespace AppSupervisor.ConfigurationUI;
 /// <summary>Lets the user choose an installed Steam item and its real monitored executable.</summary>
 internal sealed class SteamApplicationPickerDialog : Form
 {
-    private readonly IReadOnlyList<InstalledSteamItem> _items;
+    private IReadOnlyList<InstalledSteamItem> _items = [];
     private readonly TextBox _filterTextBox;
     private readonly ListView _itemList;
     private readonly ComboBox _executableSelector;
     private readonly Label _statusLabel;
     private readonly Button _selectButton;
+    private readonly CancellationTokenSource _loadCancellation = new();
     private CancellationTokenSource? _candidateCancellation;
 
     /// <summary>Creates the installed-item picker from every locally registered Steam library.</summary>
     public SteamApplicationPickerDialog()
     {
-        _items = SteamLibraryCatalog.LoadInstalledItems();
         Text = "Choose installed Steam item";
         StartPosition = FormStartPosition.CenterParent;
         MinimumSize = new Size(760, 520);
@@ -38,7 +38,7 @@ internal sealed class SteamApplicationPickerDialog : Form
             AutoSize = true,
             Margin = new Padding(0, 6, 8, 0)
         }, 0, 0);
-        _filterTextBox = new TextBox { Dock = DockStyle.Fill };
+        _filterTextBox = new TextBox { Dock = DockStyle.Fill, Enabled = false };
         _filterTextBox.TextChanged += FilterTextChanged;
         filterPanel.Controls.Add(_filterTextBox, 1, 0);
 
@@ -48,7 +48,8 @@ internal sealed class SteamApplicationPickerDialog : Form
             View = View.Details,
             FullRowSelect = true,
             HideSelection = false,
-            MultiSelect = false
+            MultiSelect = false,
+            Enabled = false
         };
         _itemList.Columns.Add("Steam item", 300);
         _itemList.Columns.Add("App ID", 100);
@@ -81,7 +82,8 @@ internal sealed class SteamApplicationPickerDialog : Form
         {
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
-            Margin = new Padding(0, 6, 0, 0)
+            Margin = new Padding(0, 6, 0, 0),
+            Text = "Discovering installed Steam items..."
         };
         executablePanel.Controls.Add(_statusLabel, 0, 1);
         executablePanel.SetColumnSpan(_statusLabel, 2);
@@ -110,7 +112,7 @@ internal sealed class SteamApplicationPickerDialog : Form
         Controls.Add(buttons);
         AcceptButton = _selectButton;
         CancelButton = cancelButton;
-        PopulateItems();
+        Shown += DialogShown;
     }
 
     /// <summary>Gets the selected real executable path used for monitoring.</summary>
@@ -125,11 +127,44 @@ internal sealed class SteamApplicationPickerDialog : Form
     {
         if (disposing)
         {
+            _loadCancellation.Cancel();
+            _loadCancellation.Dispose();
             _candidateCancellation?.Cancel();
             _candidateCancellation?.Dispose();
         }
 
         base.Dispose(disposing);
+    }
+
+    /// <summary>Discovers installed Steam libraries away from the UI thread after the picker is visible.</summary>
+    /// <param name="sender">The displayed picker.</param>
+    /// <param name="e">The shown event data.</param>
+    private async void DialogShown(object? sender, EventArgs e)
+    {
+        Shown -= DialogShown;
+
+        try
+        {
+            _items = await Task.Run(
+                SteamLibraryCatalog.LoadInstalledItems,
+                _loadCancellation.Token
+            );
+
+            if (_loadCancellation.IsCancellationRequested || IsDisposed)
+                return;
+
+            _filterTextBox.Enabled = true;
+            _itemList.Enabled = true;
+            PopulateItems();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!IsDisposed)
+                _statusLabel.Text = $"Steam library discovery failed: {exception.Message}";
+        }
     }
 
     /// <summary>Rebuilds installed-item rows as the user types.</summary>

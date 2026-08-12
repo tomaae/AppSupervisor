@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using System.Globalization;
 
 namespace AppSupervisor.ConfigurationUI;
 
@@ -47,6 +48,7 @@ public sealed class NullableSecondsControl : UserControl
         };
         _overrideCheckBox.CheckedChanged += OnValueChanged;
         _seconds.ValueChanged += OnValueChanged;
+        _seconds.TextChanged += OnValueChanged;
         layout.Controls.Add(_overrideCheckBox);
         layout.Controls.Add(_seconds);
         layout.Controls.Add(suffix);
@@ -60,7 +62,7 @@ public sealed class NullableSecondsControl : UserControl
     [System.ComponentModel.DesignerSerializationVisibilityAttribute(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public int? Value
     {
-        get => _overrideCheckBox.Checked ? Decimal.ToInt32(_seconds.Value) : null;
+        get => _overrideCheckBox.Checked ? ReadDisplayedSeconds() : null;
         set
         {
             _loading = true;
@@ -91,5 +93,23 @@ public sealed class NullableSecondsControl : UserControl
 
         if (!_loading)
             ValueChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Reads valid text immediately, before WinForms commits it to NumericUpDown.Value.</summary>
+    /// <returns>The displayed whole-second value, or the last committed value for incomplete text.</returns>
+    private int ReadDisplayedSeconds()
+    {
+        if (decimal.TryParse(
+                _seconds.Text,
+                NumberStyles.Integer,
+                CultureInfo.CurrentCulture,
+                out decimal displayed) &&
+            displayed >= _seconds.Minimum &&
+            displayed <= _seconds.Maximum)
+        {
+            return Decimal.ToInt32(displayed);
+        }
+
+        return Decimal.ToInt32(_seconds.Value);
     }
 }

@@ -21,7 +21,7 @@ public sealed class HealthCheckConfigTests
             notifications = new { target = new[] { "xsoverlay" } }
         }));
 
-        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path);
+        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path).Profiles;
         HealthCheckConfig check = config[0].Applications[0].HealthChecks[0];
 
         Assert.Equal(HealthCheckType.Vrcosc, check.Type);
@@ -183,7 +183,11 @@ public sealed class HealthCheckConfigTests
             );
             Directory.CreateDirectory(directoryPath);
             string path = System.IO.Path.Combine(directoryPath, "config.json");
-            File.WriteAllText(path, JsonSerializer.Serialize(config));
+            File.WriteAllText(path, JsonSerializer.Serialize(new
+            {
+                profiles = config,
+                integrations = new { steamVr = new { enabled = false } }
+            }));
             return new HealthConfigFile(directoryPath, path);
         }
 

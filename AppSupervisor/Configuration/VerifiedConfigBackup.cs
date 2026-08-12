@@ -11,7 +11,7 @@ public static class VerifiedConfigBackup
     /// <returns>The absolute backup path.</returns>
     public static string Save(
         string configPath,
-        IReadOnlyList<SupervisorProfileConfig> configuration)
+        AppSupervisorConfig configuration)
     {
         string backupPath = Path.GetFullPath(configPath) + ".old";
         ConfigFileWriter.SaveAtomic(backupPath, configuration);

@@ -22,10 +22,13 @@ public partial class TrayApplicationContext
     {
         var errorKey = new HealthErrorIdentity(profile, resource, notification.Key);
 
-        if (notification.ErrorState == ResourceErrorState.Set)
-            _activeHealthErrors.Add(errorKey);
-        else if (notification.ErrorState == ResourceErrorState.Clear)
-            _activeHealthErrors.Remove(errorKey);
+        lock (_runtimeStateLock)
+        {
+            if (notification.ErrorState == ResourceErrorState.Set)
+                _activeHealthErrors.Add(errorKey);
+            else if (notification.ErrorState == ResourceErrorState.Clear)
+                _activeHealthErrors.Remove(errorKey);
+        }
 
         UpdateTrayState();
         PublishNotification(

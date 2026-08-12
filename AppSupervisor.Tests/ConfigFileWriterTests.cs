@@ -12,7 +12,7 @@ public sealed class ConfigFileWriterTests
     [Fact]
     public void Serialize_VrcOscConfiguration_UsesLoaderCompatibleNames()
     {
-        List<SupervisorProfileConfig> configuration = CreateValidConfiguration();
+        AppSupervisorConfig configuration = CreateValidConfiguration();
 
         string json = ConfigFileWriter.Serialize(configuration);
 
@@ -30,7 +30,7 @@ public sealed class ConfigFileWriterTests
         string path = Path.Combine(directory.Path, "config.json");
 
         ConfigFileWriter.SaveAtomic(path, CreateValidConfiguration());
-        List<SupervisorProfileConfig> loaded = ConfigLoader.Load(path);
+        List<SupervisorProfileConfig> loaded = ConfigLoader.Load(path).Profiles;
 
         Assert.Single(loaded);
         Assert.Equal("Writer test", loaded[0].Name);
@@ -52,15 +52,17 @@ public sealed class ConfigFileWriterTests
 
         Assert.Equal(configPath + ".old", backupPath);
         Assert.Equal("{ this is corrupt", File.ReadAllText(configPath));
-        Assert.Single(ConfigLoader.Load(backupPath));
+        Assert.Single(ConfigLoader.Load(backupPath).Profiles);
     }
 
     /// <summary>Creates one fully valid document including a structural vrcosc check.</summary>
     /// <returns>The configuration used by writer and backup tests.</returns>
-    private static List<SupervisorProfileConfig> CreateValidConfiguration()
+    private static AppSupervisorConfig CreateValidConfiguration()
     {
-        return
-        [
+        return new AppSupervisorConfig
+        {
+            Profiles =
+            [
             new SupervisorProfileConfig
             {
                 Name = "Writer test",
@@ -87,7 +89,8 @@ public sealed class ConfigFileWriterTests
                 ],
                 Services = []
             }
-        ];
+            ]
+        };
     }
 
     /// <summary>Owns one isolated temporary directory for filesystem tests.</summary>

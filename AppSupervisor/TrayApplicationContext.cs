@@ -17,27 +17,33 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly Icon _errorIcon;
     private readonly Form _dialogOwner;
     private readonly string _configPath;
-    private readonly System.Windows.Forms.Timer _monitorTimer;
-    private readonly System.Windows.Forms.Timer _startupTimer;
-    private readonly System.Windows.Forms.Timer _ensureClosedTimer;
+    private readonly System.Threading.Timer _monitorTimer;
+    private readonly System.Threading.Timer _startupTimer;
+    private readonly System.Threading.Timer _ensureClosedTimer;
     private readonly ToolStripMenuItem _pauseResumeItem;
     private readonly NotificationService _notificationService;
+    private readonly SemaphoreSlim _supervisionGate = new(1, 1);
+    private readonly CancellationTokenSource _supervisionCancellation = new();
+    private int _monitorWorkPending;
+    private int _startupWorkPending;
+    private int _cleanupWorkPending;
 
-    private List<SupervisorProfileConfig> _config = [];
+    private AppSupervisorConfig _configuration = new();
     private List<SupervisorProfile> _profiles = [];
     private ApplicationUsageRegistry _applicationUsageRegistry = new();
+    private readonly object _runtimeStateLock = new();
     private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
     private readonly HashSet<SupervisorProfile> _reportedStartupTickErrors = [];
-    private bool _paused = true;
-    private bool _pausedManually;
-    private bool _configurationError;
+    private volatile bool _paused = true;
+    private volatile bool _pausedManually;
+    private volatile bool _configurationError;
     private readonly HashSet<RuntimeErrorIdentity> _activeRuntimeErrors = [];
     private bool _inactiveCleanupError;
     private readonly record struct RuntimeErrorIdentity(SupervisorProfile Profile, IManagedResource Resource);
-    private bool _hasValidConfiguration;
+    private volatile bool _hasValidConfiguration;
     private bool _configurationEditorOpen;
     private int _configurationLoadGeneration;
-    private bool _exiting;
+    private volatile bool _exiting;
 
     /// <summary>
     /// Creates the tray UI, notification providers, safe configuration loader, supervision timers, and startup check.
@@ -58,6 +64,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         contextMenu.Items.Add("Configure...", null, OpenConfigurationEditor);
         contextMenu.Items.Add(_pauseResumeItem);
+        contextMenu.Items.Add(_steamVrAlertsItem);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add("Exit", null, Exit);
 
@@ -84,46 +91,63 @@ public partial class TrayApplicationContext : ApplicationContext
             new XsOverlayNotificationProvider()
         ]);
 
-        _monitorTimer = new System.Windows.Forms.Timer
-        {
-            Interval = 1000
-        };
+        InitializeSteamVrIntegration();
 
         Application.ApplicationExit += ApplicationExiting;
-        _startupTimer = new System.Windows.Forms.Timer
-        {
-            Interval = 100
-        };
-        _ensureClosedTimer = new System.Windows.Forms.Timer
-        {
-            Interval = 5 * 60 * 1000
-        };
-        _monitorTimer.Tick += MonitorTimerTick;
-        _monitorTimer.Start();
-
-        _startupTimer.Tick += StartupTimerTick;
-        _startupTimer.Start();
-        _ensureClosedTimer.Tick += EnsureClosedTimerTick;
-        _ensureClosedTimer.Start();
+        _monitorTimer = new System.Threading.Timer(
+            MonitorTimerTick,
+            null,
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(1)
+        );
+        _startupTimer = new System.Threading.Timer(
+            StartupTimerTick,
+            null,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromMilliseconds(100)
+        );
+        _ensureClosedTimer = new System.Threading.Timer(
+            EnsureClosedTimerTick,
+            null,
+            TimeSpan.FromMinutes(5),
+            TimeSpan.FromMinutes(5)
+        );
         Application.Idle += ApplicationBecameIdle;
     }
 
     /// <summary>
-    /// Runs one update for every supervisor profile unless supervision is paused.
+    /// Coalesces the background timer signal into one serialized supervision cycle.
     /// </summary>
-    /// <param name="sender">The shared WinForms timer.</param>
-    /// <param name="e">The timer event data.</param>
-    private void MonitorTimerTick(object? sender, EventArgs e)
+    /// <param name="state">Unused timer state.</param>
+    private void MonitorTimerTick(object? state)
+    {
+        if (_exiting)
+            return;
+
+        if (Interlocked.Exchange(ref _monitorWorkPending, 1) != 0)
+            return;
+
+        QueueSupervisionWork(
+            RunMonitorCycle,
+            () => Volatile.Write(ref _monitorWorkPending, 0)
+        );
+    }
+
+    /// <summary>Runs one ordered profile, cleanup-progress, and SteamVR update away from WinForms.</summary>
+    private void RunMonitorCycle()
     {
         if (_paused)
             return;
+        _steamVrMonitor.Advance(DateTime.UtcNow);
+
 
         foreach (var profile in _profiles)
         {
             try
             {
                 bool stateChanged = profile.Update();
-                _reportedProfileTickErrors.Remove(profile);
+                lock (_runtimeStateLock)
+                    _reportedProfileTickErrors.Remove(profile);
 
                 if (!stateChanged)
                     continue;
@@ -138,9 +162,12 @@ public partial class TrayApplicationContext : ApplicationContext
             }
             catch (Exception ex)
             {
+                bool firstFailure;
+                lock (_runtimeStateLock)
+                    firstFailure = _reportedProfileTickErrors.Add(profile);
                 UpdateTrayState();
 
-                if (!_reportedProfileTickErrors.Add(profile))
+                if (!firstFailure)
                     continue;
 
                 PublishNotification(
@@ -157,10 +184,24 @@ public partial class TrayApplicationContext : ApplicationContext
         UpdateTrayState();
     }
 
-    /// <summary>Starts one nonblocking five-minute cleanup sweep for opted-in inactive helper applications.</summary>
-    /// <param name="sender">The dedicated cleanup timer.</param>
-    /// <param name="e">The timer event data.</param>
-    private void EnsureClosedTimerTick(object? sender, EventArgs e)
+    /// <summary>Coalesces a five-minute cleanup request into the serialized background worker.</summary>
+    /// <param name="state">Unused timer state.</param>
+    private void EnsureClosedTimerTick(object? state)
+    {
+        if (_exiting)
+            return;
+
+        if (Interlocked.Exchange(ref _cleanupWorkPending, 1) != 0)
+            return;
+
+        QueueSupervisionWork(
+            RunEnsureClosedSweep,
+            () => Volatile.Write(ref _cleanupWorkPending, 0)
+        );
+    }
+
+    /// <summary>Runs one opted-in inactive-helper cleanup sweep away from WinForms.</summary>
+    private void RunEnsureClosedSweep()
     {
         if (_paused)
             return;
@@ -168,10 +209,33 @@ public partial class TrayApplicationContext : ApplicationContext
         _applicationUsageRegistry.Sweep();
     }
 
-    /// <summary>Advances dependency and millisecond-delay startup sequences without running full supervision polling.</summary>
-    /// <param name="sender">The lightweight WinForms startup timer.</param>
-    /// <param name="e">The timer event data.</param>
-    private void StartupTimerTick(object? sender, EventArgs e)
+    /// <summary>Restarts the inactive-helper sweep interval without tying it to the UI message pump.</summary>
+    private void ResetEnsureClosedTimer()
+    {
+        if (_exiting)
+            return;
+
+        _ensureClosedTimer.Change(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+    }
+
+    /// <summary>Coalesces the lightweight background startup timer into the serialized worker.</summary>
+    /// <param name="state">Unused timer state.</param>
+    private void StartupTimerTick(object? state)
+    {
+        if (_exiting)
+            return;
+
+        if (Interlocked.Exchange(ref _startupWorkPending, 1) != 0)
+            return;
+
+        QueueSupervisionWork(
+            RunStartupCycle,
+            () => Volatile.Write(ref _startupWorkPending, 0)
+        );
+    }
+
+    /// <summary>Advances every dependency and delay-gated startup sequence away from WinForms.</summary>
+    private void RunStartupCycle()
     {
         if (_paused)
             return;
@@ -183,13 +247,17 @@ public partial class TrayApplicationContext : ApplicationContext
             try
             {
                 profile.AdvanceStartup(nowUtc);
-                _reportedStartupTickErrors.Remove(profile);
+                lock (_runtimeStateLock)
+                    _reportedStartupTickErrors.Remove(profile);
             }
             catch (Exception ex)
             {
+                bool firstFailure;
+                lock (_runtimeStateLock)
+                    firstFailure = _reportedStartupTickErrors.Add(profile);
                 UpdateTrayState();
 
-                if (!_reportedStartupTickErrors.Add(profile))
+                if (!firstFailure)
                     continue;
 
                 PublishNotification(
@@ -201,32 +269,90 @@ public partial class TrayApplicationContext : ApplicationContext
             }
         }
     }
+
+    /// <summary>Queues one coalesced runtime operation without ever executing it on the caller's thread.</summary>
+    /// <param name="operation">The serialized runtime mutation or poll.</param>
+    /// <param name="completed">Clears the matching coalescing flag.</param>
+    private void QueueSupervisionWork(Action operation, Action completed)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ExecuteSupervisionAsync(operation).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_supervisionCancellation.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                SupervisorLog.WriteError("Unexpected background supervision failure.", ex);
+            }
+            finally
+            {
+                completed();
+            }
+        });
+    }
+
+    /// <summary>Runs one operation under the shared supervision gate on a thread-pool thread.</summary>
+    /// <param name="operation">The operation requiring exclusive access to runtime state.</param>
+    private Task ExecuteSupervisionAsync(Action operation)
+    {
+        return Task.Run(async () =>
+        {
+            await _supervisionGate.WaitAsync(_supervisionCancellation.Token).ConfigureAwait(false);
+
+            try
+            {
+                operation();
+            }
+            finally
+            {
+                _supervisionGate.Release();
+            }
+        }, _supervisionCancellation.Token);
+    }
+
     /// <summary>
     /// Toggles supervision without starting, closing, or otherwise altering managed resources.
     /// </summary>
     /// <param name="sender">The Pause or Resume menu item.</param>
     /// <param name="e">The menu-click event data.</param>
-    private void TogglePause(object? sender, EventArgs e)
+    private async void TogglePause(object? sender, EventArgs e)
     {
-        if (_configurationError && !_hasValidConfiguration)
+        if (_exiting || (_configurationError && !_hasValidConfiguration))
             return;
 
-        _paused = !_paused;
-        _pausedManually = _paused;
-
-        if (_paused)
+        try
         {
-            _applicationUsageRegistry.SuspendCleanup();
+            await ExecuteSupervisionAsync(() =>
+            {
+                if (_exiting)
+                    return;
 
-            foreach (SupervisorProfile profile in _profiles)
-                profile.SuspendMonitoring();
+                _paused = !_paused;
+                _pausedManually = _paused;
+
+                if (_paused)
+                {
+                    _applicationUsageRegistry.SuspendCleanup();
+                    _steamVrMonitor.Suspend();
+
+                    foreach (SupervisorProfile profile in _profiles)
+                        profile.SuspendMonitoring();
+                }
+            });
         }
-        else
+        catch (OperationCanceledException) when (_exiting)
         {
-            _ensureClosedTimer.Stop();
-            _ensureClosedTimer.Start();
+            return;
         }
 
+        if (!_paused)
+        {
+            ResetEnsureClosedTimer();
+        }
         UpdateTrayState();
     }
 
@@ -238,7 +364,7 @@ public partial class TrayApplicationContext : ApplicationContext
     {
         var newProfiles = new List<SupervisorProfile>();
         var newApplicationUsageRegistry = new ApplicationUsageRegistry();
-        List<SupervisorProfileConfig> newConfig;
+        AppSupervisorConfig newConfig;
         int loadGeneration = ++_configurationLoadGeneration;
 
         try
@@ -251,77 +377,116 @@ public partial class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            foreach (var profileConfig in newConfig.Where(profile => profile.Enabled))
+            await Task.Run(() =>
             {
-                SupervisorProfile? profile = null;
-                profile = SupervisorProfileFactory.Create(
-                    profileConfig,
-                    applicationConfig => () =>
-                        newApplicationUsageRegistry.IsRequiredByAnotherProfile(
-                            applicationConfig.Path,
-                            profile ?? throw new InvalidOperationException(
-                                "The profile close guard was evaluated before profile construction completed."
+                foreach (var profileConfig in newConfig.Profiles.Where(profile => profile.Enabled))
+                {
+                    SupervisorProfile? profile = null;
+                    profile = SupervisorProfileFactory.Create(
+                        profileConfig,
+                        applicationConfig => () =>
+                            newApplicationUsageRegistry.IsRequiredByAnotherProfile(
+                                applicationConfig.Path,
+                                profile ?? throw new InvalidOperationException(
+                                    "The profile close guard was evaluated before profile construction completed."
+                                )
                             )
-                        )
-                );
-                profile.ResourceRestarted += OnResourceRestarted;
-                profile.ErrorOccurred += OnSupervisionError;
-                profile.ResourceNotificationRequested += OnResourceNotificationRequested;
-                newProfiles.Add(profile);
-                newApplicationUsageRegistry.RegisterProfile(profileConfig, profile);
-                profile.ErrorCleared += OnSupervisionErrorCleared;
-            }
+                    );
+                    profile.ResourceRestarted += OnResourceRestarted;
+                    profile.ErrorOccurred += OnSupervisionError;
+                    profile.ResourceNotificationRequested += OnResourceNotificationRequested;
+                    newProfiles.Add(profile);
+                    newApplicationUsageRegistry.RegisterProfile(profileConfig, profile);
+                    profile.ErrorCleared += OnSupervisionErrorCleared;
+                }
 
-            newApplicationUsageRegistry.CompleteRegistration();
-            newApplicationUsageRegistry.CleanupFailed += OnInactiveApplicationCleanupFailed;
-            newApplicationUsageRegistry.CleanupRecovered += OnInactiveApplicationCleanupRecovered;
+                newApplicationUsageRegistry.CompleteRegistration();
+                newApplicationUsageRegistry.CleanupFailed += OnInactiveApplicationCleanupFailed;
+                newApplicationUsageRegistry.CleanupRecovered += OnInactiveApplicationCleanupRecovered;
+            });
         }
         catch (Exception ex)
         {
             if (_exiting || loadGeneration != _configurationLoadGeneration)
             {
-                newApplicationUsageRegistry.Dispose();
+                DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
                 return;
             }
 
-            foreach (var newProfile in newProfiles)
-                newProfile.Dispose();
-
-            newApplicationUsageRegistry.Dispose();
-            HandleConfigurationLoadFailure(ex);
+            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            try
+            {
+                await ExecuteSupervisionAsync(() => HandleConfigurationLoadFailure(ex));
+            }
+            catch (OperationCanceledException) when (_exiting)
+            {
+            }
             return;
         }
 
-        List<SupervisorProfile> oldProfiles = _profiles;
-        ApplicationUsageRegistry oldApplicationUsageRegistry = _applicationUsageRegistry;
+        if (_exiting || loadGeneration != _configurationLoadGeneration)
+        {
+            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            return;
+        }
 
-        _config = newConfig;
-        _profiles = newProfiles;
-        _applicationUsageRegistry = newApplicationUsageRegistry;
-        _hasValidConfiguration = true;
-        _configurationError = false;
-        if (_paused && !_pausedManually)
-            _paused = false;
+        bool applied = false;
+        try
+        {
+            await ExecuteSupervisionAsync(() =>
+            {
+                if (_exiting || loadGeneration != _configurationLoadGeneration)
+                    return;
 
-        _activeRuntimeErrors.Clear();
-        _inactiveCleanupError = false;
-        _activeHealthErrors.Clear();
-        _reportedProfileTickErrors.Clear();
-        _reportedStartupTickErrors.Clear();
-        UpdateTrayState();
+                List<SupervisorProfile> oldProfiles = _profiles;
+                ApplicationUsageRegistry oldApplicationUsageRegistry = _applicationUsageRegistry;
 
-        foreach (SupervisorProfile oldProfile in oldProfiles)
-            oldProfile.Dispose();
+                _configuration = newConfig;
+                _profiles = newProfiles;
+                _applicationUsageRegistry = newApplicationUsageRegistry;
+                _hasValidConfiguration = true;
+                _configurationError = false;
+                if (_paused && !_pausedManually)
+                    _paused = false;
 
-        oldApplicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
-        oldApplicationUsageRegistry.CleanupRecovered -= OnInactiveApplicationCleanupRecovered;
-        oldApplicationUsageRegistry.Dispose();
+                lock (_runtimeStateLock)
+                {
+                    _activeRuntimeErrors.Clear();
+                    _inactiveCleanupError = false;
+                    _activeHealthErrors.Clear();
+                    _reportedProfileTickErrors.Clear();
+                    _reportedStartupTickErrors.Clear();
+                }
+                _steamVrMonitoringEnabled = newConfig.Integrations.SteamVr.Enabled;
+                _steamVrMonitor.ApplyConfiguration(newConfig.Integrations.SteamVr);
 
-        foreach (SupervisorProfile newProfile in _profiles)
-            newProfile.InitializeResources();
+                foreach (SupervisorProfile oldProfile in oldProfiles)
+                    oldProfile.Dispose();
 
-        _ensureClosedTimer.Stop();
-        _ensureClosedTimer.Start();
+                oldApplicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
+                oldApplicationUsageRegistry.CleanupRecovered -= OnInactiveApplicationCleanupRecovered;
+                oldApplicationUsageRegistry.Dispose();
+
+                foreach (SupervisorProfile newProfile in _profiles)
+                    newProfile.InitializeResources();
+
+                applied = true;
+                UpdateTrayState();
+            });
+        }
+        catch (OperationCanceledException) when (_exiting)
+        {
+            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            return;
+        }
+
+        if (!applied)
+        {
+            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            return;
+        }
+
+        ResetEnsureClosedTimer();
 
         if (showNotification)
         {
@@ -332,6 +497,19 @@ public partial class TrayApplicationContext : ApplicationContext
                 GetOperationalNotificationTargets()
             );
         }
+    }
+
+    /// <summary>Disposes a configuration graph that was built successfully but never made active.</summary>
+    /// <param name="profiles">The detached profiles and their resource subscriptions.</param>
+    /// <param name="applicationUsageRegistry">The detached cross-profile helper registry.</param>
+    private static void DisposeReplacementRuntime(
+        IEnumerable<SupervisorProfile> profiles,
+        ApplicationUsageRegistry applicationUsageRegistry)
+    {
+        foreach (SupervisorProfile profile in profiles)
+            profile.Dispose();
+
+        applicationUsageRegistry.Dispose();
     }
 
     /// <summary>
@@ -388,7 +566,8 @@ public partial class TrayApplicationContext : ApplicationContext
         string message,
         IReadOnlyList<NotificationTarget> targets)
     {
-        _inactiveCleanupError = true;
+        lock (_runtimeStateLock)
+            _inactiveCleanupError = true;
         UpdateTrayState();
 
         PublishNotification(
@@ -402,7 +581,8 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <summary>Clears inactive-helper cleanup error state after a later sweep succeeds.</summary>
     private void OnInactiveApplicationCleanupRecovered()
     {
-        _inactiveCleanupError = false;
+        lock (_runtimeStateLock)
+            _inactiveCleanupError = false;
         UpdateTrayState();
     }
 
@@ -417,7 +597,8 @@ public partial class TrayApplicationContext : ApplicationContext
         IManagedResource resource,
         string message)
     {
-        _activeRuntimeErrors.Add(new RuntimeErrorIdentity(profile, resource));
+        lock (_runtimeStateLock)
+            _activeRuntimeErrors.Add(new RuntimeErrorIdentity(profile, resource));
         UpdateTrayState();
 
         PublishNotification(
@@ -435,7 +616,8 @@ public partial class TrayApplicationContext : ApplicationContext
         SupervisorProfile profile,
         IManagedResource resource)
     {
-        _activeRuntimeErrors.Remove(new RuntimeErrorIdentity(profile, resource));
+        lock (_runtimeStateLock)
+            _activeRuntimeErrors.Remove(new RuntimeErrorIdentity(profile, resource));
         UpdateTrayState();
     }
 
@@ -539,45 +721,98 @@ public partial class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void UpdateTrayState()
     {
-        _pauseResumeItem.Enabled = !(_configurationError && !_hasValidConfiguration);
-        _pauseResumeItem.Text = _paused
+        bool hasRuntimeError;
+
+        lock (_runtimeStateLock)
+        {
+            hasRuntimeError =
+                _inactiveCleanupError ||
+                _activeRuntimeErrors.Count > 0 ||
+                _activeHealthErrors.Count > 0 ||
+                _reportedProfileTickErrors.Count > 0 ||
+                _reportedStartupTickErrors.Count > 0;
+        }
+
+        bool pauseEnabled = !(_configurationError && !_hasValidConfiguration);
+        string pauseText = _paused
             ? "Resume"
             : "Pause";
+        Icon icon;
+        string text;
 
         if (_pausedManually)
         {
-            _trayIcon.Icon = _pausedIcon;
-            _trayIcon.Text = "AppSupervisor - Paused";
+            icon = _pausedIcon;
+            text = "AppSupervisor - Paused";
         }
         else if (_configurationError)
         {
-            _trayIcon.Icon = _errorIcon;
-            _trayIcon.Text = "AppSupervisor - Configuration error";
+            icon = _errorIcon;
+            text = "AppSupervisor - Configuration error";
         }
-        else if (_inactiveCleanupError || _activeRuntimeErrors.Count > 0 || _activeHealthErrors.Count > 0 || _reportedProfileTickErrors.Count > 0 || _reportedStartupTickErrors.Count > 0)
+        else if (hasRuntimeError || _hasSteamVrOfflineDevices)
         {
-            _trayIcon.Icon = _errorIcon;
-            _trayIcon.Text = "AppSupervisor - Supervision error";
+            icon = _errorIcon;
+            text = "AppSupervisor - Supervision error";
+        }
+        else if (_profiles.Count == 0 && !_steamVrMonitoringEnabled)
+        {
+            icon = _errorIcon;
+            text = "AppSupervisor - No enabled profiles";
         }
         else if (_profiles.Count == 0)
         {
-            _trayIcon.Icon = _errorIcon;
-            _trayIcon.Text = "AppSupervisor - No enabled profiles";
+            icon = _appIcon;
+            text = "AppSupervisor - Monitoring SteamVR";
         }
         else if (_paused)
         {
-            _trayIcon.Icon = _pausedIcon;
-            _trayIcon.Text = "AppSupervisor - Paused";
+            icon = _pausedIcon;
+            text = "AppSupervisor - Paused";
         }
         else if (_profiles.Any(profile => profile.TriggerActive))
         {
-            _trayIcon.Icon = _supervisingIcon;
-            _trayIcon.Text = "AppSupervisor - Supervising";
+            icon = _supervisingIcon;
+            text = "AppSupervisor - Supervising";
         }
         else
         {
-            _trayIcon.Icon = _appIcon;
-            _trayIcon.Text = "AppSupervisor - Waiting for monitored applications";
+            icon = _appIcon;
+            text = "AppSupervisor - Waiting for monitored applications";
+        }
+
+        RunOnUiThread(() => ApplyTrayState(pauseEnabled, pauseText, icon, text));
+    }
+
+    /// <summary>Applies a precomputed immutable tray snapshot on the WinForms thread.</summary>
+    private void ApplyTrayState(bool pauseEnabled, string pauseText, Icon icon, string text)
+    {
+        if (_exiting)
+            return;
+
+        _pauseResumeItem.Enabled = pauseEnabled;
+        _pauseResumeItem.Text = pauseText;
+        _trayIcon.Icon = icon;
+        _trayIcon.Text = text;
+    }
+
+    /// <summary>Posts a UI-only operation without waiting for the WinForms message pump.</summary>
+    /// <param name="operation">The tray or window operation to post.</param>
+    private void RunOnUiThread(Action operation)
+    {
+        if (_exiting || _dialogOwner.IsDisposed)
+            return;
+
+        try
+        {
+            if (_dialogOwner.InvokeRequired)
+                _dialogOwner.BeginInvoke(operation);
+            else
+                operation();
+        }
+        catch (InvalidOperationException)
+        {
+            // Shutdown destroyed the hidden owner before this background update was posted.
         }
     }
 
@@ -586,7 +821,7 @@ public partial class TrayApplicationContext : ApplicationContext
     /// </summary>
     /// <param name="sender">The Exit menu item.</param>
     /// <param name="e">The menu-click event data.</param>
-    private void Exit(object? sender, EventArgs e)
+    private async void Exit(object? sender, EventArgs e)
     {
         if (_exiting)
             return;
@@ -597,22 +832,30 @@ public partial class TrayApplicationContext : ApplicationContext
         CloseAllWindows();
         SaveVerifiedConfigurationBackup();
         Application.ApplicationExit -= ApplicationExiting;
-        _monitorTimer.Stop();
-        _startupTimer.Stop();
-        _ensureClosedTimer.Stop();
-        _ensureClosedTimer.Tick -= EnsureClosedTimerTick;
+        _paused = true;
+        _monitorTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _startupTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _ensureClosedTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+        await ExecuteSupervisionAsync(() =>
+        {
+            _applicationUsageRegistry.CleanupRecovered -= OnInactiveApplicationCleanupRecovered;
+            _applicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
+            _applicationUsageRegistry.Dispose();
+
+            foreach (SupervisorProfile profile in _profiles)
+                profile.Dispose();
+
+            _profiles.Clear();
+            DisposeSteamVrIntegration();
+        });
+
+        _supervisionCancellation.Cancel();
+        await Task.Run(_notificationService.Dispose);
+
         _ensureClosedTimer.Dispose();
         _startupTimer.Dispose();
-        _applicationUsageRegistry.CleanupRecovered -= OnInactiveApplicationCleanupRecovered;
         _monitorTimer.Dispose();
-        _applicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
-        _applicationUsageRegistry.Dispose();
-
-        foreach (var profile in _profiles)
-            profile.Dispose();
-
-        _profiles.Clear();
-        _notificationService.Dispose();
 
         _trayIcon.Visible = false;
         _trayIcon.Dispose();

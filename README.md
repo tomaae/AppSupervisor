@@ -19,6 +19,7 @@ AppSupervisor is a lightweight, Windows-only tray application that starts, super
 - Supervises Windows services and enforces Manual startup mode during initialization.
 - Supports listener ownership checks and VRChat OSCQuery health checks.
 - Routes per-resource notifications to popup dialogs, Windows notifications, and XSOverlay.
+- Monitors expected SteamVR trackers and base stations without starting or restarting SteamVR or its devices.
 - Includes a structured configuration editor with installed-process, Steam, Store, and service pickers.
 - Validates configuration strictly and retains the last valid runtime configuration if a reload fails.
 - Saves the last verified configuration as `config.json.old` during normal shutdown.
@@ -40,11 +41,13 @@ flowchart LR
 
 Each profile watches one process name. When that process is present, AppSupervisor activates enabled applications and services from top to bottom. A resource can wait for one earlier dependency to report started, and **Wait after startup** can delay the next resource in that profile without blocking other profiles. While the profile remains active, missing resources can be restarted and application health checks continue to run.
 
+Supervision is scheduled by background timers independently of the Windows UI. Overlapping ticks are coalesced and resource-state changes are serialized, while health probes, SteamVR capture, configuration discovery, and notification delivery run outside the UI thread. A slow dialog or external notification API therefore cannot freeze configuration work or stop new supervision signals.
+
 When the monitored process disappears, pending recovery stops immediately. After the configured **Close timeout**, helper applications receive graceful close requests and services receive stop requests. Pausing or exiting AppSupervisor leaves external applications and services untouched.
 
 Applications with **Ensure closed until needed** are checked every five minutes and closed only when no enabled profile using that executable still needs them. The check and any pending close progression stop while AppSupervisor is paused.
 
-The tray icon uses a green play badge while at least one profile's monitored process is running, and a red X when no profiles are enabled. The yellow pause badge has priority over every other state when supervision is paused manually.
+The tray icon uses a green play badge while at least one profile's monitored process is running, a neutral integration state when only SteamVR monitoring is configured, and a red X when neither profiles nor integrations are enabled. Confirmed SteamVR device failures also use the error state. The yellow pause badge has priority over every other state when supervision is paused manually.
 
 ## Detailed functionality
 
@@ -100,13 +103,15 @@ Each helper application, service, and health check has its own **Notifications**
 
 If XSOverlay is selected but is not running or cannot accept the message, delivery falls back to a Windows notification. Restart notifications use warning severity; failed restart, launch, close, service, and health operations use error severity where applicable.
 
-Popup notification modals run away from the supervision thread so they cannot block monitoring. Selecting **Exit** closes configuration windows, startup prompts, and outstanding popup notification modals before AppSupervisor terminates.
+Notification requests enter a bounded background queue and are delivered in order, so a slow provider cannot block supervision or the configuration editor. Popup notification modals also run away from the supervision thread. Selecting **Exit** closes configuration windows, startup prompts, and outstanding popup notification modals before AppSupervisor terminates.
 
 ### Configuration editor
 
 Open the editor with **Configure...** in the tray menu or by double-clicking the tray icon. Only one configuration window can be open at a time.
 
-The **Profile** selector at the top chooses the profile being edited. **Add profile**, **Duplicate**, and **Remove** manage complete profiles, including their applications, services, health checks, and notification selections. The main editor is divided into two tabs.
+Installed-service, running-process, Steam-library, Store-package, SteamVR-device, and health-probe discovery runs asynchronously so external Windows APIs and slow disks do not block the editor.
+
+The **Profile** selector at the top chooses the profile being edited. **Add profile**, **Duplicate**, and **Remove** manage complete profiles, including their applications, services, health checks, and notification selections. The main editor is divided into three tabs; **Integrations** contains application-wide settings that are independent of the selected profile.
 
 #### Profile settings tab
 
@@ -151,6 +156,16 @@ Selecting a service shows:
 
 The same active service cannot be assigned more than once in the configuration.
 
+#### Integrations tab
+
+The **Global — SteamVR device monitoring** section observes expected trackers and Lighthouse/base-station tracking references across every profile. It attaches as an OpenVR background client only while `vrserver` is already running and never starts SteamVR, restarts it, or controls a device.
+
+**Discover from running SteamVR** reads tracker and base-station model names, stable serial numbers, and current connection state. Devices can be renamed and individually included or excluded from monitoring. A saved serial remains expected even when that device is absent from a later scan.
+
+After SteamVR starts, monitoring waits 30 seconds. It then checks at most once every 30 seconds and requires two failed connection checks before declaring a device offline. Temporary pose loss does not count as disconnection.
+
+A confirmed failure publishes its configured popup, Windows, or XSOverlay notification and then opens a modeless offline-device window whose elapsed durations update live. Unsilenced incidents repeat at the configured interval, five minutes by default. **Silence selected** and **Silence all shown** stop reminders only for the current outage; recovery remains monitored, clears the incident automatically, and resets acknowledgement for a later outage. Saving enabled integration settings preserves active incidents. The window closes automatically when SteamVR stops or all incidents recover, and the tray menu can reopen it while incidents remain.
+
 #### Health check window
 
 The **General** category contains the check name and type, check interval, probe timeout, failures required before unhealthy, startup delay, and the option to gracefully restart the helper after confirmed failure.
@@ -188,7 +203,7 @@ After the main message loop starts, AppSupervisor checks whether a current-user 
 
 ## Configuration storage
 
-The configuration UI stores its validated document in `config.json` beside `AppSupervisor.exe`. If the file does not exist, AppSupervisor creates a valid empty configuration automatically. Saving is atomic, and the last verified configuration is written to `config.json.old` during normal shutdown. Unknown or obsolete JSON fields are rejected rather than silently ignored.
+The configuration UI stores its validated document in `config.json` beside `AppSupervisor.exe`. The document has top-level `profiles` and `integrations` sections so global integrations do not belong to an arbitrary profile. If the file does not exist, AppSupervisor creates a valid empty configuration automatically. Saving is atomic, and the last verified configuration is written to `config.json.old` during normal shutdown. Unknown or obsolete JSON fields are rejected rather than silently ignored.
 
 If the verified shutdown backup cannot be written safely, AppSupervisor records the failure in `%LOCALAPPDATA%\AppSupervisor\AppSupervisor.log` without blocking shutdown.
 

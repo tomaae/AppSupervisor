@@ -282,7 +282,7 @@ public sealed partial class ConfigurationEditorForm
             return;
 
         resource.WaitAfterStartupMilliseconds =
-            Decimal.ToInt32(_resourceWaitAfterStartup.Value);
+            ReadDisplayedNumber(_resourceWaitAfterStartup);
         resource.DependencyResourceId =
             (_resourceDependency.SelectedItem as ResourceDependencyChoice)?.ResourceId ?? "";
         UpdateStatus();

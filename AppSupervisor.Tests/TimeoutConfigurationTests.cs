@@ -18,7 +18,7 @@ public sealed class TimeoutConfigurationTests
             RestartTimeoutSeconds = 34
         };
 
-        string json = ConfigFileWriter.Serialize([profile]);
+        string json = ConfigFileWriter.Serialize(new AppSupervisorConfig { Profiles = [profile] });
 
         Assert.Contains("\"closeTimeoutSeconds\": 12", json, StringComparison.Ordinal);
         Assert.Contains("\"restartTimeoutSeconds\": 34", json, StringComparison.Ordinal);

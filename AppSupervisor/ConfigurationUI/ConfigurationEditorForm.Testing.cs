@@ -2,6 +2,7 @@ using AppSupervisor.Configuration;
 using AppSupervisor.Health;
 using AppSupervisor.Notifications;
 using AppSupervisor.ServiceControl;
+using AppSupervisor.SteamVr;
 
 namespace AppSupervisor.ConfigurationUI;
 
@@ -25,6 +26,23 @@ public sealed partial class ConfigurationEditorForm
                 cancellationToken
             ),
             notificationPublisher
+        )
+    {
+    }
+
+    /// <summary>Creates an editor that shares the running monitor's serialized SteamVR source.</summary>
+    internal ConfigurationEditorForm(
+        string configPath,
+        Action<SupervisorNotification> notificationPublisher,
+        Func<CancellationToken, Task<SteamVrSnapshot>> steamVrDeviceLoader)
+        : this(
+            configPath,
+            cancellationToken => Task.Run(
+                InstalledServiceCatalog.LoadThirdPartyServices,
+                cancellationToken
+            ),
+            notificationPublisher,
+            steamVrDeviceLoader
         )
     {
     }

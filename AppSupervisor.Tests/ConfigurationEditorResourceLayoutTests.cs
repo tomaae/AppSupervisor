@@ -21,7 +21,9 @@ public sealed class ConfigurationEditorResourceLayoutTests
         string configPath = Path.Combine(directoryPath, "config.json");
         ConfigFileWriter.SaveAtomic(
             configPath,
-            [
+            new AppSupervisorConfig
+            {
+                Profiles = [
                 new SupervisorProfileConfig
                 {
                     Name = "Resource layout",
@@ -47,6 +49,7 @@ public sealed class ConfigurationEditorResourceLayoutTests
                     ]
                 }
             ]
+            }
         );
         Exception? threadException = null;
 

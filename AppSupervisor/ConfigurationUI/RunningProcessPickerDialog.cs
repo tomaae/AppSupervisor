@@ -15,8 +15,12 @@ public sealed class RunningProcessPickerDialog : Form
     private readonly TextBox _filterTextBox;
     private readonly CheckBox _showMicrosoftProcesses;
     private readonly ListView _processList;
+    private readonly Label _statusLabel;
+    private readonly Button _refreshButton;
     private readonly Button _selectButton;
+    private readonly CancellationTokenSource _refreshCancellation = new();
     private List<ProcessRow> _allRows = [];
+    private bool _refreshRunning;
 
     /// <summary>Creates the searchable, de-duplicated running-process picker and refreshes its snapshot.</summary>
     public RunningProcessPickerDialog()
@@ -46,21 +50,22 @@ public sealed class RunningProcessPickerDialog : Form
             Anchor = AnchorStyles.Left,
             Margin = new Padding(0, 6, 8, 0)
         }, 0, 0);
-        _filterTextBox = new TextBox { Dock = DockStyle.Fill };
+        _filterTextBox = new TextBox { Dock = DockStyle.Fill, Enabled = false };
         _filterTextBox.TextChanged += FilterTextChanged;
         topPanel.Controls.Add(_filterTextBox, 1, 0);
-        var refreshButton = new Button
+        _refreshButton = new Button
         {
             Text = "Refresh",
             AutoSize = true,
             Margin = new Padding(8, 0, 8, 0)
         };
-        refreshButton.Click += RefreshClicked;
-        topPanel.Controls.Add(refreshButton, 2, 0);
+        _refreshButton.Click += RefreshClicked;
+        topPanel.Controls.Add(_refreshButton, 2, 0);
         _showMicrosoftProcesses = new CheckBox
         {
             Text = "Show Microsoft/Windows applications",
             AutoSize = true,
+            Enabled = false,
             Anchor = AnchorStyles.Left,
             Margin = new Padding(0, 5, 0, 0)
         };
@@ -80,6 +85,15 @@ public sealed class RunningProcessPickerDialog : Form
         _processList.Columns.Add("Executable path", 650);
         _processList.SelectedIndexChanged += ProcessSelectionChanged;
         _processList.DoubleClick += ProcessDoubleClicked;
+
+        _statusLabel = new Label
+        {
+            Dock = DockStyle.Bottom,
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Padding = new Padding(10, 6, 10, 2),
+            Text = "Discovering running applications..."
+        };
 
         var buttons = new FlowLayoutPanel
         {
@@ -106,10 +120,11 @@ public sealed class RunningProcessPickerDialog : Form
 
         Controls.Add(_processList);
         Controls.Add(topPanel);
+        Controls.Add(_statusLabel);
         Controls.Add(buttons);
         AcceptButton = _selectButton;
         CancelButton = cancelButton;
-        RefreshProcesses();
+        Shown += DialogShown;
     }
 
     /// <summary>Gets the selected executable filename, including its .exe extension.</summary>
@@ -183,7 +198,17 @@ public sealed class RunningProcessPickerDialog : Form
     /// <summary>Refreshes the process snapshot after the user presses Refresh.</summary>
     /// <param name="sender">The Refresh button.</param>
     /// <param name="e">The click event data.</param>
-    private void RefreshClicked(object? sender, EventArgs e) => RefreshProcesses();
+    private async void RefreshClicked(object? sender, EventArgs e)
+        => await RefreshProcessesAsync();
+
+    /// <summary>Starts initial process discovery only after the picker is visible.</summary>
+    /// <param name="sender">The displayed picker.</param>
+    /// <param name="e">The shown event data.</param>
+    private async void DialogShown(object? sender, EventArgs e)
+    {
+        Shown -= DialogShown;
+        await RefreshProcessesAsync();
+    }
 
     /// <summary>Reapplies the text filter as the user types.</summary>
     /// <param name="sender">The filter text box.</param>
@@ -217,8 +242,56 @@ public sealed class RunningProcessPickerDialog : Form
     /// <param name="e">The click event data.</param>
     private void SelectClicked(object? sender, EventArgs e) => AcceptSelection();
 
-    /// <summary>Captures a fresh process list with executable publisher and Windows-origin metadata.</summary>
-    private void RefreshProcesses()
+    /// <summary>Captures process metadata on a worker and applies the completed snapshot on the UI thread.</summary>
+    private async Task RefreshProcessesAsync()
+    {
+        if (_refreshRunning)
+            return;
+
+        _refreshRunning = true;
+        _refreshButton.Enabled = false;
+        _refreshButton.Text = "Refreshing...";
+        _statusLabel.Text = "Discovering running applications...";
+
+        try
+        {
+            IReadOnlyList<ProcessRow> rows = await Task.Run(
+                CaptureProcesses,
+                _refreshCancellation.Token
+            );
+
+            if (_refreshCancellation.IsCancellationRequested || IsDisposed)
+                return;
+
+            _allRows = rows.ToList();
+            _filterTextBox.Enabled = true;
+            _showMicrosoftProcesses.Enabled = true;
+            PopulateList();
+            _statusLabel.Text = $"{_allRows.Count} unique running application(s) discovered.";
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!IsDisposed)
+                _statusLabel.Text = $"Running application discovery failed: {exception.Message}";
+        }
+        finally
+        {
+            _refreshRunning = false;
+
+            if (!IsDisposed)
+            {
+                _refreshButton.Enabled = true;
+                _refreshButton.Text = "Refresh";
+            }
+        }
+    }
+
+    /// <summary>Reads one deduplicated process snapshot without accessing WinForms controls.</summary>
+    /// <returns>The current unique process rows with publisher filtering metadata.</returns>
+    private static IReadOnlyList<ProcessRow> CaptureProcesses()
     {
         var rows = new List<ProcessRow>();
         string windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
@@ -262,8 +335,20 @@ public sealed class RunningProcessPickerDialog : Form
             }
         }
 
-        _allRows = RemoveDuplicateProcesses(rows).ToList();
-        PopulateList();
+        return RemoveDuplicateProcesses(rows);
+    }
+
+    /// <summary>Cancels pending process discovery when the picker closes.</summary>
+    /// <param name="disposing">Whether managed resources should be released.</param>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _refreshCancellation.Cancel();
+            _refreshCancellation.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 
     /// <summary>Reads an executable's version-resource company name without exposing inspection failures.</summary>

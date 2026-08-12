@@ -1,3 +1,5 @@
+using System.Threading.Channels;
+
 namespace AppSupervisor.Notifications;
 
 /// <summary>
@@ -5,9 +7,12 @@ namespace AppSupervisor.Notifications;
 /// </summary>
 internal sealed class NotificationService : IDisposable
 {
+    private const int QueueCapacity = 256;
     private readonly IReadOnlyDictionary<NotificationTarget, INotificationProvider> _providers;
     private readonly CancellationTokenSource _shutdownCancellation = new();
-    private bool _disposed;
+    private readonly Channel<SupervisorNotification> _queue;
+    private readonly Task _worker;
+    private int _disposed;
 
     /// <summary>
     /// Creates a router from a set containing at most one provider for each notification target.
@@ -16,6 +21,13 @@ internal sealed class NotificationService : IDisposable
     public NotificationService(IEnumerable<INotificationProvider> providers)
     {
         _providers = providers.ToDictionary(provider => provider.Target);
+        _queue = Channel.CreateBounded<SupervisorNotification>(new BoundedChannelOptions(QueueCapacity)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+        _worker = Task.Run(ProcessQueueAsync);
     }
 
     /// <summary>
@@ -24,10 +36,18 @@ internal sealed class NotificationService : IDisposable
     /// <param name="notification">The provider-independent notification request.</param>
     public void Publish(SupervisorNotification notification)
     {
-        if (_disposed || notification.Targets.Count == 0)
+        if (Volatile.Read(ref _disposed) != 0 || notification.Targets.Count == 0)
             return;
 
-        _ = PublishSafelyAsync(notification, _shutdownCancellation.Token);
+        if (!_queue.Writer.TryWrite(notification))
+        {
+            SupervisorLog.WriteError(
+                $"Notification queue is full; delivery was skipped: {notification.Title}.",
+                new InvalidOperationException(
+                    "The bounded notification queue reached capacity."
+                )
+            );
+        }
     }
 
     /// <summary>
@@ -35,11 +55,20 @@ internal sealed class NotificationService : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _disposed = true;
+        _queue.Writer.TryComplete();
         _shutdownCancellation.Cancel();
+
+        try
+        {
+            _worker.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (AggregateException exception)
+            when (exception.InnerExceptions.All(inner => inner is OperationCanceledException))
+        {
+        }
 
         foreach (IDisposable provider in _providers.Values.OfType<IDisposable>())
             provider.Dispose();
@@ -47,25 +76,33 @@ internal sealed class NotificationService : IDisposable
         _shutdownCancellation.Dispose();
     }
 
-    /// <summary>
-    /// Contains all provider exceptions so notification delivery can never stop supervision.
-    /// </summary>
-    /// <param name="notification">The notification request being delivered.</param>
-    /// <param name="cancellationToken">Cancels delivery during shutdown.</param>
-    private async Task PublishSafelyAsync(
-        SupervisorNotification notification,
-        CancellationToken cancellationToken)
+    /// <summary>Drains notifications in order on one isolated worker so provider stalls cannot multiply.</summary>
+    private async Task ProcessQueueAsync()
     {
         try
         {
-            await PublishCoreAsync(notification, cancellationToken).ConfigureAwait(false);
+            await foreach (SupervisorNotification notification in
+                _queue.Reader.ReadAllAsync(_shutdownCancellation.Token).ConfigureAwait(false))
+            {
+                try
+                {
+                    await PublishCoreAsync(
+                        notification,
+                        _shutdownCancellation.Token
+                    ).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_shutdownCancellation.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch
+                {
+                    // One provider failure cannot stop later queued notifications.
+                }
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (_shutdownCancellation.IsCancellationRequested)
         {
-        }
-        catch
-        {
-            // Notification providers are intentionally best-effort and must never fail supervision.
         }
     }
 

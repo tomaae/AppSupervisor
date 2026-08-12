@@ -17,11 +17,11 @@ public sealed class ConfigLoaderTests
     {
         using var file = TemporaryConfigFile.CreateMissing();
 
-        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path);
+        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path).Profiles;
 
         Assert.Empty(config);
         Assert.True(File.Exists(file.Path));
-        Assert.Equal([], JsonSerializer.Deserialize<object[]>(File.ReadAllText(file.Path)));
+        Assert.Contains("profiles", File.ReadAllText(file.Path));
     }
 
     /// <summary>
@@ -57,7 +57,7 @@ public sealed class ConfigLoaderTests
             }
         });
 
-        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path);
+        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path).Profiles;
 
         Assert.Equal(
             [NotificationTarget.Popup, NotificationTarget.Windows],
@@ -231,7 +231,7 @@ public sealed class ConfigLoaderTests
             }
         });
 
-        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path);
+        List<SupervisorProfileConfig> config = ConfigLoader.Load(file.Path).Profiles;
 
         Assert.Equal("Normalized", config[0].Name);
         Assert.Equal("notepad.exe", config[0].MonitorProcess);
@@ -298,7 +298,11 @@ public sealed class ConfigLoaderTests
             Directory.CreateDirectory(directoryPath);
 
             string path = System.IO.Path.Combine(directoryPath, "config.json");
-            File.WriteAllText(path, JsonSerializer.Serialize(config));
+            File.WriteAllText(path, JsonSerializer.Serialize(new
+            {
+                profiles = config,
+                integrations = new { steamVr = new { enabled = false } }
+            }));
             return new TemporaryConfigFile(directoryPath, path);
         }
 

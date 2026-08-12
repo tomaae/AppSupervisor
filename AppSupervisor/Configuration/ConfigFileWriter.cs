@@ -3,27 +3,19 @@ using System.Text.Json;
 
 namespace AppSupervisor.Configuration;
 
-/// <summary>
-/// Validates and atomically writes complete configuration documents without exposing partial JSON files.
-/// </summary>
+/// <summary>Validates and atomically writes complete configuration documents.</summary>
 public static class ConfigFileWriter
 {
-    /// <summary>Serializes a validated configuration using the same contract accepted by <see cref="ConfigLoader"/>.</summary>
-    /// <param name="configuration">The complete supervisor-profile configuration.</param>
-    /// <returns>Indented UTF-8 JSON text.</returns>
-    public static string Serialize(IReadOnlyList<SupervisorProfileConfig> configuration)
+    /// <summary>Serializes a validated configuration using the strict loader contract.</summary>
+    public static string Serialize(AppSupervisorConfig configuration)
     {
         Validate(configuration);
         return JsonSerializer.Serialize(configuration, ConfigJson.CreateOptions(writeIndented: true)) +
             Environment.NewLine;
     }
 
-    /// <summary>Writes a complete validated configuration to a same-directory temporary file and atomically replaces the destination.</summary>
-    /// <param name="path">The destination config.json path.</param>
-    /// <param name="configuration">The complete configuration document.</param>
-    public static void SaveAtomic(
-        string path,
-        IReadOnlyList<SupervisorProfileConfig> configuration)
+    /// <summary>Writes a complete document to a same-directory temporary file and atomically replaces the destination.</summary>
+    public static void SaveAtomic(string path, AppSupervisorConfig configuration)
     {
         string json = Serialize(configuration);
         string fullPath = Path.GetFullPath(path);
@@ -62,14 +54,14 @@ public static class ConfigFileWriter
         }
     }
 
-    /// <summary>Runs semantic validation against a non-null view of the complete document.</summary>
-    /// <param name="configuration">The configuration to validate.</param>
-    private static void Validate(IReadOnlyList<SupervisorProfileConfig> configuration)
+    private static void Validate(AppSupervisorConfig configuration)
     {
-        ConfigValidator.Validate(
-            configuration
-                .Select(profile => (SupervisorProfileConfig?)profile)
-                .ToArray()
-        );
+        if (configuration.Profiles is null)
+            throw new ConfigValidationException(["The configuration must contain a profiles array."]);
+        if (configuration.Integrations is null)
+            throw new ConfigValidationException(["The configuration must contain an integrations object."]);
+
+        ConfigValidator.Validate(configuration.Profiles);
+        IntegrationConfigValidator.Validate(configuration.Integrations);
     }
 }

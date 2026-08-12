@@ -33,7 +33,8 @@ public partial class TrayApplicationContext
         {
             using var editor = new ConfigurationEditorForm(
                 _configPath,
-                _notificationService.Publish
+                _notificationService.Publish,
+                _steamVrMonitor.DiscoverAsync
             );
             _configurationEditor = editor;
 
@@ -67,7 +68,7 @@ public partial class TrayApplicationContext
 
         try
         {
-            VerifiedConfigBackup.Save(_configPath, _config);
+            VerifiedConfigBackup.Save(_configPath, _configuration);
             _verifiedBackupSaved = true;
         }
         catch (Exception ex)

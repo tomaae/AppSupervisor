@@ -1,6 +1,7 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.Notifications;
 
+using AppSupervisor.SteamVr;
 using AppSupervisor.ServiceControl;
 
 
@@ -12,6 +13,7 @@ namespace AppSupervisor.ConfigurationUI;
 public sealed partial class ConfigurationEditorForm : Form
 {
     private readonly string _configPath;
+    private readonly AppSupervisorConfig _configuration;
     private readonly List<SupervisorProfileConfig> _profiles;
 
     private readonly Func<CancellationToken, Task<IReadOnlyList<InstalledServiceInfo>>> _serviceCatalogLoader;
@@ -139,7 +141,8 @@ public sealed partial class ConfigurationEditorForm : Form
         string configPath,
 
         Func<CancellationToken, Task<IReadOnlyList<InstalledServiceInfo>>> serviceCatalogLoader,
-        Action<SupervisorNotification>? notificationPublisher)
+        Action<SupervisorNotification>? notificationPublisher,
+        Func<CancellationToken, Task<SteamVrSnapshot>>? steamVrDeviceLoader = null)
 
     {
 
@@ -147,7 +150,9 @@ public sealed partial class ConfigurationEditorForm : Form
 
         _serviceCatalogLoader = serviceCatalogLoader;
         _notificationPublisher = notificationPublisher;
-        (_profiles, _loadError) = LoadConfigurationForEditing(_configPath);
+        _steamVrDeviceLoader = steamVrDeviceLoader ?? LoadSteamVrDevicesAsync;
+        (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
+        _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
 
         Text = "AppSupervisor Configuration";
@@ -162,6 +167,7 @@ public sealed partial class ConfigurationEditorForm : Form
         Controls.Add(BuildFooter());
         _tabs.TabPages.Add(BuildProfilePage());
         _tabs.TabPages.Add(BuildResourcesPage());
+        _tabs.TabPages.Add(BuildIntegrationsPage());
         WireEvents();
 
         BeginRefreshInstalledServices(showErrors: false);
@@ -422,6 +428,7 @@ public sealed partial class ConfigurationEditorForm : Form
 
         _resourceDependency.SelectedIndexChanged += ResourceStartupFieldChanged;
         _resourceWaitAfterStartup.ValueChanged += ResourceStartupFieldChanged;
+        _resourceWaitAfterStartup.TextChanged += ResourceStartupFieldChanged;
 
         _applicationEnabled.CheckedChanged += ApplicationFieldChanged;
         _applicationPath.TextChanged += ApplicationFieldChanged;
@@ -927,7 +934,7 @@ public sealed partial class ConfigurationEditorForm : Form
     {
         try
         {
-            ConfigFileWriter.Serialize(_profiles);
+            ConfigFileWriter.Serialize(_configuration);
             MessageBox.Show(
                 this,
                 "Configuration is valid.",
@@ -949,7 +956,7 @@ public sealed partial class ConfigurationEditorForm : Form
     {
         try
         {
-            ConfigFileWriter.Serialize(_profiles);
+            ConfigFileWriter.Serialize(_configuration);
 
             if (HasFileChangedExternally() && MessageBox.Show(
                 this,
@@ -963,7 +970,7 @@ public sealed partial class ConfigurationEditorForm : Form
                 return;
             }
 
-            ConfigFileWriter.SaveAtomic(_configPath, _profiles);
+            ConfigFileWriter.SaveAtomic(_configPath, _configuration);
             _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
             _hasUnsavedChanges = false;
             _closeWithoutUnsavedChangesPrompt = true;
@@ -1014,7 +1021,7 @@ public sealed partial class ConfigurationEditorForm : Form
     private string SerializeEditingState()
     {
         return System.Text.Json.JsonSerializer.Serialize(
-            _profiles,
+            _configuration,
             ConfigJson.CreateOptions()
         );
     }
@@ -1031,6 +1038,25 @@ public sealed partial class ConfigurationEditorForm : Form
                 ));
         _validateButton.Enabled = _hasUnsavedChanges;
         _saveButton.Enabled = _hasUnsavedChanges;
+    }
+
+    /// <summary>Reads valid typed numeric text before WinForms commits it when focus changes.</summary>
+    /// <param name="numeric">The numeric editor whose displayed value is required.</param>
+    /// <returns>The displayed whole number, or its last committed value for incomplete text.</returns>
+    private static int ReadDisplayedNumber(NumericUpDown numeric)
+    {
+        if (decimal.TryParse(
+                numeric.Text,
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.CurrentCulture,
+                out decimal displayed) &&
+            displayed >= numeric.Minimum &&
+            displayed <= numeric.Maximum)
+        {
+            return Decimal.ToInt32(displayed);
+        }
+
+        return Decimal.ToInt32(numeric.Value);
     }
 
     /// <summary>Asks before closing an editor that contains unsaved configuration changes.</summary>
@@ -1139,7 +1165,7 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <summary>Loads the current file for editing, returning an empty document with a warning when it is invalid.</summary>
     /// <param name="path">The configuration path.</param>
     /// <returns>The editable profiles and optional load error.</returns>
-    private static (List<SupervisorProfileConfig> Profiles, string? Error)
+    private static (AppSupervisorConfig Configuration, string? Error)
         LoadConfigurationForEditing(string path)
     {
         try
@@ -1148,7 +1174,7 @@ public sealed partial class ConfigurationEditorForm : Form
         }
         catch (Exception ex)
         {
-            return ([], ex.Message);
+            return (new AppSupervisorConfig(), ex.Message);
         }
     }
 

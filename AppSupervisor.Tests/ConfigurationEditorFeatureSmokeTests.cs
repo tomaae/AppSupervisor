@@ -20,7 +20,7 @@ public sealed class ConfigurationEditorFeatureSmokeTests
         );
         Directory.CreateDirectory(directoryPath);
         string configPath = Path.Combine(directoryPath, "config.json");
-        ConfigFileWriter.SaveAtomic(configPath, []);
+        ConfigFileWriter.SaveAtomic(configPath, new AppSupervisorConfig());
         Exception? threadException = null;
 
         try

@@ -8,46 +8,56 @@ namespace AppSupervisor;
 /// </summary>
 public static class ConfigLoader
 {
-    /// <summary>
-    /// Reads, deserializes, and semantically validates the supervisor-profile configuration from a JSON file.
-    /// </summary>
-    /// <param name="path">The path of the JSON configuration file.</param>
-    /// <returns>The validated supervisor-profile configuration.</returns>
-    public static List<SupervisorProfileConfig> Load(string path)
+    /// <summary>Loads and validates the complete configuration document.</summary>
+    public static AppSupervisorConfig Load(string path)
     {
         EnsureConfigurationExists(path);
         string json = File.ReadAllText(path);
-        var config = JsonSerializer.Deserialize<List<SupervisorProfileConfig?>>(
+        var config = JsonSerializer.Deserialize<AppSupervisorConfig>(
             json,
             ConfigJson.CreateOptions()
         );
 
         if (config is null)
-            throw new ConfigValidationException(["The top-level JSON value must be an array."]);
+            throw new ConfigValidationException(["The top-level configuration cannot be null."]);
+        if (config.Profiles is null)
+            throw new ConfigValidationException(["The configuration must contain a profiles array."]);
+        if (config.Integrations is null)
+            throw new ConfigValidationException(["The configuration must contain an integrations object."]);
 
-        ConfigNormalizer.Normalize(config);
-        PackagedApplicationPathResolver.ResolvePaths(config);
-
-        ConfigValidator.Validate(config);
-        return config.Select(profile => profile!).ToList();
+        ConfigNormalizer.Normalize(config.Profiles);
+        NormalizeIntegrations(config.Integrations);
+        PackagedApplicationPathResolver.ResolvePaths(config.Profiles);
+        ConfigValidator.Validate(config.Profiles);
+        IntegrationConfigValidator.Validate(config.Integrations);
+        return config;
     }
 
-    /// <summary>Loads and validates configuration on a worker thread so Store package discovery cannot block supervision.</summary>
-    /// <param name="path">The path of the JSON configuration file.</param>
-    /// <param name="cancellationToken">Cancels waiting for the background load result.</param>
-    /// <returns>The validated supervisor-profile configuration.</returns>
-    public static Task<List<SupervisorProfileConfig>> LoadAsync(
+    /// <summary>Loads and validates configuration on a worker thread.</summary>
+    public static Task<AppSupervisorConfig> LoadAsync(
         string path,
         CancellationToken cancellationToken = default)
         => Task.Run(() => Load(path), cancellationToken);
 
-    /// <summary>
-    /// Creates a valid empty configuration document when no configuration file exists yet.
-    /// </summary>
-    /// <param name="path">The configuration path that must exist before reading.</param>
     private static void EnsureConfigurationExists(string path)
     {
         if (!File.Exists(path))
-            ConfigFileWriter.SaveAtomic(path, []);
+            ConfigFileWriter.SaveAtomic(path, new AppSupervisorConfig());
+    }
+
+    private static void NormalizeIntegrations(IntegrationsConfig integrations)
+    {
+        if (integrations.SteamVr?.Devices is null)
+            return;
+
+        foreach (SteamVrDeviceConfig? device in integrations.SteamVr.Devices)
+        {
+            if (device is null)
+                continue;
+
+            device.SerialNumber = device.SerialNumber?.Trim() ?? "";
+            device.Name = device.Name?.Trim() ?? "";
+            device.ModelNumber = device.ModelNumber?.Trim() ?? "";
+        }
     }
 }

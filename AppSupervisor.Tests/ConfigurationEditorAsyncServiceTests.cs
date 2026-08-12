@@ -19,7 +19,7 @@ public sealed class ConfigurationEditorAsyncServiceTests
         );
         Directory.CreateDirectory(directoryPath);
         string configPath = Path.Combine(directoryPath, "config.json");
-        ConfigFileWriter.SaveAtomic(configPath, []);
+        ConfigFileWriter.SaveAtomic(configPath, new AppSupervisorConfig());
         CancellationToken loaderToken = default;
         Exception? threadException = null;
 
