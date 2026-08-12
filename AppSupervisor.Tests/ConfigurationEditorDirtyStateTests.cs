@@ -115,6 +115,7 @@ public sealed class ConfigurationEditorDirtyStateTests
                         Name = "Numeric profile",
                         MonitorProcess = "notepad.exe",
                         CloseTimeoutSeconds = 20,
+                        WaitBeforeStartingResourcesMilliseconds = 250,
                         Applications =
                         [
                             new ManagedApplicationConfig
@@ -158,6 +159,10 @@ public sealed class ConfigurationEditorDirtyStateTests
                         controls.OfType<Button>(),
                         button => button.Text == "Save && Apply"
                     );
+                    NumericUpDown profileStartupWait = Assert.Single(
+                        controls.OfType<NumericUpDown>(),
+                        numeric => numeric.Value == 250
+                    );
                     NumericUpDown closeTimeout = Assert.Single(
                         controls.OfType<NumericUpDown>(),
                         numeric => numeric.Enabled && numeric.Value == 20
@@ -171,6 +176,13 @@ public sealed class ConfigurationEditorDirtyStateTests
                         numeric => numeric.Value == 5
                     );
 
+                    AssertTypedNumberDirtyTracking(
+                        profileStartupWait,
+                        "250",
+                        "251",
+                        validateButton,
+                        saveButton
+                    );
                     AssertTypedNumberDirtyTracking(
                         closeTimeout,
                         "20",

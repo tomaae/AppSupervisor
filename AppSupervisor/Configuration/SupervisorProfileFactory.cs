@@ -100,7 +100,8 @@ public static class SupervisorProfileFactory
             config.MonitorProcess,
             trigger,
             startupResources,
-            TimeSpan.FromSeconds(closeTimeoutSeconds)
+            TimeSpan.FromSeconds(closeTimeoutSeconds),
+            TimeSpan.FromMilliseconds(config.WaitBeforeStartingResourcesMilliseconds)
         );
     }
 }

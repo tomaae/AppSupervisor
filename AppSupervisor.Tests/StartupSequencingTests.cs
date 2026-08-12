@@ -6,6 +6,33 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies ordered, nonblocking helper application and service startup.</summary>
 public sealed class StartupSequencingTests
 {
+    /// <summary>Confirms the profile-level startup delay postpones its first resource.</summary>
+    [Fact]
+    public void AdvanceStartup_ProfileStartupDelay_DelaysFirstResource()
+    {
+        var trigger = new FakeTrigger { Active = true };
+        var resource = new FakeResource();
+        using var profile = new SupervisorProfile(
+            "Delayed profile",
+            "trigger.exe",
+            trigger,
+            [new ManagedResourceStartup(resource, "resource", 0, "")],
+            TimeSpan.Zero,
+            TimeSpan.FromMinutes(1)
+        );
+
+        profile.Update();
+        DateTime afterActivationUtc = DateTime.UtcNow;
+
+        Assert.Equal(0, resource.ActivateCalls);
+        profile.AdvanceStartup(afterActivationUtc.AddSeconds(59));
+        Assert.Equal(0, resource.ActivateCalls);
+
+        profile.AdvanceStartup(afterActivationUtc.AddSeconds(61));
+
+        Assert.Equal(1, resource.ActivateCalls);
+    }
+
     /// <summary>Confirms a wait delays only later resources in the same profile.</summary>
     [Fact]
     public void AdvanceStartup_WaitAfterStartup_DelaysFollowingResources()

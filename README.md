@@ -10,7 +10,7 @@ AppSupervisor is a lightweight, Windows-only tray application that starts, super
 - Runs from the Windows notification area with waiting, supervising, paused, empty-configuration, and error tray states.
 - Organizes related helper applications and services into process-triggered profiles.
 - Starts applications and services in one configurable order when the monitored process appears.
-- Supports per-resource startup waits and a single earlier-resource dependency.
+- Supports a profile-level wait before resources start, per-resource startup waits, and a single earlier-resource dependency.
 - Restarts unexpectedly stopped helpers and services after a configurable timeout.
 - Optionally detects helper applications whose visible or hidden windows stop responding.
 - Manages ordinary executables, Steam applications, and Microsoft Store/MSIX applications.
@@ -39,7 +39,7 @@ flowchart LR
     E -->|confirmed failure| H["Notify and optionally restart helper"]
 ```
 
-Each profile watches one process name. When that process is present, AppSupervisor activates enabled applications and services from top to bottom. A resource can wait for one earlier dependency to report started, and **Wait after startup** can delay the next resource in that profile without blocking other profiles. While the profile remains active, missing resources can be restarted and application health checks continue to run.
+Each profile watches one process name. When that process is present, **Wait before starting resources** can postpone the first helper or service, then AppSupervisor activates enabled resources from top to bottom. A resource can wait for one earlier dependency to report started, and **Wait after startup** can delay the next resource in that profile. Both waits are nonblocking for other profiles. While the profile remains active, missing resources can be restarted and application health checks continue to run.
 
 Supervision is scheduled by background timers independently of the Windows UI. Overlapping ticks are coalesced and resource-state changes are serialized, while health probes, SteamVR capture, configuration discovery, and notification delivery run outside the UI thread. A slow dialog or external notification API therefore cannot freeze configuration work or stop new supervision signals.
 
@@ -118,6 +118,7 @@ The **Profile** selector at the top chooses the profile being edited. **Add prof
 - **Profile enabled** temporarily excludes the complete profile without deleting it.
 - **Name** identifies the profile in the editor, tray messages, and notifications.
 - **Monitor process** determines when the profile is active. **Browse...** selects an executable from disk; **Pick running...** selects from deduplicated running applications with ordinary Microsoft/system processes hidden by default.
+- **Wait before starting resources** delays the first application or service after the monitored process appears. The delay is in milliseconds and does not block other profiles.
 - **Close timeout** controls how long the monitor may remain absent before helpers and services are closed. Clear **Override default** to use the built-in value.
 - **Restart timeout** controls how long an unexpectedly missing helper or stopped service may remain unavailable before restart. It can also use the built-in default.
 

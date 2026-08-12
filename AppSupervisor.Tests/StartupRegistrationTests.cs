@@ -60,6 +60,32 @@ public sealed class StartupRegistrationTests
         ));
     }
 
+    /// <summary>Confirms Task Scheduler account-name forms match the current user's SID.</summary>
+    [Fact]
+    public void UserIdentitiesEqual_CurrentUserNameForms_ReturnTrue()
+    {
+        using System.Security.Principal.WindowsIdentity identity =
+            System.Security.Principal.WindowsIdentity.GetCurrent();
+        string sid = identity.User!.Value;
+        string qualifiedName = identity.Name;
+        string unqualifiedName = qualifiedName.Contains('\\')
+            ? qualifiedName[(qualifiedName.IndexOf('\\') + 1)..]
+            : qualifiedName;
+
+        Assert.True(StartupRegistration.UserIdentitiesEqual(sid, qualifiedName));
+        Assert.True(StartupRegistration.UserIdentitiesEqual(sid, unqualifiedName));
+    }
+
+    /// <summary>Confirms unrelated valid Windows identities are not treated as the current user.</summary>
+    [Fact]
+    public void UserIdentitiesEqual_DifferentSids_ReturnFalse()
+    {
+        Assert.False(StartupRegistration.UserIdentitiesEqual(
+            "S-1-5-18",
+            "S-1-5-19"
+        ));
+    }
+
     /// <summary>
     /// Confirms that querying a deliberately unique absent task returns no registration without changing Task Scheduler.
     /// </summary>

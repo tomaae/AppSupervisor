@@ -69,16 +69,51 @@ internal static class StartupRegistration
                registration.TriggerCount == 1 &&
                PathsEqual(registration.ExecutablePath, executablePath) &&
                PathsEqual(registration.WorkingDirectory, workingDirectory) &&
-               string.Equals(
-                   registration.PrincipalUserId,
-                   userId,
-                   StringComparison.OrdinalIgnoreCase
-               ) &&
-               string.Equals(
-                   registration.TriggerUserId,
-                   userId,
-                   StringComparison.OrdinalIgnoreCase
-               );
+               UserIdentitiesEqual(registration.PrincipalUserId, userId) &&
+               UserIdentitiesEqual(registration.TriggerUserId, userId);
+    }
+
+    /// <summary>
+    /// Compares Task Scheduler's account-name forms with the SID supplied during registration.
+    /// Windows may return the same local user as a SID, an unqualified name, or DOMAIN\name.
+    /// </summary>
+    /// <param name="left">The identity returned by Task Scheduler.</param>
+    /// <param name="right">The expected current-user identity.</param>
+    /// <returns><see langword="true"/> when both values resolve to the same Windows SID.</returns>
+    internal static bool UserIdentitiesEqual(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            return false;
+
+        if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return TryResolveSid(left, out string? leftSid) &&
+               TryResolveSid(right, out string? rightSid) &&
+               string.Equals(leftSid, rightSid, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Resolves a SID string or Windows account name to its canonical SID.</summary>
+    /// <param name="identity">A SID, local account name, or qualified Windows account name.</param>
+    /// <param name="sid">Receives the canonical SID when resolution succeeds.</param>
+    /// <returns><see langword="true"/> when Windows resolves the identity.</returns>
+    private static bool TryResolveSid(string identity, out string? sid)
+    {
+        sid = null;
+
+        try
+        {
+            IdentityReference reference = identity.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase)
+                ? new SecurityIdentifier(identity)
+                : new NTAccount(identity);
+            sid = ((SecurityIdentifier)reference.Translate(typeof(SecurityIdentifier))).Value;
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IdentityNotMappedException or ArgumentException or SystemException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

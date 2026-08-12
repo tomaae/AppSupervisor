@@ -14,6 +14,7 @@ public sealed class TimeoutConfigurationTests
             Name = "Canonical",
             Enabled = false,
             MonitorProcess = "Canonical.exe",
+            WaitBeforeStartingResourcesMilliseconds = 250,
             CloseTimeoutSeconds = 12,
             RestartTimeoutSeconds = 34
         };
@@ -22,5 +23,10 @@ public sealed class TimeoutConfigurationTests
 
         Assert.Contains("\"closeTimeoutSeconds\": 12", json, StringComparison.Ordinal);
         Assert.Contains("\"restartTimeoutSeconds\": 34", json, StringComparison.Ordinal);
+        Assert.Contains(
+            "\"waitBeforeStartingResourcesMilliseconds\": 250",
+            json,
+            StringComparison.Ordinal
+        );
     }
 }

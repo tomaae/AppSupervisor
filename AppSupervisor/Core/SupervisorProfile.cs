@@ -13,6 +13,7 @@ public sealed class SupervisorProfile : IDisposable
     private readonly IReadOnlyList<IManagedResource> _resources;
     private readonly List<IManagedResource> _activatedResources = [];
     private readonly TimeSpan _closeTimeout;
+    private readonly TimeSpan _waitBeforeStartingResources;
 
     private DateTime? _triggerMissingSince;
     private DateTime _nextStartupUtc;
@@ -30,12 +31,14 @@ public sealed class SupervisorProfile : IDisposable
     /// <param name="trigger">The condition that determines whether the profile is active.</param>
     /// <param name="resources">The resources supervised while the trigger is active.</param>
     /// <param name="closeTimeout">How long the trigger may remain inactive before resources are closed.</param>
+    /// <param name="waitBeforeStartingResources">How long profile activation waits before starting its first resource.</param>
     public SupervisorProfile(
         string name,
         string triggerDisplayName,
         ITrigger trigger,
         IEnumerable<IManagedResource> resources,
-        TimeSpan closeTimeout)
+        TimeSpan closeTimeout,
+        TimeSpan waitBeforeStartingResources = default)
         : this(
             name,
             triggerDisplayName,
@@ -46,7 +49,8 @@ public sealed class SupervisorProfile : IDisposable
                 waitAfterStartupMilliseconds: 0,
                 dependencyResourceId: ""
             )),
-            closeTimeout
+            closeTimeout,
+            waitBeforeStartingResources
         )
     {
     }
@@ -57,12 +61,14 @@ public sealed class SupervisorProfile : IDisposable
     /// <param name="trigger">The condition that determines whether the profile is active.</param>
     /// <param name="startupResources">The resources in startup order with delay and dependency settings.</param>
     /// <param name="closeTimeout">How long the trigger may remain inactive before resources are closed.</param>
+    /// <param name="waitBeforeStartingResources">How long profile activation waits before starting its first resource.</param>
     internal SupervisorProfile(
         string name,
         string triggerDisplayName,
         ITrigger trigger,
         IEnumerable<ManagedResourceStartup> startupResources,
-        TimeSpan closeTimeout)
+        TimeSpan closeTimeout,
+        TimeSpan waitBeforeStartingResources = default)
     {
         Name = name;
         TriggerDisplayName = triggerDisplayName;
@@ -81,6 +87,7 @@ public sealed class SupervisorProfile : IDisposable
             .ToArray();
         _closeTimeout = closeTimeout;
 
+        _waitBeforeStartingResources = waitBeforeStartingResources;
         foreach (IManagedResource resource in _resources)
         {
             resource.ErrorOccurred += OnResourceError;
@@ -294,14 +301,15 @@ public sealed class SupervisorProfile : IDisposable
         ErrorCleared = null;
     }
 
-    /// <summary>Starts a fresh ordered activation sequence and immediately advances zero-delay entries.</summary>
+    /// <summary>Starts a fresh ordered activation sequence after the configured nonblocking profile delay.</summary>
     private void BeginStartupSequence()
     {
         _activatedResources.Clear();
         _nextStartupIndex = 0;
-        _nextStartupUtc = DateTime.MinValue;
+        DateTime nowUtc = DateTime.UtcNow;
+        _nextStartupUtc = nowUtc + _waitBeforeStartingResources;
         _startupPending = _startupResources.Count > 0;
-        AdvanceStartup(DateTime.UtcNow);
+        AdvanceStartup(nowUtc);
     }
 
     /// <summary>Advances timestamp and dependency-gated startup without sleeping or blocking another profile.</summary>

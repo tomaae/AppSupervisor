@@ -262,6 +262,34 @@ public sealed class ConfigLoaderTests
         Assert.Contains("must be between 0 and 86400", exception.Message);
     }
 
+    /// <summary>Confirms profile startup delays beyond the editor's supported range are rejected.</summary>
+    [Fact]
+    public void Load_ExcessiveProfileStartupDelay_ThrowsValidationError()
+    {
+        using var file = TemporaryConfigFile.Create(new[]
+        {
+            new
+            {
+                enabled = false,
+                name = "Excessive startup delay",
+                monitorProcess = "notepad.exe",
+                waitBeforeStartingResourcesMilliseconds = 3_600_001,
+                applications = Array.Empty<object>(),
+                services = Array.Empty<object>()
+            }
+        });
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigLoader.Load(file.Path)
+        );
+
+        Assert.Contains(
+            "waitBeforeStartingResourcesMilliseconds",
+            exception.Message
+        );
+        Assert.Contains("must be between 0 and 3600000", exception.Message);
+    }
+
     /// Owns one temporary JSON file and removes its isolated directory after a test.
     /// </summary>
     private sealed class TemporaryConfigFile : IDisposable

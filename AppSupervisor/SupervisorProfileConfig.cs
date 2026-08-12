@@ -12,6 +12,9 @@ public class SupervisorProfileConfig
     /// <summary>Gets or sets the executable filename whose running state activates the profile.</summary>
     public string MonitorProcess { get; set; } = "";
 
+    /// <summary>Gets or sets the nonblocking delay before the profile starts its first resource.</summary>
+    public int WaitBeforeStartingResourcesMilliseconds { get; set; }
+
     /// <summary>Gets or sets how long the monitor process may remain absent before resources are closed.</summary>
     public int? CloseTimeoutSeconds { get; set; }
 

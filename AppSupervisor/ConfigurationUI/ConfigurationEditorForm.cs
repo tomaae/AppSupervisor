@@ -36,6 +36,13 @@ public sealed partial class ConfigurationEditorForm : Form
     private readonly CheckBox _profileEnabled = new() { Text = "Profile enabled", AutoSize = true };
     private readonly TextBox _profileName = new() { Dock = DockStyle.Fill };
     private readonly TextBox _monitorProcess = new() { Dock = DockStyle.Fill };
+    private readonly NumericUpDown _waitBeforeStartingResources = new()
+    {
+        Minimum = 0,
+        Maximum = ConfigurationLimits.MaximumProfileStartupDelayMilliseconds,
+        Width = 120,
+        ThousandsSeparator = true
+    };
     private readonly NullableSecondsControl _closeTimeout = new();
     private readonly NullableSecondsControl _restartTimeout = new();
 
@@ -268,6 +275,11 @@ public sealed partial class ConfigurationEditorForm : Form
         monitorPanel.Controls.Add(CreateButton("Browse...", BrowseMonitorProcessClicked), 1, 0);
         monitorPanel.Controls.Add(CreateButton("Pick running...", PickMonitorProcessClicked), 2, 0);
         AddEditorRow(layout, "Monitor process", monitorPanel);
+        AddEditorRow(
+            layout,
+            "Wait before starting resources",
+            BuildMillisecondsEditor(_waitBeforeStartingResources)
+        );
         AddEditorRow(layout, "Close timeout", _closeTimeout);
         AddEditorRow(layout, "Restart timeout", _restartTimeout);
         AddEditorRow(layout, "", new Label
@@ -275,7 +287,7 @@ public sealed partial class ConfigurationEditorForm : Form
             AutoSize = true,
             MaximumSize = new Size(720, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "The profile is active while the monitor process is running. Helpers start with it, remain supervised while it is active, and close after the configured close timeout when it stops."
+            Text = "The profile is active while the monitor process is running. After the optional startup wait, resources start in order, remain supervised while it is active, and close after the configured close timeout when it stops."
         });
         page.Controls.Add(layout);
         return page;
@@ -425,6 +437,8 @@ public sealed partial class ConfigurationEditorForm : Form
         _monitorProcess.TextChanged += ProfileFieldChanged;
         _closeTimeout.ValueChanged += ProfileFieldChanged;
         _restartTimeout.ValueChanged += ProfileFieldChanged;
+        _waitBeforeStartingResources.ValueChanged += ProfileFieldChanged;
+        _waitBeforeStartingResources.TextChanged += ProfileFieldChanged;
 
         _resourceDependency.SelectedIndexChanged += ResourceStartupFieldChanged;
         _resourceWaitAfterStartup.ValueChanged += ResourceStartupFieldChanged;
@@ -488,6 +502,11 @@ public sealed partial class ConfigurationEditorForm : Form
             _profileEnabled.Checked = profile?.Enabled ?? false;
             _profileName.Text = profile?.Name ?? "";
             _monitorProcess.Text = profile?.MonitorProcess ?? "";
+            _waitBeforeStartingResources.Value = Math.Clamp(
+                profile?.WaitBeforeStartingResourcesMilliseconds ?? 0,
+                Decimal.ToInt32(_waitBeforeStartingResources.Minimum),
+                Decimal.ToInt32(_waitBeforeStartingResources.Maximum)
+            );
             _closeTimeout.Value = profile?.CloseTimeoutSeconds;
             _restartTimeout.Value = profile?.RestartTimeoutSeconds;
             BindResourceList(profile);
@@ -586,6 +605,8 @@ public sealed partial class ConfigurationEditorForm : Form
         profile.Enabled = _profileEnabled.Checked;
         profile.Name = _profileName.Text;
         profile.MonitorProcess = _monitorProcess.Text;
+        profile.WaitBeforeStartingResourcesMilliseconds =
+            ReadDisplayedNumber(_waitBeforeStartingResources);
         profile.CloseTimeoutSeconds = _closeTimeout.Value;
         profile.RestartTimeoutSeconds = _restartTimeout.Value;
         _profileSelector.Refresh();
