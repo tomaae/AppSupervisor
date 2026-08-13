@@ -18,7 +18,7 @@ public static class SupervisorProfileFactory
     /// <param name="config">The validated configuration entry to translate.</param>
     /// <returns>A fresh supervisor profile containing configured applications and Windows services.</returns>
     public static SupervisorProfile Create(SupervisorProfileConfig config)
-        => Create(config, _ => null);
+        => Create(config, _ => null, new HomeAssistantIntegrationConfig());
 
     /// <summary>
     /// Builds a profile whose applications consult global shared-helper ownership before closing.
@@ -28,7 +28,8 @@ public static class SupervisorProfileFactory
     /// <returns>A fresh supervisor profile containing configured applications and Windows services.</returns>
     internal static SupervisorProfile Create(
         SupervisorProfileConfig config,
-        Func<ManagedApplicationConfig, Func<bool>?> closeGuardFactory)
+        Func<ManagedApplicationConfig, Func<bool>?> closeGuardFactory,
+        HomeAssistantIntegrationConfig homeAssistantIntegration)
     {
         var trigger = new ProcessTrigger(config.MonitorProcess);
 
@@ -79,6 +80,26 @@ public static class SupervisorProfileFactory
             ));
         }
 
+        foreach (DelayResourceConfig delayConfig in
+            config.Delays.Where(delay => delay.Enabled))
+        {
+            configuredResources.Add((
+                delayConfig,
+                new DelayResource(delayConfig),
+                stableOrder++
+            ));
+        }
+
+        foreach (HomeAssistantResourceConfig homeAssistantConfig in
+            config.HomeAssistantResources.Where(resource => resource.Enabled))
+        {
+            configuredResources.Add((
+                homeAssistantConfig,
+                new HomeAssistantResource(homeAssistantConfig, homeAssistantIntegration),
+                stableOrder++
+            ));
+        }
+
         ManagedResourceStartup[] startupResources = configuredResources
             .OrderBy(item => item.Config.StartupOrder < 0
                 ? int.MaxValue
@@ -87,7 +108,9 @@ public static class SupervisorProfileFactory
             .Select(item => new ManagedResourceStartup(
                 item.Resource,
                 item.Config.ResourceId.Trim(),
-                item.Config.WaitAfterStartupMilliseconds,
+                item.Config is DelayResourceConfig delay
+                    ? delay.DurationMilliseconds
+                    : 0,
                 (item.Config.DependencyResourceId ?? "").Trim()
             ))
             .ToArray();
@@ -100,8 +123,7 @@ public static class SupervisorProfileFactory
             config.MonitorProcess,
             trigger,
             startupResources,
-            TimeSpan.FromSeconds(closeTimeoutSeconds),
-            TimeSpan.FromMilliseconds(config.WaitBeforeStartingResourcesMilliseconds)
+            TimeSpan.FromSeconds(closeTimeoutSeconds)
         );
     }
 }

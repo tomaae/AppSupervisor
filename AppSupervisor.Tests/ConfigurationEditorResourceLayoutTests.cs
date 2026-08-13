@@ -84,6 +84,29 @@ public sealed class ConfigurationEditorResourceLayoutTests
                     Assert.True(dividerContainer.Visible);
                     Assert.True(dividerContainer.Width > 100);
 
+                    Button addResource = Assert.Single(
+                        controls.OfType<Button>(),
+                        button => button.Visible && button.Text == "Add..."
+                    );
+                    TableLayoutPanel resourceButtons = Assert.IsType<TableLayoutPanel>(
+                        addResource.Parent
+                    );
+                    Button removeResource = Assert.Single(
+                        resourceButtons.Controls.OfType<Button>(),
+                        button => button.Text == "Remove"
+                    );
+                    Button moveUp = Assert.Single(
+                        resourceButtons.Controls.OfType<Button>(),
+                        button => button.Text == "Move up"
+                    );
+                    Assert.Equal(ScreenTop(addResource), ScreenTop(removeResource));
+                    Assert.True(ScreenTop(moveUp) < ScreenTop(addResource));
+                    Assert.InRange(
+                        Math.Abs(addResource.Width - removeResource.Width),
+                        0,
+                        1
+                    );
+
                     TextBox executable = Assert.Single(
                         controls.OfType<TextBox>(),
                         input => input.Text == Environment.ProcessPath
@@ -150,6 +173,12 @@ public sealed class ConfigurationEditorResourceLayoutTests
     /// <returns>The screen-relative left edge.</returns>
     private static int ScreenLeft(Control control) =>
         control.PointToScreen(Point.Empty).X;
+
+    /// <summary>Returns a control's absolute vertical position after WinForms layout.</summary>
+    /// <param name="control">The visible control to locate.</param>
+    /// <returns>The screen-relative top edge.</returns>
+    private static int ScreenTop(Control control) =>
+        control.PointToScreen(Point.Empty).Y;
 
     /// <summary>Recursively enumerates one control and every descendant.</summary>
     /// <param name="root">The root control.</param>

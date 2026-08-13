@@ -1,6 +1,6 @@
 namespace AppSupervisor;
 
-/// <summary>Configures one monitored-process profile and its managed applications and services.</summary>
+/// <summary>Configures one monitored-process profile and its ordered managed resources.</summary>
 public class SupervisorProfileConfig
 {
     /// <summary>Gets or sets the unique user-facing profile name.</summary>
@@ -11,9 +11,6 @@ public class SupervisorProfileConfig
 
     /// <summary>Gets or sets the executable filename whose running state activates the profile.</summary>
     public string MonitorProcess { get; set; } = "";
-
-    /// <summary>Gets or sets the nonblocking delay before the profile starts its first resource.</summary>
-    public int WaitBeforeStartingResourcesMilliseconds { get; set; }
 
     /// <summary>Gets or sets how long the monitor process may remain absent before resources are closed.</summary>
     public int? CloseTimeoutSeconds { get; set; }
@@ -26,4 +23,10 @@ public class SupervisorProfileConfig
 
     /// <summary>Gets or sets the Windows services supervised by this profile.</summary>
     public List<ManagedServiceConfig> Services { get; set; } = [];
+
+    /// <summary>Gets or sets explicit nonblocking delays in the profile's startup sequence.</summary>
+    public List<DelayResourceConfig> Delays { get; set; } = [];
+
+    /// <summary>Gets or sets Home Assistant actions supervised by this profile.</summary>
+    public List<HomeAssistantResourceConfig> HomeAssistantResources { get; set; } = [];
 }

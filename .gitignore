@@ -10,5 +10,7 @@ TestResults/
 .agents/
 .codex/
 .sentry-native/
+.diagnostics/
+*.log
 AppSupervisor/config.json
 AppSupervisor/config.json.old

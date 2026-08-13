@@ -5,10 +5,13 @@ namespace AppSupervisor.Configuration;
 /// <summary>Validates application-wide integration configuration.</summary>
 public static class IntegrationConfigValidator
 {
-    /// <summary>Validates global SteamVR settings and stable expected-device identities.</summary>
-    public static void Validate(IntegrationsConfig integrations)
+    /// <summary>Validates global integration settings and their enabled profile consumers.</summary>
+    public static void Validate(
+        IntegrationsConfig integrations,
+        IReadOnlyList<SupervisorProfileConfig?>? profiles = null)
     {
         var errors = new List<string>();
+        ValidateHomeAssistant(integrations.HomeAssistant, profiles, errors);
         SteamVrIntegrationConfig? steamVr = integrations.SteamVr;
 
         if (steamVr is null)
@@ -57,6 +60,37 @@ public static class IntegrationConfigValidator
 
         if (errors.Count > 0)
             throw new ConfigValidationException(errors);
+    }
+
+    private static void ValidateHomeAssistant(
+        HomeAssistantIntegrationConfig? homeAssistant,
+        IReadOnlyList<SupervisorProfileConfig?>? profiles,
+        ICollection<string> errors)
+    {
+        if (homeAssistant is null)
+        {
+            errors.Add("The integrations object must contain a homeAssistant object.");
+            return;
+        }
+
+        bool hasUrl = !string.IsNullOrWhiteSpace(homeAssistant.Url);
+        bool hasToken = !string.IsNullOrWhiteSpace(homeAssistant.Token);
+        bool required = profiles?.Any(profile => profile?.Enabled == true &&
+            profile.HomeAssistantResources?.Any(resource => resource?.Enabled == true) == true) == true;
+
+        if (!hasUrl && !hasToken && !required)
+            return;
+
+        if (!hasUrl)
+            errors.Add("Home Assistant URL must be provided when the integration is configured or used.");
+        else if (!Uri.TryCreate(homeAssistant.Url, UriKind.Absolute, out Uri? uri) ||
+            uri.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            errors.Add("Home Assistant URL must be an absolute HTTP or HTTPS URL.");
+        }
+
+        if (!hasToken)
+            errors.Add("Home Assistant token must be provided when the integration is configured or used.");
     }
 
     private static void ValidateNotifications(

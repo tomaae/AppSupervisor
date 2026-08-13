@@ -88,6 +88,84 @@ internal static class TrayIconFactory
     }
 
     /// <summary>
+    /// Creates an icon with a blue clock badge in the top-left corner while preserving any
+    /// existing bottom-right state badge.
+    /// </summary>
+    /// <param name="baseIcon">The normal or already state-badged application icon.</param>
+    /// <returns>A standalone icon that can be disposed independently.</returns>
+    public static Icon CreateStartingIcon(Icon baseIcon)
+    {
+        return CreateOverlayIcon(
+            baseIcon,
+            Color.FromArgb(35, 125, 210),
+            (graphics, bounds) =>
+            {
+                float inset = bounds.Width * 0.22f;
+                float penWidth = Math.Max(1.2f, bounds.Width * 0.09f);
+                float centerX = bounds.Left + bounds.Width / 2f;
+                float centerY = bounds.Top + bounds.Height / 2f;
+
+                using var pen = new Pen(Color.White, penWidth)
+                {
+                    StartCap = LineCap.Round,
+                    EndCap = LineCap.Round
+                };
+
+                graphics.DrawEllipse(
+                    pen,
+                    bounds.Left + inset,
+                    bounds.Top + inset,
+                    bounds.Width - inset * 2f,
+                    bounds.Height - inset * 2f
+                );
+                graphics.DrawLine(
+                    pen,
+                    centerX,
+                    centerY,
+                    centerX,
+                    bounds.Top + bounds.Height * 0.31f
+                );
+                graphics.DrawLine(
+                    pen,
+                    centerX,
+                    centerY,
+                    bounds.Left + bounds.Width * 0.66f,
+                    bounds.Top + bounds.Height * 0.60f
+                );
+            },
+            topLeft: true
+        );
+    }
+
+    /// <summary>
+    /// Creates an icon with an orange stop badge in the top-left corner while preserving any
+    /// existing bottom-right state badge.
+    /// </summary>
+    /// <param name="baseIcon">The normal or already state-badged application icon.</param>
+    /// <returns>A standalone icon that can be disposed independently.</returns>
+    public static Icon CreateStoppingIcon(Icon baseIcon)
+    {
+        return CreateOverlayIcon(
+            baseIcon,
+            Color.FromArgb(220, 105, 25),
+            (graphics, bounds) =>
+            {
+                float inset = bounds.Width * 0.30f;
+
+                using var brush = new SolidBrush(Color.White);
+                graphics.FillRectangle(
+                    brush,
+                    bounds.Left + inset,
+                    bounds.Top + inset,
+                    bounds.Width - inset * 2f,
+                    bounds.Height - inset * 2f
+                );
+            },
+            topLeft: true
+        );
+    }
+
+    /// <summary>
     /// Draws a colored circular badge and caller-supplied glyph on a copy of an icon.
     /// </summary>
     /// <param name="baseIcon">The icon to copy.</param>
@@ -97,7 +175,8 @@ internal static class TrayIconFactory
     private static Icon CreateOverlayIcon(
         Icon baseIcon,
         Color badgeColor,
-        Action<Graphics, RectangleF> drawGlyph)
+        Action<Graphics, RectangleF> drawGlyph,
+        bool topLeft = false)
     {
         using Bitmap bitmap = baseIcon.ToBitmap();
         using (Graphics graphics = Graphics.FromImage(bitmap))
@@ -106,8 +185,8 @@ internal static class TrayIconFactory
 
             float badgeSize = Math.Max(8f, Math.Min(bitmap.Width, bitmap.Height) * 0.55f);
             var badgeBounds = new RectangleF(
-                bitmap.Width - badgeSize,
-                bitmap.Height - badgeSize,
+                topLeft ? 0 : bitmap.Width - badgeSize,
+                topLeft ? 0 : bitmap.Height - badgeSize,
                 badgeSize,
                 badgeSize
             );

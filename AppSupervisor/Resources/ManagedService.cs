@@ -7,7 +7,11 @@ namespace AppSupervisor.Resources;
 /// <summary>
 /// Supervises one Windows service by internal service name using the shared supervisor-profile tick.
 /// </summary>
-public sealed class ManagedService : IManagedResource, IManagedResourceReadiness, IRecoverableResourceErrorSource
+public sealed class ManagedService :
+    IManagedResource,
+    IManagedResourceReadiness,
+    IManagedResourceDeactivationState,
+    IRecoverableResourceErrorSource
 {
     private const int OperationTimeoutSeconds = 30;
 
@@ -74,6 +78,9 @@ public sealed class ManagedService : IManagedResource, IManagedResourceReadiness
     /// Gets the presentation targets configured specifically for this helper service.
     /// </summary>
     public IReadOnlyList<NotificationTarget> NotificationTargets => Config.Notifications.Target;
+
+    /// <summary>Gets whether Windows is still processing the requested service stop.</summary>
+    public bool DeactivationPending => _stopPending;
 
     /// <summary>Checks whether the service has reached the running state for dependency sequencing.</summary>
     /// <returns><see langword="true"/> when Windows reports the service as running.</returns>

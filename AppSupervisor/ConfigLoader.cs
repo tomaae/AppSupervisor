@@ -25,11 +25,12 @@ public static class ConfigLoader
         if (config.Integrations is null)
             throw new ConfigValidationException(["The configuration must contain an integrations object."]);
 
+        ConfigMigration.MigrateLegacyStartupWaits(config.Profiles);
         ConfigNormalizer.Normalize(config.Profiles);
         NormalizeIntegrations(config.Integrations);
         PackagedApplicationPathResolver.ResolvePaths(config.Profiles);
         ConfigValidator.Validate(config.Profiles);
-        IntegrationConfigValidator.Validate(config.Integrations);
+        IntegrationConfigValidator.Validate(config.Integrations, config.Profiles);
         return config;
     }
 
@@ -47,6 +48,12 @@ public static class ConfigLoader
 
     private static void NormalizeIntegrations(IntegrationsConfig integrations)
     {
+        if (integrations.HomeAssistant is not null)
+        {
+            integrations.HomeAssistant.Url = integrations.HomeAssistant.Url?.Trim() ?? "";
+            integrations.HomeAssistant.Token = integrations.HomeAssistant.Token?.Trim() ?? "";
+        }
+
         if (integrations.SteamVr?.Devices is null)
             return;
 

@@ -164,10 +164,13 @@ public sealed partial class ConfigurationEditorForm
         );
     }
 
-    /// <summary>Cancels background service discovery when a shown or unshown editor is disposed.</summary>
+    /// <summary>Cancels background service discovery and releases the form-owned resource menu.</summary>
     /// <param name="disposing">Whether managed resources should be released.</param>
     protected override void Dispose(bool disposing)
     {
+        if (disposing)
+            _addResourceMenu.Dispose();
+
         if (disposing && !_serviceRefreshDisposed)
         {
             _serviceRefreshDisposed = true;

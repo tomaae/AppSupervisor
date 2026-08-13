@@ -8,7 +8,7 @@ namespace AppSupervisor.Configuration;
 public static partial class ConfigValidator
 {
     /// <summary>
-    /// Validates profile identity, trigger names, startup delays, timeout values, helper paths, service names, and per-helper notification targets.
+    /// Validates profile identity, trigger names, timeout values, helper paths, service names, and per-helper notification targets.
     /// </summary>
     /// <param name="profiles">The deserialized profile entries, including possible JSON null entries.</param>
     /// <exception cref="ConfigValidationException">Thrown when one or more entries are invalid.</exception>
@@ -42,7 +42,6 @@ public static partial class ConfigValidator
             }
 
             ValidateMonitorProcess(profile, profileLabel, errors);
-            ValidateProfileStartupDelay(profile, profileLabel, errors);
             ValidateTimeoutValue(profile.CloseTimeoutSeconds, "closeTimeoutSeconds", profileLabel, errors);
             ValidateTimeoutValue(profile.RestartTimeoutSeconds, "restartTimeoutSeconds", profileLabel, errors);
 
@@ -69,6 +68,9 @@ public static partial class ConfigValidator
             {
                 ValidateServices(profile, profileLabel, errors, activeServiceNames, profile.Enabled);
             }
+
+            ValidateDelayResources(profile, profileLabel, errors);
+            ValidateHomeAssistantResources(profile, profileLabel, errors);
 
             ValidateResourceStartup(profile, profileLabel, errors);
         }
@@ -102,26 +104,6 @@ public static partial class ConfigValidator
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {
             errors.Add($"{profileLabel} has an invalid monitorProcess value: {ex.Message}");
-        }
-    }
-
-    /// <summary>Validates the nonblocking delay between profile activation and its first resource startup.</summary>
-    /// <param name="profile">The profile being validated.</param>
-    /// <param name="profileLabel">The user-readable profile identifier used in errors.</param>
-    /// <param name="errors">The collection that receives validation errors.</param>
-    private static void ValidateProfileStartupDelay(
-        SupervisorProfileConfig profile,
-        string profileLabel,
-        ICollection<string> errors)
-    {
-        if (profile.WaitBeforeStartingResourcesMilliseconds is < 0 or
-            > ConfigurationLimits.MaximumProfileStartupDelayMilliseconds)
-        {
-            errors.Add(
-                $"{profileLabel} has an invalid waitBeforeStartingResourcesMilliseconds; " +
-                $"the value must be between 0 and " +
-                $"{ConfigurationLimits.MaximumProfileStartupDelayMilliseconds}."
-            );
         }
     }
 

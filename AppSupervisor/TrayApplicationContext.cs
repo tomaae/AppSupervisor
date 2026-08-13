@@ -15,6 +15,11 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly Icon _pausedIcon;
     private readonly Icon _supervisingIcon;
     private readonly Icon _errorIcon;
+    private readonly Icon _startingSupervisingIcon;
+    private readonly Icon _startingErrorIcon;
+    private readonly Icon _stoppingIcon;
+    private readonly Icon _stoppingSupervisingIcon;
+    private readonly Icon _stoppingErrorIcon;
     private readonly Form _dialogOwner;
     private readonly string _configPath;
     private readonly System.Threading.Timer _monitorTimer;
@@ -56,6 +61,11 @@ public partial class TrayApplicationContext : ApplicationContext
         _pausedIcon = TrayIconFactory.CreatePausedIcon(_appIcon);
         _supervisingIcon = TrayIconFactory.CreateSupervisingIcon(_appIcon);
         _errorIcon = TrayIconFactory.CreateErrorIcon(_appIcon);
+        _startingSupervisingIcon = TrayIconFactory.CreateStartingIcon(_supervisingIcon);
+        _startingErrorIcon = TrayIconFactory.CreateStartingIcon(_errorIcon);
+        _stoppingIcon = TrayIconFactory.CreateStoppingIcon(_appIcon);
+        _stoppingSupervisingIcon = TrayIconFactory.CreateStoppingIcon(_supervisingIcon);
+        _stoppingErrorIcon = TrayIconFactory.CreateStoppingIcon(_errorIcon);
 
         var contextMenu = new ContextMenuStrip();
 
@@ -152,12 +162,20 @@ public partial class TrayApplicationContext : ApplicationContext
                 if (!stateChanged)
                     continue;
 
+                SupervisorLog.WriteInformation(
+                    $"TRACE Profile '{profile.Name}': Update returned a trigger transition; " +
+                    $"active={profile.TriggerActive}."
+                );
+
                 PublishNotification(
                     NotificationSeverity.Information,
                     "AppSupervisor",
                     $"{profile.Name}: {profile.TriggerDisplayName} is now " +
                     (profile.TriggerActive ? "running." : "stopped."),
                     profile.NotificationTargets
+                );
+                SupervisorLog.WriteInformation(
+                    $"TRACE Profile '{profile.Name}': trigger-transition notification submitted."
                 );
             }
             catch (Exception ex)
@@ -241,6 +259,7 @@ public partial class TrayApplicationContext : ApplicationContext
             return;
 
         DateTime nowUtc = DateTime.UtcNow;
+        bool startupWasPending = _profiles.Any(profile => profile.StartupPending);
 
         foreach (SupervisorProfile profile in _profiles)
         {
@@ -268,6 +287,9 @@ public partial class TrayApplicationContext : ApplicationContext
                 );
             }
         }
+
+        if (startupWasPending != _profiles.Any(profile => profile.StartupPending))
+            UpdateTrayState();
     }
 
     /// <summary>Queues one coalesced runtime operation without ever executing it on the caller's thread.</summary>
@@ -390,7 +412,8 @@ public partial class TrayApplicationContext : ApplicationContext
                                 profile ?? throw new InvalidOperationException(
                                     "The profile close guard was evaluated before profile construction completed."
                                 )
-                            )
+                            ),
+                        newConfig.Integrations.HomeAssistant
                     );
                     profile.ResourceRestarted += OnResourceRestarted;
                     profile.ErrorOccurred += OnSupervisionError;
@@ -734,6 +757,16 @@ public partial class TrayApplicationContext : ApplicationContext
         }
 
         bool pauseEnabled = !(_configurationError && !_hasValidConfiguration);
+        bool startupPending = !_paused && _profiles.Any(profile => profile.StartupPending);
+        bool waitingForCloseTimeout = !_paused &&
+            _profiles.Any(profile => profile.WaitingForCloseTimeout);
+        bool resourceDeactivationPending = !_paused &&
+            _profiles.Any(profile => profile.ResourceDeactivationPending);
+        bool shutdownPending = waitingForCloseTimeout || resourceDeactivationPending;
+        bool supervisionActive = _profiles.Any(profile => profile.TriggerActive);
+        string shutdownText = resourceDeactivationPending
+            ? "closing helpers"
+            : "waiting to close helpers";
         string pauseText = _paused
             ? "Resume"
             : "Pause";
@@ -752,8 +785,16 @@ public partial class TrayApplicationContext : ApplicationContext
         }
         else if (hasRuntimeError || _hasSteamVrOfflineDevices)
         {
-            icon = _errorIcon;
-            text = "AppSupervisor - Supervision error";
+            icon = shutdownPending
+                ? _stoppingErrorIcon
+                : startupPending
+                    ? _startingErrorIcon
+                    : _errorIcon;
+            text = shutdownPending
+                ? $"AppSupervisor - Supervision error; {shutdownText}"
+                : startupPending
+                    ? "AppSupervisor - Supervision error; starting helpers"
+                    : "AppSupervisor - Supervision error";
         }
         else if (_profiles.Count == 0 && !_steamVrMonitoringEnabled)
         {
@@ -770,10 +811,19 @@ public partial class TrayApplicationContext : ApplicationContext
             icon = _pausedIcon;
             text = "AppSupervisor - Paused";
         }
-        else if (_profiles.Any(profile => profile.TriggerActive))
+        else if (shutdownPending)
         {
-            icon = _supervisingIcon;
-            text = "AppSupervisor - Supervising";
+            icon = supervisionActive ? _stoppingSupervisingIcon : _stoppingIcon;
+            text = supervisionActive
+                ? $"AppSupervisor - Supervising; {shutdownText}"
+                : $"AppSupervisor - {char.ToUpperInvariant(shutdownText[0])}{shutdownText[1..]}";
+        }
+        else if (supervisionActive)
+        {
+            icon = startupPending ? _startingSupervisingIcon : _supervisingIcon;
+            text = startupPending
+                ? "AppSupervisor - Starting helpers"
+                : "AppSupervisor - Supervising";
         }
         else
         {
@@ -790,10 +840,22 @@ public partial class TrayApplicationContext : ApplicationContext
         if (_exiting)
             return;
 
+        bool transition = !string.Equals(_trayIcon.Text, text, StringComparison.Ordinal);
+
+        if (transition)
+        {
+            SupervisorLog.WriteInformation(
+                $"TRACE Tray transition applying: '{_trayIcon.Text}' -> '{text}'."
+            );
+        }
+
         _pauseResumeItem.Enabled = pauseEnabled;
         _pauseResumeItem.Text = pauseText;
         _trayIcon.Icon = icon;
         _trayIcon.Text = text;
+
+        if (transition)
+            SupervisorLog.WriteInformation($"TRACE Tray transition applied: '{text}'.");
     }
 
     /// <summary>Posts a UI-only operation without waiting for the WinForms message pump.</summary>
@@ -859,9 +921,14 @@ public partial class TrayApplicationContext : ApplicationContext
 
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
+        _stoppingErrorIcon.Dispose();
+        _stoppingSupervisingIcon.Dispose();
+        _stoppingIcon.Dispose();
         _errorIcon.Dispose();
+        _startingErrorIcon.Dispose();
         _pausedIcon.Dispose();
         _appIcon.Dispose();
+        _startingSupervisingIcon.Dispose();
         _supervisingIcon.Dispose();
 
         ExitThread();

@@ -62,6 +62,6 @@ public static class ConfigFileWriter
             throw new ConfigValidationException(["The configuration must contain an integrations object."]);
 
         ConfigValidator.Validate(configuration.Profiles);
-        IntegrationConfigValidator.Validate(configuration.Integrations);
+        IntegrationConfigValidator.Validate(configuration.Integrations, configuration.Profiles);
     }
 }

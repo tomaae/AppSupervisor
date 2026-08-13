@@ -86,7 +86,16 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         if (_pendingCapture is not null || nowUtc < _nextCheckUtc)
             return;
 
-        _pendingCapture = Task.Run(_source.Capture);
+        _pendingCapture = Task.Run(() =>
+        {
+            SupervisorLog.WriteInformation("TRACE SteamVR isolated capture started.");
+            SteamVrSnapshot snapshot = _source.Capture();
+            SupervisorLog.WriteInformation(
+                $"TRACE SteamVR isolated capture returned; active={snapshot.SteamVrActive}; " +
+                $"devices={snapshot.Devices.Count}; error={snapshot.Error is not null}."
+            );
+            return snapshot;
+        });
     }
 
     /// <summary>Captures a live snapshot for configuration discovery through the same serialized source.</summary>

@@ -5,7 +5,7 @@ namespace AppSupervisor.Configuration;
 /// </summary>
 public static partial class ConfigValidator
 {
-    /// <summary>Validates one profile's combined application and service startup sequence.</summary>
+    /// <summary>Validates one profile's combined resource startup sequence.</summary>
     /// <param name="profile">The enabled profile whose resources are being validated.</param>
     /// <param name="profileLabel">The user-readable profile identifier used in errors.</param>
     /// <param name="errors">The collection that receives validation errors.</param>
@@ -14,7 +14,8 @@ public static partial class ConfigValidator
         string profileLabel,
         ICollection<string> errors)
     {
-        if (profile.Applications is null || profile.Services is null)
+        if (profile.Applications is null || profile.Services is null ||
+            profile.Delays is null || profile.HomeAssistantResources is null)
             return;
 
         List<(ManagedResourceConfig Config, string Label)> resources = [];
@@ -29,6 +30,20 @@ public static partial class ConfigValidator
             .Select((service, index) => (
                 (ManagedResourceConfig?)service,
                 $"{profileLabel}, service entry {index + 1}"
+            ))
+            .Where(item => item.Item1 is not null)
+            .Select(item => (item.Item1!, item.Item2)));
+        resources.AddRange(profile.Delays
+            .Select((delay, index) => (
+                (ManagedResourceConfig?)delay,
+                $"{profileLabel}, delay entry {index + 1}"
+            ))
+            .Where(item => item.Item1 is not null)
+            .Select(item => (item.Item1!, item.Item2)));
+        resources.AddRange(profile.HomeAssistantResources
+            .Select((resource, index) => (
+                (ManagedResourceConfig?)resource,
+                $"{profileLabel}, Home Assistant entry {index + 1}"
             ))
             .Where(item => item.Item1 is not null)
             .Select(item => (item.Item1!, item.Item2)));
@@ -64,13 +79,16 @@ public static partial class ConfigValidator
                 );
             }
 
-            if (resource.WaitAfterStartupMilliseconds is < 0 or > ConfigurationLimits.MaximumWaitAfterStartupMilliseconds)
+#pragma warning disable CS0618
+            if (resource.WaitAfterStartupMilliseconds != 0)
             {
                 errors.Add(
-                    $"{resourceLabel} waitAfterStartupMilliseconds must be between 0 and " +
-                    $"{ConfigurationLimits.MaximumWaitAfterStartupMilliseconds}."
+                    $"{resourceLabel} uses obsolete waitAfterStartupMilliseconds; " +
+                    "use a separate delay resource instead."
                 );
             }
+#pragma warning restore CS0618
+
         }
 
         foreach ((ManagedResourceConfig resource, string resourceLabel) in resources)

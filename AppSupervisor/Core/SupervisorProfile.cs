@@ -13,7 +13,6 @@ public sealed class SupervisorProfile : IDisposable
     private readonly IReadOnlyList<IManagedResource> _resources;
     private readonly List<IManagedResource> _activatedResources = [];
     private readonly TimeSpan _closeTimeout;
-    private readonly TimeSpan _waitBeforeStartingResources;
 
     private DateTime? _triggerMissingSince;
     private DateTime _nextStartupUtc;
@@ -31,14 +30,12 @@ public sealed class SupervisorProfile : IDisposable
     /// <param name="trigger">The condition that determines whether the profile is active.</param>
     /// <param name="resources">The resources supervised while the trigger is active.</param>
     /// <param name="closeTimeout">How long the trigger may remain inactive before resources are closed.</param>
-    /// <param name="waitBeforeStartingResources">How long profile activation waits before starting its first resource.</param>
     public SupervisorProfile(
         string name,
         string triggerDisplayName,
         ITrigger trigger,
         IEnumerable<IManagedResource> resources,
-        TimeSpan closeTimeout,
-        TimeSpan waitBeforeStartingResources = default)
+        TimeSpan closeTimeout)
         : this(
             name,
             triggerDisplayName,
@@ -49,8 +46,7 @@ public sealed class SupervisorProfile : IDisposable
                 waitAfterStartupMilliseconds: 0,
                 dependencyResourceId: ""
             )),
-            closeTimeout,
-            waitBeforeStartingResources
+            closeTimeout
         )
     {
     }
@@ -61,14 +57,12 @@ public sealed class SupervisorProfile : IDisposable
     /// <param name="trigger">The condition that determines whether the profile is active.</param>
     /// <param name="startupResources">The resources in startup order with delay and dependency settings.</param>
     /// <param name="closeTimeout">How long the trigger may remain inactive before resources are closed.</param>
-    /// <param name="waitBeforeStartingResources">How long profile activation waits before starting its first resource.</param>
     internal SupervisorProfile(
         string name,
         string triggerDisplayName,
         ITrigger trigger,
         IEnumerable<ManagedResourceStartup> startupResources,
-        TimeSpan closeTimeout,
-        TimeSpan waitBeforeStartingResources = default)
+        TimeSpan closeTimeout)
     {
         Name = name;
         TriggerDisplayName = triggerDisplayName;
@@ -86,8 +80,6 @@ public sealed class SupervisorProfile : IDisposable
             .Distinct()
             .ToArray();
         _closeTimeout = closeTimeout;
-
-        _waitBeforeStartingResources = waitBeforeStartingResources;
         foreach (IManagedResource resource in _resources)
         {
             resource.ErrorOccurred += OnResourceError;
@@ -126,6 +118,20 @@ public sealed class SupervisorProfile : IDisposable
 
     /// <summary>Gets whether the supervisor profile's activation trigger is currently present.</summary>
     public bool TriggerActive { get; private set; }
+
+    /// <summary>
+    /// Gets whether this active profile still has resources to issue or is waiting for an
+    /// activated resource to report that it has started.
+    /// </summary>
+    internal bool StartupPending => TriggerActive && _startupPending;
+
+    /// <summary>Gets whether the missing trigger is still within its configured close timeout.</summary>
+    internal bool WaitingForCloseTimeout =>
+        !TriggerActive && _triggerMissingSince is not null;
+
+    /// <summary>Gets whether one or more activated resources are still completing deactivation.</summary>
+    internal bool ResourceDeactivationPending =>
+        !TriggerActive && _deactivationStarted;
 
     /// <summary>
     /// Checks whether this profile currently requires its resources to remain available.
@@ -216,6 +222,9 @@ public sealed class SupervisorProfile : IDisposable
 
         if (TriggerActive)
         {
+            SupervisorLog.WriteInformation(
+                $"TRACE Profile '{Name}': trigger disappeared; entering close timeout."
+            );
             TriggerActive = false;
             _triggerMissingSince = DateTime.UtcNow;
             CancelStartupSequence();
@@ -223,13 +232,22 @@ public sealed class SupervisorProfile : IDisposable
 
             foreach (IManagedResource resource in _resources)
             {
+                SupervisorLog.WriteInformation(
+                    $"TRACE Profile '{Name}': cancelling pending recovery for '{resource.DisplayName}'."
+                );
                 RunResourceOperation(
                     resource,
                     resource.CancelPendingRecovery,
                     "recovery cancellation"
                 );
+                SupervisorLog.WriteInformation(
+                    $"TRACE Profile '{Name}': pending recovery cancelled for '{resource.DisplayName}'."
+                );
             }
 
+            SupervisorLog.WriteInformation(
+                $"TRACE Profile '{Name}': trigger-loss transition completed."
+            );
             return true;
         }
 
@@ -244,6 +262,12 @@ public sealed class SupervisorProfile : IDisposable
                 );
             }
 
+            if (!HasPendingResourceDeactivation())
+            {
+                _deactivationStarted = false;
+                _activatedResources.Clear();
+            }
+
             return false;
         }
 
@@ -252,9 +276,16 @@ public sealed class SupervisorProfile : IDisposable
 
         if (DateTime.UtcNow - _triggerMissingSince >= _closeTimeout)
         {
+            SupervisorLog.WriteInformation(
+                $"TRACE Profile '{Name}': close timeout elapsed; beginning resource deactivation."
+            );
             DeactivateResources();
             _triggerMissingSince = null;
-            _deactivationStarted = true;
+            _deactivationStarted = _activatedResources.Count > 0;
+            SupervisorLog.WriteInformation(
+                $"TRACE Profile '{Name}': resource deactivation requests completed; " +
+                $"pending={_deactivationStarted}."
+            );
         }
 
         return false;
@@ -301,13 +332,13 @@ public sealed class SupervisorProfile : IDisposable
         ErrorCleared = null;
     }
 
-    /// <summary>Starts a fresh ordered activation sequence after the configured nonblocking profile delay.</summary>
+    /// <summary>Starts a fresh ordered activation sequence immediately at the first configured resource.</summary>
     private void BeginStartupSequence()
     {
         _activatedResources.Clear();
         _nextStartupIndex = 0;
         DateTime nowUtc = DateTime.UtcNow;
-        _nextStartupUtc = nowUtc + _waitBeforeStartingResources;
+        _nextStartupUtc = nowUtc;
         _startupPending = _startupResources.Count > 0;
         AdvanceStartup(nowUtc);
     }
@@ -342,7 +373,31 @@ public sealed class SupervisorProfile : IDisposable
                 return;
         }
 
-        _startupPending = false;
+        _startupPending = !AreActivatedResourcesStarted();
+    }
+
+    /// <summary>Checks whether every activated resource with a readiness signal has started.</summary>
+    /// <returns><see langword="true"/> when no activated resource is still starting.</returns>
+    private bool AreActivatedResourcesStarted()
+    {
+        foreach (IManagedResource resource in _activatedResources)
+        {
+            if (resource is not IManagedResourceReadiness readiness)
+                continue;
+
+            try
+            {
+                if (!readiness.IsStarted())
+                    return false;
+            }
+            catch (Exception ex)
+            {
+                OnResourceError(resource, $"Unexpected startup readiness failure: {ex.Message}");
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Checks whether an earlier activated resource is ready for a dependent startup entry.</summary>
@@ -386,6 +441,16 @@ public sealed class SupervisorProfile : IDisposable
     {
         foreach (IManagedResource resource in _activatedResources)
             RunResourceOperation(resource, resource.Deactivate, "deactivation");
+    }
+
+    /// <summary>Checks whether any activated resource still reports asynchronous deactivation work.</summary>
+    /// <returns><see langword="true"/> while at least one resource still needs deactivation supervision.</returns>
+    private bool HasPendingResourceDeactivation()
+    {
+        return _activatedResources.Any(resource =>
+            resource is IManagedResourceDeactivationState state &&
+            state.DeactivationPending
+        );
     }
 
     /// <summary>

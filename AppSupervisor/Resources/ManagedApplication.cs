@@ -121,7 +121,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             {
                 TryStart();
             }
-            else if (processes.Count > 1)
+            else if (CountIndependentInstances(processes) > 1)
             {
                 BeginCloseOperation(processes, restartAfterClose: true);
             }
@@ -148,7 +148,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         try
         {
-            if (processes.Count > 1)
+            if (CountIndependentInstances(processes) > 1)
             {
                 if (MatchesFailedProcessSet(processes))
                     return ManagedResourceUpdate.None;
@@ -160,7 +160,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
             _failedMultipleProcessIds = null;
 
-            if (processes.Count == 1)
+            if (processes.Count > 0)
             {
                 _missingSince = null;
                 ClearError();
@@ -196,10 +196,16 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     public void CancelPendingRecovery()
     {
+        SupervisorLog.WriteInformation(
+            $"TRACE Application '{DisplayName}': cancelling close, restart, and minimize state."
+        );
         _missingSince = null;
         CancelCloseOperation();
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
+        SupervisorLog.WriteInformation(
+            $"TRACE Application '{DisplayName}': close, restart, and minimize state cancelled."
+        );
     }
 
     /// <summary>
@@ -691,9 +697,9 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
                 try
                 {
-                    if (processes.Count == 1)
+                    if (CountIndependentInstances(processes) == 1)
                     {
-                        bool minimized = MinimizeProcessWindows(processes[0]);
+                        bool minimized = processes.Any(MinimizeProcessWindows);
 
                         if (minimized)
                         {
@@ -776,6 +782,15 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         }
 
         return matches;
+    }
+
+    /// <summary>Counts independent application roots while treating same-executable child processes as one instance.</summary>
+    /// <param name="processes">Every process whose executable path matches the helper identity.</param>
+    /// <returns>The number of independent process trees represented by the matches.</returns>
+    private static int CountIndependentInstances(IReadOnlyCollection<Process> processes)
+    {
+        int[] processIds = processes.Select(process => process.Id).ToArray();
+        return ProcessPathSnapshot.FindIndependentRootProcessIds(processIds).Count;
     }
 
     /// <summary>

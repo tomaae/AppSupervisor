@@ -50,16 +50,39 @@ internal static class ConfigNormalizer
                 }
             }
 
-            if (profile.Services is null)
-                continue;
-
-            foreach (ManagedServiceConfig? service in profile.Services)
+            if (profile.Services is not null)
             {
-                if (service is null)
-                    continue;
+                foreach (ManagedServiceConfig? service in profile.Services)
+                {
+                    if (service is null)
+                        continue;
 
-                NormalizeResource(service);
-                service.ServiceName = NormalizeText(service.ServiceName);
+                    NormalizeResource(service);
+                    service.ServiceName = NormalizeText(service.ServiceName);
+                }
+            }
+
+            if (profile.Delays is not null)
+            {
+                foreach (DelayResourceConfig? delay in profile.Delays)
+                {
+                    if (delay is not null)
+                        NormalizeResource(delay);
+                }
+            }
+
+            if (profile.HomeAssistantResources is not null)
+            {
+                foreach (HomeAssistantResourceConfig? resource in profile.HomeAssistantResources)
+                {
+                    if (resource is null)
+                        continue;
+
+                    NormalizeResource(resource);
+                    resource.Service = NormalizeText(resource.Service).ToLowerInvariant();
+                    resource.EntityId = NormalizeText(resource.EntityId).ToLowerInvariant();
+                    resource.EntityName = NormalizeText(resource.EntityName);
+                }
             }
         }
     }

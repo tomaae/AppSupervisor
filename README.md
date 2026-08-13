@@ -7,16 +7,17 @@ AppSupervisor is a lightweight, Windows-only tray application that starts, super
 
 ## Functionality summary
 
-- Runs from the Windows notification area with waiting, supervising, paused, empty-configuration, and error tray states.
+- Runs from the Windows notification area with waiting, starting, supervising, stopping, paused, empty-configuration, and error tray states.
 - Organizes related helper applications and services into process-triggered profiles.
 - Starts applications and services in one configurable order when the monitored process appears.
-- Supports a profile-level wait before resources start, per-resource startup waits, and a single earlier-resource dependency.
+- Supports explicit nonblocking delay resources and a single earlier-resource dependency.
 - Restarts unexpectedly stopped helpers and services after a configurable timeout.
 - Optionally detects helper applications whose visible or hidden windows stop responding.
 - Manages ordinary executables, Steam applications, and Microsoft Store/MSIX applications.
 - Normalizes multiple instances of a helper by closing every instance before starting one fresh instance.
 - Uses graceful application close attempts by default; force-kill is available only when explicitly enabled.
 - Supervises Windows services and enforces Manual startup mode during initialization.
+- Controls Home Assistant switches, input booleans, and buttons through profile-scoped actions.
 - Supports listener ownership checks and VRChat OSCQuery health checks.
 - Routes per-resource notifications to popup dialogs, Windows notifications, and XSOverlay.
 - Monitors expected SteamVR trackers and base stations without starting or restarting SteamVR or its devices.
@@ -39,7 +40,7 @@ flowchart LR
     E -->|confirmed failure| H["Notify and optionally restart helper"]
 ```
 
-Each profile watches one process name. When that process is present, **Wait before starting resources** can postpone the first helper or service, then AppSupervisor activates enabled resources from top to bottom. A resource can wait for one earlier dependency to report started, and **Wait after startup** can delay the next resource in that profile. Both waits are nonblocking for other profiles. While the profile remains active, missing resources can be restarted and application health checks continue to run.
+Each profile watches one process name. When that process is present, AppSupervisor activates enabled resources from top to bottom. A resource can wait for one earlier dependency to report started, and explicit **Delay** resources postpone the entries that follow them without blocking other profiles. While the profile remains active, missing resources can be restarted, persistent Home Assistant states can be restored, and application health checks continue to run.
 
 Supervision is scheduled by background timers independently of the Windows UI. Overlapping ticks are coalesced and resource-state changes are serialized, while health probes, SteamVR capture, configuration discovery, and notification delivery run outside the UI thread. A slow dialog or external notification API therefore cannot freeze configuration work or stop new supervision signals.
 
@@ -47,13 +48,15 @@ When the monitored process disappears, pending recovery stops immediately. After
 
 Applications with **Ensure closed until needed** are checked every five minutes and closed only when no enabled profile using that executable still needs them. The check and any pending close progression stop while AppSupervisor is paused.
 
-The tray icon uses a green play badge while at least one profile's monitored process is running, a neutral integration state when only SteamVR monitoring is configured, and a red X when neither profiles nor integrations are enabled. Confirmed SteamVR device failures also use the error state. The yellow pause badge has priority over every other state when supervision is paused manually.
+The tray icon uses a green play badge while at least one profile's monitored process is running, a neutral integration state when only SteamVR monitoring is configured, and a red X when neither profiles nor integrations are enabled. A blue clock appears in the top-left while an active profile is still working through its startup sequence or waiting for an activated resource to report ready. An orange stop badge appears after a monitored process closes, remains through its close timeout and asynchronous resource shutdown, and disappears when deactivation finishes. It can appear together with the green play or red error badge when another profile remains active or an error is present. The yellow pause badge has priority over every other state when supervision is paused manually.
 
 ## Detailed functionality
 
 ### Helper applications
 
 Helper processes are identified by their full executable path rather than only by filename. This prevents unrelated processes with the same name from being treated as the configured helper.
+
+Related parent and child processes using that same executable, as commonly created by Electron applications, count as one logical helper instance. Only independent process trees are treated as duplicate instances.
 
 AppSupervisor can launch a helper in three ways:
 
@@ -67,7 +70,7 @@ If more than one matching helper instance is running, AppSupervisor closes every
 
 Graceful close first asks visible helper windows to close. For Qt tray helpers, AppSupervisor can then invoke an accessible menu command explicitly named **Quit** or **Exit** without blocking supervision. Launch failures, missing paths, close failures, and minimization failures are contained and reported without terminating AppSupervisor. Pending close and minimize work is cancelled when the helper or profile becomes active elsewhere, supervision is paused, or the runtime configuration is replaced.
 
-**Monitor application responsiveness** optionally probes the helper's visible and hidden windows. Three consecutive failures trigger the normal graceful all-instance restart and helper notification flow. The option is disabled by default, applies only to helper applications, and does not treat helpers without an owned window as frozen.
+**Monitor application responsiveness** optionally probes the helper's visible and hidden windows. A helper remains responsive while at least one owned window answers; three consecutive checks where none answer trigger the normal graceful all-instance restart and helper notification flow. The option is disabled by default, applies only to helper applications, and does not treat helpers without an owned window as frozen.
 
 ### Windows services
 
@@ -118,18 +121,18 @@ The **Profile** selector at the top chooses the profile being edited. **Add prof
 - **Profile enabled** temporarily excludes the complete profile without deleting it.
 - **Name** identifies the profile in the editor, tray messages, and notifications.
 - **Monitor process** determines when the profile is active. **Browse...** selects an executable from disk; **Pick running...** selects from deduplicated running applications with ordinary Microsoft/system processes hidden by default.
-- **Wait before starting resources** delays the first application or service after the monitored process appears. The delay is in milliseconds and does not block other profiles.
 - **Close timeout** controls how long the monitor may remain absent before helpers and services are closed. Clear **Override default** to use the built-in value.
 - **Restart timeout** controls how long an unexpectedly missing helper or stopped service may remain unavailable before restart. It can also use the built-in default.
 
 #### Resources tab
 
-The left side lists applications and services together in startup order. Drag entries or use **Move up** and **Move down** to reorder them; **Add application**, **Add service**, and **Remove** manage the list.
+The left side lists applications, Windows services, delays, and Home Assistant actions together in startup order. Drag entries or use **Move up** and **Move down** to reorder them. **Add...** opens a menu containing **Add application**, **Add service**, **Add delay**, and **Add Home Assistant**; **Remove** deletes the selected entry.
 
-Shared settings appear above the application or service details:
+Shared settings appear above the selected resource details:
 
 - **Dependency** optionally waits until one earlier application is running or service is Running.
-- **Wait after startup** delays the next resource in this profile by the selected milliseconds. It does not block other profiles.
+
+Delay entries contain a duration in milliseconds. When reached, the delay postpones only later resources in the same profile and does not block any other profile.
 
 Selecting an application shows:
 
@@ -157,13 +160,28 @@ Selecting a service shows:
 
 The same active service cannot be assigned more than once in the configuration.
 
+##### Home Assistant settings
+
+Home Assistant resources select one discovered deterministic service and one compatible entity. AppSupervisor supports `turn_on`, `turn_off`, and `button.press`; the entity list shows only domains accepted by the selected service.
+
+- **Verify requested state change** reads the entity back after a stateful action and reports a failure if it does not reach the requested `on` or `off` state.
+- **Keep this state persistent** rechecks a stateful entity every minute while the profile is active and restores it when it changes.
+- **Test action** reads the entity's current state, applies a state-changing action for five seconds, verifies the requested state, and then requests restoration of the original state. It does nothing and explains why when the entity is already in the requested state; stateless buttons cannot be safely previewed.
+- **Notifications** selects where connection, action, verification, and persistence failures are reported.
+
+When the monitored process remains absent through the profile close timeout, stateful actions are reversed: `turn_on` becomes `turn_off`, and `turn_off` becomes `turn_on`. Home Assistant buttons are stateless, so `button.press` runs only during profile activation and cannot use verification or persistence.
+
 #### Integrations tab
+
+The **Global — Home Assistant authentication** section contains the shared Home Assistant URL and long-lived access token. **Test connection** authenticates, reads the Home Assistant version, and discovers supported services and entities without changing entity state. The token is masked in the editor but is stored in the local `config.json`, so protect that file and its shutdown backup as credentials.
 
 The **Global — SteamVR device monitoring** section observes expected trackers and Lighthouse/base-station tracking references across every profile. It attaches as an OpenVR background client only while `vrserver` is already running and never starts SteamVR, restarts it, or controls a device.
 
 **Discover from running SteamVR** reads tracker and base-station model names, stable serial numbers, and current connection state. Devices can be renamed and individually included or excluded from monitoring. A saved serial remains expected even when that device is absent from a later scan.
 
 After SteamVR starts, monitoring waits 30 seconds. It then checks at most once every 30 seconds and requires two failed connection checks before declaring a device offline. Temporary pose loss does not count as disconnection.
+
+Native OpenVR capture runs in a short-lived child instance of AppSupervisor. If the SteamVR runtime exits or its native client fails during a scan, only that disposable capture process is lost; tray supervision and the configuration UI remain running.
 
 A confirmed failure publishes its configured popup, Windows, or XSOverlay notification and then opens a modeless offline-device window whose elapsed durations update live. Unsilenced incidents repeat at the configured interval, five minutes by default. **Silence selected** and **Silence all shown** stop reminders only for the current outage; recovery remains monitored, clears the incident automatically, and resets acknowledgement for a later outage. Saving enabled integration settings preserves active incidents. The window closes automatically when SteamVR stops or all incidents recover, and the tray menu can reopen it while incidents remain.
 
@@ -209,6 +227,8 @@ The configuration UI stores its validated document in `config.json` beside `AppS
 If the verified shutdown backup cannot be written safely, AppSupervisor records the failure in `%LOCALAPPDATA%\AppSupervisor\AppSupervisor.log` without blocking shutdown.
 
 Both `AppSupervisor/config.json` and `AppSupervisor/config.json.old` are ignored by Git so personal paths remain outside repository history. Release packages contain no configuration file; AppSupervisor creates an empty `config.json` beside the executable on first start.
+
+Home Assistant long-lived access tokens are stored in these local configuration files when configured. Do not share or commit either file, and revoke a token if either copy is exposed.
 
 ## Running a packaged build
 

@@ -7,11 +7,65 @@ namespace AppSupervisor;
 /// </summary>
 internal static class NativeMethods
 {
+    public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public const int SW_MINIMIZE = 6;
     public const uint WM_NULL = 0x0000;
     public const uint WM_CLOSE = 0x0010;
     /// <summary>Identifies the shared parent used by Windows message-only windows.</summary>
     public static readonly IntPtr HWND_MESSAGE = new(-3);
+    /// <summary>Represents a failed Tool Help snapshot handle.</summary>
+    public static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
+
+    /// <summary>Contains one process entry returned by the Windows Tool Help snapshot API.</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct PROCESSENTRY32
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
+
+    /// <summary>Creates a snapshot used to enumerate current process-parent relationships.</summary>
+    /// <param name="flags">The Tool Help snapshot categories to include.</param>
+    /// <param name="processId">The target process, or zero for a system-wide process snapshot.</param>
+    /// <returns>A snapshot handle, or <see cref="INVALID_HANDLE_VALUE"/> on failure.</returns>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+
+    /// <summary>Reads the first process from a Tool Help snapshot.</summary>
+    /// <param name="snapshot">The process snapshot handle.</param>
+    /// <param name="entry">Receives the process record.</param>
+    /// <returns><see langword="true"/> when a process record was returned.</returns>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool Process32First(
+        IntPtr snapshot,
+        ref PROCESSENTRY32 entry
+    );
+
+    /// <summary>Reads the next process from a Tool Help snapshot.</summary>
+    /// <param name="snapshot">The process snapshot handle.</param>
+    /// <param name="entry">Receives the next process record.</param>
+    /// <returns><see langword="true"/> when another process record was returned.</returns>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool Process32Next(
+        IntPtr snapshot,
+        ref PROCESSENTRY32 entry
+    );
+
+    /// <summary>Releases a Windows kernel object handle.</summary>
+    /// <param name="handle">The handle to close.</param>
+    /// <returns><see langword="true"/> when the handle was released.</returns>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr handle);
 
     /// <summary>Selects timeout and hung-window handling for <see cref="SendMessageTimeout"/>.</summary>
     [Flags]

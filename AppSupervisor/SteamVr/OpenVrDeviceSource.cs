@@ -3,7 +3,9 @@ using System.Runtime.InteropServices;
 
 namespace AppSupervisor.SteamVr;
 
-/// <summary>Attaches as an OpenVR background client and reads tracked-device identity and connection state.</summary>
+/// <summary>
+/// Attaches as an OpenVR background client inside the isolated capture host and reads tracked-device state.
+/// </summary>
 internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
 {
     private const int BackgroundApplicationType = 3;

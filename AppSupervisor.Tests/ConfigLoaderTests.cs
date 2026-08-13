@@ -122,6 +122,25 @@ public sealed class ConfigLoaderTests
         Assert.Throws<JsonException>(() => ConfigLoader.Load(file.Path));
     }
 
+    /// <summary>Confirms the removed profile startup wait cannot be silently ignored.</summary>
+    [Fact]
+    public void Load_ProfileStartupWait_ThrowsJsonError()
+    {
+        using var file = TemporaryConfigFile.Create(new[]
+        {
+            new
+            {
+                name = "Legacy wait",
+                monitorProcess = "notepad.exe",
+                waitBeforeStartingResourcesMilliseconds = 5_000,
+                applications = Array.Empty<object>(),
+                services = Array.Empty<object>()
+            }
+        });
+
+        Assert.Throws<JsonException>(() => ConfigLoader.Load(file.Path));
+    }
+
     /// <summary>
     /// Confirms that the obsolete launchTarget property is rejected instead of silently disabling an App URI.
     /// </summary>
@@ -262,32 +281,44 @@ public sealed class ConfigLoaderTests
         Assert.Contains("must be between 0 and 86400", exception.Message);
     }
 
-    /// <summary>Confirms profile startup delays beyond the editor's supported range are rejected.</summary>
+    /// <summary>Confirms old per-resource waits become explicit ordered delay entries.</summary>
     [Fact]
-    public void Load_ExcessiveProfileStartupDelay_ThrowsValidationError()
+    public void Load_LegacyWaitAfterStartup_MigratesToDelayResource()
     {
         using var file = TemporaryConfigFile.Create(new[]
         {
             new
             {
                 enabled = false,
-                name = "Excessive startup delay",
+                name = "Legacy wait",
                 monitorProcess = "notepad.exe",
-                waitBeforeStartingResourcesMilliseconds = 3_600_001,
-                applications = Array.Empty<object>(),
+                applications = new[]
+                {
+                    new
+                    {
+                        enabled = false,
+                        resourceId = "application",
+                        startupOrder = 0,
+                        waitAfterStartupMilliseconds = 2_500
+                    }
+                },
                 services = Array.Empty<object>()
             }
         });
 
-        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
-            () => ConfigLoader.Load(file.Path)
-        );
+        SupervisorProfileConfig profile = Assert.Single(ConfigLoader.Load(file.Path).Profiles);
+        DelayResourceConfig delay = Assert.Single(profile.Delays);
 
-        Assert.Contains(
-            "waitBeforeStartingResourcesMilliseconds",
-            exception.Message
+        Assert.Equal(2_500, delay.DurationMilliseconds);
+        Assert.Equal(1, delay.StartupOrder);
+        Assert.DoesNotContain(
+            "waitAfterStartupMilliseconds",
+            ConfigFileWriter.Serialize(new AppSupervisorConfig
+            {
+                Profiles = [profile]
+            }),
+            StringComparison.OrdinalIgnoreCase
         );
-        Assert.Contains("must be between 0 and 3600000", exception.Message);
     }
 
     /// Owns one temporary JSON file and removes its isolated directory after a test.

@@ -115,16 +115,21 @@ public sealed class ConfigurationEditorDirtyStateTests
                         Name = "Numeric profile",
                         MonitorProcess = "notepad.exe",
                         CloseTimeoutSeconds = 20,
-                        WaitBeforeStartingResourcesMilliseconds = 250,
                         Applications =
                         [
                             new ManagedApplicationConfig
                             {
-                                Path = Path.Combine(Environment.SystemDirectory, "notepad.exe"),
-                                WaitAfterStartupMilliseconds = 100
+                                Path = Path.Combine(Environment.SystemDirectory, "notepad.exe")
                             }
                         ],
-                        Services = []
+                        Services = [],
+                        Delays =
+                        [
+                            new DelayResourceConfig
+                            {
+                                DurationMilliseconds = 100
+                            }
+                        ]
                     }
                 ],
                 Integrations = new IntegrationsConfig
@@ -151,6 +156,15 @@ public sealed class ConfigurationEditorDirtyStateTests
                     );
                     form.CreateControl();
                     Control[] controls = EnumerateControls(form).ToArray();
+                    ListBox resourceList = Assert.Single(
+                        controls.OfType<ListBox>(),
+                        list => list.Items.Cast<object>().Any(item => item is DelayResourceConfig)
+                    );
+                    resourceList.SelectedItem = Assert.Single(
+                        resourceList.Items.Cast<object>().OfType<DelayResourceConfig>()
+                    );
+                    Application.DoEvents();
+                    controls = EnumerateControls(form).ToArray();
                     Button validateButton = Assert.Single(
                         controls.OfType<Button>(),
                         button => button.Text == "Validate"
@@ -158,10 +172,6 @@ public sealed class ConfigurationEditorDirtyStateTests
                     Button saveButton = Assert.Single(
                         controls.OfType<Button>(),
                         button => button.Text == "Save && Apply"
-                    );
-                    NumericUpDown profileStartupWait = Assert.Single(
-                        controls.OfType<NumericUpDown>(),
-                        numeric => numeric.Value == 250
                     );
                     NumericUpDown closeTimeout = Assert.Single(
                         controls.OfType<NumericUpDown>(),
@@ -176,13 +186,6 @@ public sealed class ConfigurationEditorDirtyStateTests
                         numeric => numeric.Value == 5
                     );
 
-                    AssertTypedNumberDirtyTracking(
-                        profileStartupWait,
-                        "250",
-                        "251",
-                        validateButton,
-                        saveButton
-                    );
                     AssertTypedNumberDirtyTracking(
                         closeTimeout,
                         "20",

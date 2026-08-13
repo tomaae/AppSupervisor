@@ -7,7 +7,12 @@ namespace AppSupervisor.Resources;
 /// <summary>
 /// Decorates a managed application with independently targeted health checks and graceful recovery.
 /// </summary>
-public sealed class HealthCheckedApplication : IManagedResource, IResourceNotificationSource, IManagedResourceReadiness, IRecoverableResourceErrorSource
+public sealed class HealthCheckedApplication :
+    IManagedResource,
+    IResourceNotificationSource,
+    IManagedResourceReadiness,
+    IManagedResourceDeactivationState,
+    IRecoverableResourceErrorSource
 {
     private readonly IManagedApplicationLifecycle _application;
     private readonly IReadOnlyList<ManagedHealthCheck> _healthChecks;
@@ -71,6 +76,9 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
     public IReadOnlyList<NotificationTarget> NotificationTargets =>
         _application.NotificationTargets;
 
+    /// <summary>Gets whether the wrapped application is still completing a close request.</summary>
+    public bool DeactivationPending => _application.CloseOperationPending;
+
     /// <summary>Checks whether the wrapped helper process is started for dependency sequencing.</summary>
     /// <returns><see langword="true"/> when at least one matching helper process is running.</returns>
     public bool IsStarted() => _application.IsRunning();
@@ -123,10 +131,16 @@ public sealed class HealthCheckedApplication : IManagedResource, IResourceNotifi
     /// <summary>Cancels application recovery and all health work as soon as the monitoring trigger disappears.</summary>
     public void CancelPendingRecovery()
     {
+        SupervisorLog.WriteInformation(
+            $"TRACE Helper '{DisplayName}': cancelling health and application recovery."
+        );
         _restartCheck = null;
         _replacementStartRequested = false;
         ResetHealthChecks(clearErrors: true);
         _application.CancelPendingRecovery();
+        SupervisorLog.WriteInformation(
+            $"TRACE Helper '{DisplayName}': health and application recovery cancelled."
+        );
     }
 
     /// <summary>Stops health work and begins the application's normal all-instance graceful deactivation.</summary>

@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace AppSupervisor.Health;
 
 /// <summary>
-/// Checks that every top-level window owned by a helper process is still processing Windows messages.
+/// Checks whether at least one top-level window owned by a helper process is still processing Windows messages.
 /// </summary>
 internal sealed class ApplicationResponsivenessProbe : IHealthProbe
 {
@@ -33,7 +33,7 @@ internal sealed class ApplicationResponsivenessProbe : IHealthProbe
     /// <summary>Checks all currently owned helper windows without blocking the supervision thread.</summary>
     /// <param name="ownerProcessIds">The currently running helper process identifiers.</param>
     /// <param name="cancellationToken">Cancels the probe on pause, reload, shutdown, or deactivation.</param>
-    /// <returns>A healthy result only when every discoverable owned window responds.</returns>
+    /// <returns>A healthy result when at least one discoverable owned window responds.</returns>
     public async Task<HealthProbeResult> CheckAsync(
         IReadOnlySet<int> ownerProcessIds,
         CancellationToken cancellationToken)
@@ -62,19 +62,37 @@ internal sealed class ApplicationResponsivenessProbe : IHealthProbe
         (IntPtr Window, bool Responsive)[] results = await Task.WhenAll(probeTasks)
             .WaitAsync(cancellationToken)
             .ConfigureAwait(false);
-        int failedWindows = results.Count(result => !result.Responsive);
+        int responsiveWindows = results.Count(result => result.Responsive);
 
-        return failedWindows == 0
-            ? HealthProbeResult.Success(
+        if (responsiveWindows > 0)
+        {
+            return HealthProbeResult.Success(
                 windows.Count == 1
                     ? "The helper window is responding."
-                    : string.Concat("All ", windows.Count, " helper windows are responding.")
-            )
-            : HealthProbeResult.Failure(
-                failedWindows == 1
-                    ? "One helper window is not responding."
-                    : string.Concat(failedWindows, " helper windows are not responding.")
+                    : responsiveWindows == windows.Count
+                        ? string.Concat(
+                            "All ",
+                            windows.Count,
+                            " helper windows are responding."
+                        )
+                    : string.Concat(
+                        responsiveWindows,
+                        " of ",
+                        windows.Count,
+                        " helper windows are responding."
+                    )
             );
+        }
+
+        return HealthProbeResult.Failure(
+            windows.Count == 1
+                ? "The helper window is not responding."
+                : string.Concat(
+                    "None of the ",
+                    windows.Count,
+                    " helper windows are responding."
+                )
+        );
     }
 
     /// <summary>Clears retained probe state; responsiveness probes retain no state between samples.</summary>

@@ -6,7 +6,9 @@ namespace AppSupervisor;
 /// <summary>Integrates global SteamVR incidents with notifications, tray state, and a modeless alert window.</summary>
 public partial class TrayApplicationContext
 {
-    private readonly SteamVrDeviceMonitor _steamVrMonitor = new(new OpenVrDeviceSource());
+    private readonly SteamVrDeviceMonitor _steamVrMonitor = new(
+        new IsolatedOpenVrDeviceSource()
+    );
     private readonly ToolStripMenuItem _steamVrAlertsItem = new("SteamVR offline devices...");
     private SteamVrOfflineDevicesForm? _steamVrAlertForm;
     private IReadOnlyList<SteamVrOfflineDevice> _steamVrOfflineDevices = [];

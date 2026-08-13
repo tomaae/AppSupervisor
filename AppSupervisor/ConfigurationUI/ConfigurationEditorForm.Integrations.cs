@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using AppSupervisor.HomeAssistant;
 using AppSupervisor.SteamVr;
 
 namespace AppSupervisor.ConfigurationUI;
@@ -6,6 +7,19 @@ namespace AppSupervisor.ConfigurationUI;
 /// <summary>Provides global integration configuration independently of the selected profile.</summary>
 public sealed partial class ConfigurationEditorForm
 {
+    private readonly Func<
+        HomeAssistantIntegrationConfig,
+        CancellationToken,
+        Task<HomeAssistantCatalog>> _homeAssistantCatalogLoader;
+    private readonly TextBox _homeAssistantUrl = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _homeAssistantToken = new()
+    {
+        Dock = DockStyle.Fill,
+        UseSystemPasswordChar = true
+    };
+    private Button _testHomeAssistantButton = null!;
+    private HomeAssistantCatalog? _homeAssistantCatalog;
+    private string _homeAssistantCatalogConnectionKey = "";
     private readonly Func<CancellationToken, Task<SteamVrSnapshot>> _steamVrDeviceLoader;
     private readonly CheckBox _steamVrEnabled = new()
     {
@@ -35,12 +49,23 @@ public sealed partial class ConfigurationEditorForm
     private TabPage BuildIntegrationsPage()
     {
         var page = new TabPage("Integrations");
-        var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
+        var integrationsLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(12),
+            ColumnCount = 1,
+            RowCount = 2
+        };
+        integrationsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        integrationsLayout.Controls.Add(BuildHomeAssistantIntegrationGroup(), 0, 0);
         var group = new GroupBox
         {
             Text = "Global — SteamVR device monitoring",
             Dock = DockStyle.Fill,
-            Padding = new Padding(12)
+            Padding = new Padding(12),
+            Margin = new Padding(0, 10, 0, 0)
         };
         TableLayoutPanel settings = CreateEditorTable();
         settings.Padding = new Padding(0, 4, 0, 8);
@@ -79,9 +104,10 @@ public sealed partial class ConfigurationEditorForm
 
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
-        panel.Controls.Add(group);
-        page.Controls.Add(panel);
+        integrationsLayout.Controls.Add(group, 0, 1);
+        page.Controls.Add(integrationsLayout);
 
+        LoadHomeAssistantIntegration();
         LoadSteamVrIntegration();
         _steamVrEnabled.CheckedChanged += SteamVrSettingsChanged;
         _steamVrReminderMinutes.ValueChanged += SteamVrSettingsChanged;
@@ -90,6 +116,132 @@ public sealed partial class ConfigurationEditorForm
         _steamVrDevices.CellValueChanged += SteamVrDeviceCellValueChanged;
         _steamVrDevices.CurrentCellDirtyStateChanged += SteamVrDeviceCellDirtyStateChanged;
         return page;
+    }
+
+    /// <summary>Builds global Home Assistant authentication settings and the connection test.</summary>
+    private Control BuildHomeAssistantIntegrationGroup()
+    {
+        var group = new GroupBox
+        {
+            Text = "Global — Home Assistant authentication",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(12),
+            Margin = Padding.Empty
+        };
+        TableLayoutPanel layout = CreateEditorTable();
+        AddEditorRow(layout, "URL", _homeAssistantUrl);
+        AddEditorRow(layout, "Long-lived token", _homeAssistantToken);
+        _testHomeAssistantButton = CreateButton(
+            "Test connection",
+            TestHomeAssistantConnectionClicked
+        );
+        AddEditorRow(layout, "", _testHomeAssistantButton);
+        AddEditorRow(layout, "", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(720, 0),
+            ForeColor = SystemColors.GrayText,
+            Text = "These credentials are shared by every Home Assistant resource. The token is masked in the editor but stored in the local configuration file."
+        });
+        group.Controls.Add(layout);
+        return group;
+    }
+
+    private void LoadHomeAssistantIntegration()
+    {
+        HomeAssistantIntegrationConfig configuration =
+            _configuration.Integrations.HomeAssistant;
+        _homeAssistantUrl.Text = configuration.Url;
+        _homeAssistantToken.Text = configuration.Token;
+        _homeAssistantUrl.TextChanged += HomeAssistantSettingsChanged;
+        _homeAssistantToken.TextChanged += HomeAssistantSettingsChanged;
+    }
+
+    private void HomeAssistantSettingsChanged(object? sender, EventArgs e)
+    {
+        if (_loadingControls)
+            return;
+
+        HomeAssistantIntegrationConfig configuration =
+            _configuration.Integrations.HomeAssistant;
+        configuration.Url = _homeAssistantUrl.Text;
+        configuration.Token = _homeAssistantToken.Text;
+        _homeAssistantCatalog = null;
+        _homeAssistantCatalogConnectionKey = "";
+        ClearHomeAssistantSelectors();
+        UpdateStatus();
+    }
+
+    private async void TestHomeAssistantConnectionClicked(object? sender, EventArgs e)
+    {
+        _testHomeAssistantButton.Enabled = false;
+
+        try
+        {
+            HomeAssistantCatalog catalog = await LoadHomeAssistantCatalogAsync(
+                forceRefresh: true,
+                CancellationToken.None
+            );
+            MessageBox.Show(
+                this,
+                $"Connected to Home Assistant {catalog.Version}. Found " +
+                $"{catalog.Services.Count} supported services and {catalog.Entities.Count} entities.",
+                "Home Assistant connection succeeded",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                ex.Message,
+                "Home Assistant connection failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning
+            );
+        }
+        finally
+        {
+            if (!_testHomeAssistantButton.IsDisposed)
+                _testHomeAssistantButton.Enabled = true;
+        }
+    }
+
+    private async Task<HomeAssistantCatalog> LoadHomeAssistantCatalogAsync(
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        HomeAssistantIntegrationConfig configuration =
+            _configuration.Integrations.HomeAssistant;
+        string key = $"{configuration.Url.Trim()}\n{configuration.Token.Trim()}";
+
+        if (!forceRefresh && _homeAssistantCatalog is not null &&
+            string.Equals(key, _homeAssistantCatalogConnectionKey, StringComparison.Ordinal))
+        {
+            return _homeAssistantCatalog;
+        }
+
+        if (string.IsNullOrWhiteSpace(configuration.Url) ||
+            string.IsNullOrWhiteSpace(configuration.Token))
+        {
+            throw new InvalidOperationException(
+                "Enter the global Home Assistant URL and long-lived token first."
+            );
+        }
+
+        HomeAssistantCatalog catalog = await _homeAssistantCatalogLoader(
+            new HomeAssistantIntegrationConfig
+            {
+                Url = configuration.Url.Trim(),
+                Token = configuration.Token.Trim()
+            },
+            cancellationToken
+        );
+        _homeAssistantCatalog = catalog;
+        _homeAssistantCatalogConnectionKey = key;
+        return catalog;
     }
 
     /// <summary>Adds a full-width integration toggle starting at the settings label column.</summary>

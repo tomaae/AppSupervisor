@@ -79,6 +79,93 @@ public sealed class IntegrationConfigTests
         Assert.Contains("duplicated", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void SerializeAndLoad_HomeAssistantResource_RoundTripsGlobalAuthenticationAndAction()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "config.json");
+
+        try
+        {
+            ConfigFileWriter.SaveAtomic(path, new AppSupervisorConfig
+            {
+                Integrations = new IntegrationsConfig
+                {
+                    HomeAssistant = new HomeAssistantIntegrationConfig
+                    {
+                        Url = " https://home-assistant.example:8123 ",
+                        Token = " test-token "
+                    }
+                },
+                Profiles =
+                [
+                    new SupervisorProfileConfig
+                    {
+                        Name = "Home Assistant",
+                        MonitorProcess = "notepad.exe",
+                        HomeAssistantResources =
+                        [
+                            new HomeAssistantResourceConfig
+                            {
+                                Service = "switch.turn_on",
+                                EntityId = "switch.test",
+                                EntityName = "Test switch",
+                                VerifyStateChange = true,
+                                Persistent = true,
+                                Notifications = new NotificationConfig
+                                {
+                                    Target = [NotificationTarget.Windows]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            });
+
+            AppSupervisorConfig loaded = ConfigLoader.Load(path);
+            HomeAssistantResourceConfig resource = Assert.Single(
+                Assert.Single(loaded.Profiles).HomeAssistantResources
+            );
+
+            Assert.Equal("https://home-assistant.example:8123", loaded.Integrations.HomeAssistant.Url);
+            Assert.Equal("test-token", loaded.Integrations.HomeAssistant.Token);
+            Assert.Equal("switch.turn_on", resource.Service);
+            Assert.Equal("switch.test", resource.EntityId);
+            Assert.True(resource.VerifyStateChange);
+            Assert.True(resource.Persistent);
+            Assert.Equal([NotificationTarget.Windows], resource.Notifications.Target);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Validate_ButtonWithPersistence_ThrowsValidationError()
+    {
+        var profile = new SupervisorProfileConfig
+        {
+            Name = "Button",
+            MonitorProcess = "notepad.exe",
+            HomeAssistantResources =
+            [
+                new HomeAssistantResourceConfig
+                {
+                    Service = "button.press",
+                    EntityId = "button.restart",
+                    Persistent = true
+                }
+            ]
+        };
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigValidator.Validate([profile])
+        );
+
+        Assert.Contains("stateless", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static SteamVrDeviceConfig CreateDevice(string serial, string name) => new()
     {
         SerialNumber = serial,

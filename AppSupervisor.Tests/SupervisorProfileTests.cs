@@ -38,13 +38,18 @@ public sealed class SupervisorProfileTests
 
         trigger.Active = false;
         Assert.True(profile.Update());
+        Assert.True(profile.WaitingForCloseTimeout);
+        Assert.False(profile.ResourceDeactivationPending);
         Assert.Equal(1, resource.CancelCalls);
         Assert.Equal(0, resource.DeactivateCalls);
 
         Assert.False(profile.Update());
+        Assert.False(profile.WaitingForCloseTimeout);
+        Assert.True(profile.ResourceDeactivationPending);
         Assert.Equal(1, resource.DeactivateCalls);
 
         Assert.False(profile.Update());
+        Assert.False(profile.ResourceDeactivationPending);
         Assert.Equal(1, resource.SuperviseDeactivationCalls);
     }
 
@@ -159,7 +164,7 @@ public sealed class SupervisorProfileTests
     /// <summary>
     /// Records lifecycle calls and exposes a test-controlled supervision result.
     /// </summary>
-    private sealed class FakeResource : IManagedResource
+    private sealed class FakeResource : IManagedResource, IManagedResourceDeactivationState
     {
         /// <summary>
         /// Creates a fake resource with fixed notification targets.
@@ -185,6 +190,8 @@ public sealed class SupervisorProfileTests
         public int CancelCalls { get; private set; }
 
         public int DeactivateCalls { get; private set; }
+
+        public bool DeactivationPending { get; private set; }
 
         public int DisposeCalls { get; private set; }
 
@@ -234,12 +241,20 @@ public sealed class SupervisorProfileTests
         /// <summary>
         /// Records one deactivation request.
         /// </summary>
-        public void Deactivate() => DeactivateCalls++;
+        public void Deactivate()
+        {
+            DeactivateCalls++;
+            DeactivationPending = true;
+        }
 
         /// <summary>
         /// Records one deactivation-supervision tick.
         /// </summary>
-        public void SuperviseDeactivation() => SuperviseDeactivationCalls++;
+        public void SuperviseDeactivation()
+        {
+            SuperviseDeactivationCalls++;
+            DeactivationPending = false;
+        }
 
         /// <summary>
         /// Releases the fake resource without external effects.

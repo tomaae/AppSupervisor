@@ -1,5 +1,6 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.Notifications;
+using AppSupervisor.HomeAssistant;
 
 using AppSupervisor.SteamVr;
 using AppSupervisor.ServiceControl;
@@ -36,13 +37,6 @@ public sealed partial class ConfigurationEditorForm : Form
     private readonly CheckBox _profileEnabled = new() { Text = "Profile enabled", AutoSize = true };
     private readonly TextBox _profileName = new() { Dock = DockStyle.Fill };
     private readonly TextBox _monitorProcess = new() { Dock = DockStyle.Fill };
-    private readonly NumericUpDown _waitBeforeStartingResources = new()
-    {
-        Minimum = 0,
-        Maximum = ConfigurationLimits.MaximumProfileStartupDelayMilliseconds,
-        Width = 120,
-        ThousandsSeparator = true
-    };
     private readonly NullableSecondsControl _closeTimeout = new();
     private readonly NullableSecondsControl _restartTimeout = new();
 
@@ -149,7 +143,9 @@ public sealed partial class ConfigurationEditorForm : Form
 
         Func<CancellationToken, Task<IReadOnlyList<InstalledServiceInfo>>> serviceCatalogLoader,
         Action<SupervisorNotification>? notificationPublisher,
-        Func<CancellationToken, Task<SteamVrSnapshot>>? steamVrDeviceLoader = null)
+        Func<CancellationToken, Task<SteamVrSnapshot>>? steamVrDeviceLoader = null,
+        Func<HomeAssistantIntegrationConfig, CancellationToken, Task<HomeAssistantCatalog>>?
+            homeAssistantCatalogLoader = null)
 
     {
 
@@ -158,6 +154,8 @@ public sealed partial class ConfigurationEditorForm : Form
         _serviceCatalogLoader = serviceCatalogLoader;
         _notificationPublisher = notificationPublisher;
         _steamVrDeviceLoader = steamVrDeviceLoader ?? LoadSteamVrDevicesAsync;
+        _homeAssistantCatalogLoader = homeAssistantCatalogLoader ??
+            HomeAssistantClient.LoadCatalogAsync;
         (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
         _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
@@ -275,11 +273,6 @@ public sealed partial class ConfigurationEditorForm : Form
         monitorPanel.Controls.Add(CreateButton("Browse...", BrowseMonitorProcessClicked), 1, 0);
         monitorPanel.Controls.Add(CreateButton("Pick running...", PickMonitorProcessClicked), 2, 0);
         AddEditorRow(layout, "Monitor process", monitorPanel);
-        AddEditorRow(
-            layout,
-            "Wait before starting resources",
-            BuildMillisecondsEditor(_waitBeforeStartingResources)
-        );
         AddEditorRow(layout, "Close timeout", _closeTimeout);
         AddEditorRow(layout, "Restart timeout", _restartTimeout);
         AddEditorRow(layout, "", new Label
@@ -287,7 +280,7 @@ public sealed partial class ConfigurationEditorForm : Form
             AutoSize = true,
             MaximumSize = new Size(720, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "The profile is active while the monitor process is running. After the optional startup wait, resources start in order, remain supervised while it is active, and close after the configured close timeout when it stops."
+            Text = "The profile is active while the monitor process is running. Resources start in order, remain supervised while it is active, and close after the configured close timeout when it stops. Add a Delay as the first resource when startup should wait."
         });
         page.Controls.Add(layout);
         return page;
@@ -437,12 +430,8 @@ public sealed partial class ConfigurationEditorForm : Form
         _monitorProcess.TextChanged += ProfileFieldChanged;
         _closeTimeout.ValueChanged += ProfileFieldChanged;
         _restartTimeout.ValueChanged += ProfileFieldChanged;
-        _waitBeforeStartingResources.ValueChanged += ProfileFieldChanged;
-        _waitBeforeStartingResources.TextChanged += ProfileFieldChanged;
 
         _resourceDependency.SelectedIndexChanged += ResourceStartupFieldChanged;
-        _resourceWaitAfterStartup.ValueChanged += ResourceStartupFieldChanged;
-        _resourceWaitAfterStartup.TextChanged += ResourceStartupFieldChanged;
 
         _applicationEnabled.CheckedChanged += ApplicationFieldChanged;
         _applicationPath.TextChanged += ApplicationFieldChanged;
@@ -497,16 +486,10 @@ public sealed partial class ConfigurationEditorForm : Form
 
         try
         {
-            bool available = profile is not null;
-            _tabs.Enabled = available;
+            _tabs.Enabled = true;
             _profileEnabled.Checked = profile?.Enabled ?? false;
             _profileName.Text = profile?.Name ?? "";
             _monitorProcess.Text = profile?.MonitorProcess ?? "";
-            _waitBeforeStartingResources.Value = Math.Clamp(
-                profile?.WaitBeforeStartingResourcesMilliseconds ?? 0,
-                Decimal.ToInt32(_waitBeforeStartingResources.Minimum),
-                Decimal.ToInt32(_waitBeforeStartingResources.Maximum)
-            );
             _closeTimeout.Value = profile?.CloseTimeoutSeconds;
             _restartTimeout.Value = profile?.RestartTimeoutSeconds;
             BindResourceList(profile);
@@ -605,8 +588,6 @@ public sealed partial class ConfigurationEditorForm : Form
         profile.Enabled = _profileEnabled.Checked;
         profile.Name = _profileName.Text;
         profile.MonitorProcess = _monitorProcess.Text;
-        profile.WaitBeforeStartingResourcesMilliseconds =
-            ReadDisplayedNumber(_waitBeforeStartingResources);
         profile.CloseTimeoutSeconds = _closeTimeout.Value;
         profile.RestartTimeoutSeconds = _restartTimeout.Value;
         _profileSelector.Refresh();
@@ -695,7 +676,9 @@ public sealed partial class ConfigurationEditorForm : Form
             Name = CreateUniqueProfileName("New profile"),
             MonitorProcess = "",
             Applications = [],
-            Services = []
+            Services = [],
+            Delays = [],
+            HomeAssistantResources = []
         };
         _profiles.Add(profile);
         BindProfileSelector(profile);
@@ -1319,6 +1302,14 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <summary>Gets the currently selected service.</summary>
     private ManagedServiceConfig? SelectedService =>
         SelectedResource as ManagedServiceConfig;
+
+    /// <summary>Gets the currently selected explicit startup delay.</summary>
+    private DelayResourceConfig? SelectedDelay =>
+        SelectedResource as DelayResourceConfig;
+
+    /// <summary>Gets the currently selected Home Assistant action.</summary>
+    private HomeAssistantResourceConfig? SelectedHomeAssistant =>
+        SelectedResource as HomeAssistantResourceConfig;
 
     /// <summary>Gets the currently selected health check.</summary>
     private HealthCheckConfig? SelectedHealthCheck =>

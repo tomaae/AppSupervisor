@@ -3,11 +3,12 @@ using AppSupervisor.Configuration;
 namespace AppSupervisor.ConfigurationUI;
 
 /// <summary>
-/// Provides the combined cross-type resource list, ordering controls, startup wait, and dependency editor.
+/// Provides the combined cross-type resource list, ordering controls, and dependency editor.
 /// </summary>
 public sealed partial class ConfigurationEditorForm
 {
     private readonly ListBox _resourceList = new() { Dock = DockStyle.Fill };
+    private readonly ContextMenuStrip _addResourceMenu = new();
     private readonly Panel _resourceEditorPanel = new() { Dock = DockStyle.Fill };
     private readonly Panel _resourceTypeEditorPanel = new() { Dock = DockStyle.Fill };
     private readonly Label _resourceTypeLabel = new() { AutoSize = true };
@@ -16,13 +17,6 @@ public sealed partial class ConfigurationEditorForm
         Dock = DockStyle.Fill,
         DropDownStyle = ComboBoxStyle.DropDownList,
         DisplayMember = nameof(ResourceDependencyChoice.DisplayName)
-    };
-    private readonly NumericUpDown _resourceWaitAfterStartup = new()
-    {
-        Minimum = 0,
-        Maximum = ConfigurationLimits.MaximumWaitAfterStartupMilliseconds,
-        Width = 120,
-        ThousandsSeparator = true
     };
     private Button _moveResourceUpButton = null!;
     private Button _moveResourceDownButton = null!;
@@ -50,27 +44,26 @@ public sealed partial class ConfigurationEditorForm
         var buttons = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 96,
+            Height = 64,
             ColumnCount = 2,
-            RowCount = 3,
+            RowCount = 2,
             Margin = Padding.Empty
         };
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        buttons.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        buttons.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        buttons.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34F));
+        buttons.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        buttons.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
 
-        Button addApplicationButton = CreateButton("Add application", AddApplicationClicked);
-        Button addServiceButton = CreateButton("Add service", AddServiceClicked);
+        Button addButton = CreateButton("Add...", ShowAddResourceMenuClicked);
+        ConfigureAddResourceMenu();
+        addButton.ContextMenuStrip = _addResourceMenu;
         Button removeButton = CreateButton("Remove", RemoveResourceClicked);
         _moveResourceUpButton = CreateButton("Move up", MoveResourceUpClicked);
         _moveResourceDownButton = CreateButton("Move down", MoveResourceDownClicked);
 
         foreach (Button button in new[]
         {
-            addApplicationButton,
-            addServiceButton,
+            addButton,
             _moveResourceUpButton,
             _moveResourceDownButton,
             removeButton
@@ -82,10 +75,8 @@ public sealed partial class ConfigurationEditorForm
 
         buttons.Controls.Add(_moveResourceUpButton, 0, 0);
         buttons.Controls.Add(_moveResourceDownButton, 1, 0);
-        buttons.Controls.Add(addApplicationButton, 0, 1);
-        buttons.Controls.Add(addServiceButton, 1, 1);
-        buttons.Controls.Add(removeButton, 0, 2);
-        buttons.SetColumnSpan(removeButton, 2);
+        buttons.Controls.Add(addButton, 0, 1);
+        buttons.Controls.Add(removeButton, 1, 1);
         panel.Controls.Add(_resourceList);
         panel.Controls.Add(buttons);
         return panel;
@@ -104,17 +95,12 @@ public sealed partial class ConfigurationEditorForm
         TableLayoutPanel startupLayout = CreateEditorTable();
         AddEditorRow(startupLayout, "Type", _resourceTypeLabel);
         AddEditorRow(startupLayout, "Dependency", _resourceDependency);
-        AddEditorRow(
-            startupLayout,
-            "Wait after startup",
-            BuildMillisecondsEditor(_resourceWaitAfterStartup)
-        );
         AddEditorRow(startupLayout, "", new Label
         {
             AutoSize = true,
             MaximumSize = new Size(680, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "Resources start from top to bottom. A dependency can only be an earlier resource. The wait is nonblocking and delays only the next resource in this profile."
+            Text = "Resources start from top to bottom. A dependency can only be an earlier resource. Add an explicit delay entry when later resources should wait."
         });
         startupPanel.Controls.Add(startupLayout);
 
@@ -127,6 +113,8 @@ public sealed partial class ConfigurationEditorForm
         _resourceTypeEditorPanel.BackColor = SystemColors.Control;
         _resourceTypeEditorPanel.Controls.Add(BuildApplicationEditor());
         _resourceTypeEditorPanel.Controls.Add(BuildServiceEditor());
+        _resourceTypeEditorPanel.Controls.Add(BuildDelayEditor());
+        _resourceTypeEditorPanel.Controls.Add(BuildHomeAssistantEditor());
         scrollableSection.Controls.Add(_resourceTypeEditorPanel);
         _resourceEditorPanel.Controls.Add(scrollableSection);
         _resourceEditorPanel.Controls.Add(startupPanel);
@@ -187,7 +175,7 @@ public sealed partial class ConfigurationEditorForm
         UpdateResourceMoveButtons();
     }
 
-    /// <summary>Returns applications and services in their effective cross-type startup order.</summary>
+    /// <summary>Returns all profile resources in their effective cross-type startup order.</summary>
     /// <param name="profile">The profile whose resources are required.</param>
     /// <returns>A stable ordered list that preserves application-before-service legacy order when unspecified.</returns>
     private static List<ManagedResourceConfig> GetOrderedResources(SupervisorProfileConfig profile)
@@ -195,6 +183,8 @@ public sealed partial class ConfigurationEditorForm
         return profile.Applications
             .Cast<ManagedResourceConfig>()
             .Concat(profile.Services)
+            .Concat(profile.Delays)
+            .Concat(profile.HomeAssistantResources)
             .Select((resource, stableOrder) => (resource, stableOrder))
             .OrderBy(item => item.resource.StartupOrder < 0
                 ? int.MaxValue
@@ -218,21 +208,24 @@ public sealed partial class ConfigurationEditorForm
             {
                 ManagedApplicationConfig => "Application",
                 ManagedServiceConfig => "Windows service",
+                DelayResourceConfig => "Delay",
+                HomeAssistantResourceConfig => "Home Assistant",
                 _ => ""
             };
-            _resourceWaitAfterStartup.Value = Math.Clamp(
-                resource?.WaitAfterStartupMilliseconds ?? 0,
-                Decimal.ToInt32(_resourceWaitAfterStartup.Minimum),
-                Decimal.ToInt32(_resourceWaitAfterStartup.Maximum)
-            );
             BindResourceDependency(resource);
             _applicationEditorPanel.Visible = resource is ManagedApplicationConfig;
             _serviceEditorPanel.Visible = resource is ManagedServiceConfig;
+            _delayEditorPanel.Visible = resource is DelayResourceConfig;
+            _homeAssistantEditorPanel.Visible = resource is HomeAssistantResourceConfig;
 
             if (_applicationEditorPanel.Visible)
                 _applicationEditorPanel.BringToFront();
             else if (_serviceEditorPanel.Visible)
                 _serviceEditorPanel.BringToFront();
+            else if (_delayEditorPanel.Visible)
+                _delayEditorPanel.BringToFront();
+            else if (_homeAssistantEditorPanel.Visible)
+                _homeAssistantEditorPanel.BringToFront();
         }
         finally
         {
@@ -241,6 +234,8 @@ public sealed partial class ConfigurationEditorForm
 
         LoadSelectedApplication();
         LoadSelectedService();
+        LoadSelectedDelay();
+        _ = LoadSelectedHomeAssistantAsync();
         UpdateResourceMoveButtons();
     }
 
@@ -273,7 +268,7 @@ public sealed partial class ConfigurationEditorForm
         _resourceDependency.SelectedItem = selected ?? _resourceDependency.Items[0];
     }
 
-    /// <summary>Writes shared wait and dependency values to the selected resource.</summary>
+    /// <summary>Writes the shared dependency value to the selected resource.</summary>
     /// <param name="sender">The changed sequencing control.</param>
     /// <param name="e">The change event data.</param>
     private void ResourceStartupFieldChanged(object? sender, EventArgs e)
@@ -281,8 +276,6 @@ public sealed partial class ConfigurationEditorForm
         if (_loadingControls || SelectedResource is not ManagedResourceConfig resource)
             return;
 
-        resource.WaitAfterStartupMilliseconds =
-            ReadDisplayedNumber(_resourceWaitAfterStartup);
         resource.DependencyResourceId =
             (_resourceDependency.SelectedItem as ResourceDependencyChoice)?.ResourceId ?? "";
         UpdateStatus();
@@ -443,6 +436,13 @@ public sealed partial class ConfigurationEditorForm
                 $"[Application] {SafeFileName(application.Path, "New application")}",
             ManagedServiceConfig service =>
                 $"[Service] {DisplayName(service.ServiceName, "New service")}",
+            DelayResourceConfig delay =>
+                $"[Delay] {delay.DurationMilliseconds:N0} ms",
+            HomeAssistantResourceConfig homeAssistant =>
+                $"[Home Assistant] {DisplayName(
+                    homeAssistant.EntityName,
+                    DisplayName(homeAssistant.EntityId, "New action")
+                )}",
             _ => "[Resource]"
         };
         return name + (resource.Enabled ? "" : " (disabled)");
@@ -457,6 +457,10 @@ public sealed partial class ConfigurationEditorForm
             RemoveApplicationClicked(sender, e);
         else if (SelectedResource is ManagedServiceConfig)
             RemoveServiceClicked(sender, e);
+        else if (SelectedResource is DelayResourceConfig)
+            RemoveDelayClicked(sender, e);
+        else if (SelectedResource is HomeAssistantResourceConfig)
+            RemoveHomeAssistantClicked(sender, e);
     }
 
     /// <summary>Moves the selected resource one position earlier.</summary>
@@ -529,7 +533,9 @@ public sealed partial class ConfigurationEditorForm
     {
         foreach (ManagedResourceConfig resource in profile.Applications
             .Cast<ManagedResourceConfig>()
-            .Concat(profile.Services))
+            .Concat(profile.Services)
+            .Concat(profile.Delays)
+            .Concat(profile.HomeAssistantResources))
         {
             if (string.Equals(
                 resource.DependencyResourceId,
@@ -551,4 +557,28 @@ public sealed partial class ConfigurationEditorForm
 
     /// <summary>Represents one dependency dropdown choice.</summary>
     private sealed record ResourceDependencyChoice(string ResourceId, string DisplayName);
+
+    /// <summary>Populates the form-owned resource menu once with every supported resource type.</summary>
+    private void ConfigureAddResourceMenu()
+    {
+        if (_addResourceMenu.Items.Count > 0)
+            return;
+
+        _addResourceMenu.Items.Add("Add application", null, AddApplicationClicked);
+        _addResourceMenu.Items.Add("Add service", null, AddServiceClicked);
+        _addResourceMenu.Items.Add("Add delay", null, AddDelayClicked);
+        _addResourceMenu.Items.Add("Add Home Assistant", null, AddHomeAssistantClicked);
+    }
+
+    /// <summary>Shows the persistent resource-type menu requested by the Add command.</summary>
+    /// <param name="sender">The Add button below which the menu should open.</param>
+    /// <param name="e">The click event data.</param>
+    private void ShowAddResourceMenuClicked(object? sender, EventArgs e)
+    {
+        if (sender is not Button button)
+            return;
+
+        _addResourceMenu.Show(button, new Point(0, button.Height));
+    }
+
 }

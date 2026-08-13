@@ -23,9 +23,9 @@ public sealed class ApplicationResponsivenessProbeTests
         Assert.Contains("cannot be measured", result.Detail);
     }
 
-    /// <summary>Confirms every discoverable helper window must respond for the check to be healthy.</summary>
+    /// <summary>Confirms one stalled internal window cannot outweigh a responsive helper UI.</summary>
     [Fact]
-    public async Task CheckAsync_OneHungWindow_ReturnsFailure()
+    public async Task CheckAsync_OneResponsiveWindow_ReturnsSuccess()
     {
         IntPtr responsiveWindow = new(1);
         IntPtr hungWindow = new(2);
@@ -39,8 +39,26 @@ public sealed class ApplicationResponsivenessProbeTests
             CancellationToken.None
         );
 
+        Assert.True(result.Healthy);
+        Assert.Equal("1 of 2 helper windows are responding.", result.Detail);
+    }
+
+    /// <summary>Confirms a helper is frozen when none of its discoverable windows process messages.</summary>
+    [Fact]
+    public async Task CheckAsync_NoResponsiveWindows_ReturnsFailure()
+    {
+        using var probe = new ApplicationResponsivenessProbe(
+            _ => [new IntPtr(1), new IntPtr(2)],
+            _ => false
+        );
+
+        HealthProbeResult result = await probe.CheckAsync(
+            new HashSet<int> { 10 },
+            CancellationToken.None
+        );
+
         Assert.False(result.Healthy);
-        Assert.Equal("One helper window is not responding.", result.Detail);
+        Assert.Equal("None of the 2 helper windows are responding.", result.Detail);
     }
 
     /// <summary>Confirms multiple responsive helper windows produce a healthy aggregate result.</summary>
