@@ -5,6 +5,31 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies graceful window targeting and explicit tray termination labels.</summary>
 public sealed class ManagedApplicationCloseTests
 {
+    /// <summary>Confirms the opt-in persistent helper bypasses normal profile deactivation.</summary>
+    [Fact]
+    public void Deactivate_LeaveRunningEnabled_SkipsSharedCloseGuardAndProcessLookup()
+    {
+        int closeGuardCalls = 0;
+        using var application = new ManagedApplication(
+            new ManagedApplicationConfig
+            {
+                Path = "\0invalid",
+                LeaveRunningAfterProfileStops = true
+            },
+            TimeSpan.Zero,
+            () =>
+            {
+                closeGuardCalls++;
+                return false;
+            }
+        );
+
+        application.Deactivate();
+
+        Assert.Equal(0, closeGuardCalls);
+        Assert.False(((IManagedApplicationLifecycle)application).CloseOperationPending);
+    }
+
     /// <summary>Confirms only visible owned windows receive the initial WM_CLOSE request.</summary>
     /// <param name="visible">Whether the candidate window is visible.</param>
     /// <param name="expected">Whether the candidate should receive WM_CLOSE.</param>

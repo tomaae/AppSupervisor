@@ -58,6 +58,11 @@ public sealed partial class ConfigurationEditorForm : Form
         Text = "Ensure closed until needed",
         AutoSize = true
     };
+    private readonly CheckBox _applicationLeaveRunning = new()
+    {
+        Text = "Leave helper running after monitored app closes",
+        AutoSize = true
+    };
     private readonly CheckBox _applicationMinimize = new()
     {
         Text = "Minimize windows after starting",
@@ -320,13 +325,14 @@ public sealed partial class ConfigurationEditorForm : Form
             Text = "Use Pick Steam or Pick Store to fill both the app URI and real executable automatically. The executable remains the process AppSupervisor monitors. Arguments apply only to direct executable launches."
         });
         AddEditorRow(layout, "Restart", _applicationRestart);
+        AddEditorRow(layout, "When inactive", _applicationLeaveRunning);
         AddEditorRow(layout, "When inactive", _applicationEnsureClosedUntilNeeded);
         AddEditorRow(layout, "", new Label
         {
             AutoSize = true,
             MaximumSize = new Size(680, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "Every five minutes, AppSupervisor closes this helper only when no enabled profile using the same executable needs it. Pausing AppSupervisor also pauses this check."
+            Text = "Leave running skips the normal close when this profile becomes inactive. Ensure closed checks every five minutes and closes the helper only when no enabled profile using the same executable needs it. These options are mutually exclusive."
         });
         AddEditorRow(layout, "Responsiveness", _applicationMonitorResponsiveness);
         AddEditorRow(layout, "After launch", _applicationMinimize);
@@ -419,6 +425,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _profileSelector.Format += ProfileSelectorFormat;
         _resourceList.SelectedIndexChanged += ResourceSelectionChanged;
         _resourceList.Format += ResourceListFormat;
+        _resourceList.DrawItem += ResourceListDrawItem;
         _resourceList.MouseDown += ResourceListMouseDown;
         _resourceList.MouseMove += ResourceListMouseMove;
         _resourceList.MouseUp += ResourceListMouseUp;
@@ -439,6 +446,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _applicationArguments.TextChanged += ApplicationFieldChanged;
         _applicationRestart.CheckedChanged += ApplicationFieldChanged;
         _applicationEnsureClosedUntilNeeded.CheckedChanged += ApplicationFieldChanged;
+        _applicationLeaveRunning.CheckedChanged += ApplicationFieldChanged;
         _applicationMinimize.CheckedChanged += ApplicationFieldChanged;
         _applicationMonitorResponsiveness.CheckedChanged += ApplicationFieldChanged;
         _applicationForceKill.CheckedChanged += ApplicationFieldChanged;
@@ -521,6 +529,10 @@ public sealed partial class ConfigurationEditorForm : Form
             _applicationRestart.Checked = application?.Restart ?? true;
             _applicationEnsureClosedUntilNeeded.Checked =
                 application?.EnsureClosedUntilNeeded ?? false;
+            _applicationLeaveRunning.Checked =
+                application?.LeaveRunningAfterProfileStops ?? false;
+            _applicationEnsureClosedUntilNeeded.Enabled =
+                !(_applicationLeaveRunning.Checked && available);
             _applicationMinimize.Checked = application?.MinimizeAfterStart ?? false;
             _applicationMonitorResponsiveness.Checked = application?.MonitorResponsiveness ?? false;
             _applicationForceKill.Checked = application?.ForceKillAfterCloseFailure ?? false;
@@ -602,6 +614,19 @@ public sealed partial class ConfigurationEditorForm : Form
         if (_loadingControls || SelectedApplication is not ManagedApplicationConfig application)
             return;
 
+        if (ReferenceEquals(sender, _applicationLeaveRunning) &&
+            _applicationLeaveRunning.Checked)
+        {
+            _applicationEnsureClosedUntilNeeded.Checked = false;
+        }
+        else if (ReferenceEquals(sender, _applicationEnsureClosedUntilNeeded) &&
+            _applicationEnsureClosedUntilNeeded.Checked)
+        {
+            _applicationLeaveRunning.Checked = false;
+        }
+
+        _applicationEnsureClosedUntilNeeded.Enabled = !_applicationLeaveRunning.Checked;
+
         application.Enabled = _applicationEnabled.Checked;
         application.Path = _applicationPath.Text;
         application.AppUri = _applicationAppUri.Text;
@@ -609,6 +634,7 @@ public sealed partial class ConfigurationEditorForm : Form
         application.Arguments = _applicationArguments.Text;
         application.Restart = _applicationRestart.Checked;
         application.EnsureClosedUntilNeeded = _applicationEnsureClosedUntilNeeded.Checked;
+        application.LeaveRunningAfterProfileStops = _applicationLeaveRunning.Checked;
         application.MinimizeAfterStart = _applicationMinimize.Checked;
         application.MonitorResponsiveness = _applicationMonitorResponsiveness.Checked;
         application.ForceKillAfterCloseFailure = _applicationForceKill.Checked;

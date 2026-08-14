@@ -95,6 +95,76 @@ internal static partial class SteamLibraryCatalog
             .ToArray();
     }
 
+    /// <summary>Finds a likely icon source using only the installation root and two child levels.</summary>
+    /// <param name="item">The installed item whose presentation icon is requested.</param>
+    /// <returns>The best shallow executable candidate, or null when none is available.</returns>
+    internal static string? FindIconExecutableCandidate(InstalledSteamItem item)
+    {
+        if (!Directory.Exists(item.InstallDirectory))
+            return null;
+
+        IReadOnlyList<string> directories = [item.InstallDirectory];
+
+        for (int depth = 0; depth <= 2 && directories.Count > 0; depth++)
+        {
+            var candidates = new List<string>();
+            var nextDirectories = new List<string>();
+
+            foreach (string directory in directories)
+            {
+                try
+                {
+                    candidates.AddRange(Directory.EnumerateFiles(
+                        directory,
+                        "*.exe",
+                        SearchOption.TopDirectoryOnly
+                    ));
+                }
+                catch
+                {
+                    // Other readable directories at the same depth can still provide an icon.
+                }
+
+                if (depth == 2)
+                    continue;
+
+                try
+                {
+                    foreach (string childDirectory in Directory.EnumerateDirectories(directory))
+                    {
+                        var information = new DirectoryInfo(childDirectory);
+
+                        if ((information.Attributes & FileAttributes.ReparsePoint) == 0 &&
+                            !string.Equals(
+                                information.Name,
+                                "_CommonRedist",
+                                StringComparison.OrdinalIgnoreCase
+                            ))
+                        {
+                            nextDirectories.Add(childDirectory);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Continue with child directories found elsewhere at this depth.
+                }
+            }
+
+            if (candidates.Count > 0)
+            {
+                return candidates
+                    .OrderByDescending(path => ScoreExecutable(item, path))
+                    .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .First();
+            }
+
+            directories = nextDirectories;
+        }
+
+        return null;
+    }
+
     /// <summary>Extracts registered Steam library paths from a libraryfolders.vdf document.</summary>
     /// <param name="text">The complete VDF document.</param>
     /// <returns>Distinct decoded library directory paths.</returns>
@@ -234,6 +304,10 @@ internal static partial class SteamLibraryCatalog
         return manifests
             .Select(path => ParseManifest(path, libraryDirectory))
             .OfType<InstalledSteamItem>()
+            .Select(item => item with
+            {
+                IconExecutablePath = FindIconExecutableCandidate(item)
+            })
             .ToArray();
     }
 

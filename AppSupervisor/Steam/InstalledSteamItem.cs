@@ -9,4 +9,7 @@ internal sealed record InstalledSteamItem(
 {
     /// <summary>Gets the Steam protocol URI used to launch this installed item.</summary>
     public string AppUri => $"steam://rungameid/{AppId}";
+
+    /// <summary>Gets the likely main executable used only to present this item with an icon.</summary>
+    public string? IconExecutablePath { get; init; }
 }

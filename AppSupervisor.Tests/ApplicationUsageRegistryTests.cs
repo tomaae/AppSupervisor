@@ -149,6 +149,81 @@ public sealed class ApplicationUsageRegistryTests
         Assert.Equal(0, cleanupFactoryCalls);
     }
 
+    /// <summary>Confirms leave-running takes precedence over the contradictory inactive-cleanup option.</summary>
+    [Fact]
+    public void CompleteRegistration_LeaveRunningReference_DoesNotCreateCleaner()
+    {
+        int cleanupFactoryCalls = 0;
+        using var registry = new ApplicationUsageRegistry(configuration =>
+        {
+            cleanupFactoryCalls++;
+            return new FakeApplicationLifecycle
+            {
+                Config = configuration
+            };
+        });
+
+        registry.RegisterApplication(
+            new ManagedApplicationConfig
+            {
+                Path = Path.Combine(Path.GetTempPath(), "PersistentHelper.exe"),
+                EnsureClosedUntilNeeded = true,
+                LeaveRunningAfterProfileStops = true
+            },
+            new object(),
+            () => false
+        );
+        registry.CompleteRegistration();
+        registry.Sweep();
+
+        Assert.Equal(0, cleanupFactoryCalls);
+    }
+
+    /// <summary>Confirms one persistent shared reference protects the helper from another owner's cleanup.</summary>
+    [Fact]
+    public void Sweep_SharedLeaveRunningReference_ProtectsHelperWhileInactive()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "SharedPersistentHelper.exe");
+        FakeApplicationLifecycle? cleanup = null;
+        using var registry = new ApplicationUsageRegistry(configuration =>
+        {
+            cleanup = new FakeApplicationLifecycle
+            {
+                Config = configuration
+            };
+            return cleanup;
+        });
+        var ensuringOwner = new object();
+        var persistentOwner = new object();
+
+        registry.RegisterApplication(
+            new ManagedApplicationConfig
+            {
+                Path = path,
+                EnsureClosedUntilNeeded = true
+            },
+            ensuringOwner,
+            () => false
+        );
+        registry.RegisterApplication(
+            new ManagedApplicationConfig
+            {
+                Path = path,
+                LeaveRunningAfterProfileStops = true
+            },
+            persistentOwner,
+            () => false
+        );
+        registry.CompleteRegistration();
+
+        Assert.NotNull(cleanup);
+        Assert.True(registry.IsRequiredByAnotherProfile(path, ensuringOwner));
+
+        registry.Sweep();
+
+        Assert.Equal(0, cleanup.DeactivateCalls);
+    }
+
     /// <summary>Confirms the same executable may be intentionally shared by two enabled profiles.</summary>
     [Fact]
     public void Validate_SharedExecutableAcrossProfiles_Succeeds()

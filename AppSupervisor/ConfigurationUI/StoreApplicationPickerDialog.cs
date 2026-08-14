@@ -11,6 +11,7 @@ internal sealed class StoreApplicationPickerDialog : Form
     private readonly Label _statusLabel;
     private readonly Button _selectButton;
     private readonly CancellationTokenSource _loadCancellation = new();
+    private readonly ExecutableIconList _icons;
     private IReadOnlyList<InstalledStoreApplication> _applications = [];
 
     /// <summary>Creates the package picker and begins discovery when its window is first displayed.</summary>
@@ -21,6 +22,7 @@ internal sealed class StoreApplicationPickerDialog : Form
         MinimumSize = new Size(780, 500);
         Size = new Size(980, 650);
         AutoScaleMode = AutoScaleMode.Dpi;
+        _icons = new ExecutableIconList(DeviceDpi);
 
         var topPanel = new TableLayoutPanel
         {
@@ -57,7 +59,8 @@ internal sealed class StoreApplicationPickerDialog : Form
             View = View.Details,
             FullRowSelect = true,
             HideSelection = false,
-            MultiSelect = false
+            MultiSelect = false,
+            SmallImageList = _icons.Images
         };
         _applicationList.Columns.Add("Application", 280);
         _applicationList.Columns.Add("Package", 270);
@@ -124,6 +127,7 @@ internal sealed class StoreApplicationPickerDialog : Form
         {
             _loadCancellation.Cancel();
             _loadCancellation.Dispose();
+            _icons.Dispose();
         }
 
         base.Dispose(disposing);
@@ -208,7 +212,11 @@ internal sealed class StoreApplicationPickerDialog : Form
                     continue;
                 }
 
-                var row = new ListViewItem(application.DisplayName) { Tag = application };
+                var row = new ListViewItem(application.DisplayName)
+                {
+                    Tag = application,
+                    ImageKey = _icons.GetImageKey(application.ExecutablePath)
+                };
                 row.SubItems.Add(application.PackageName);
                 row.SubItems.Add(application.ExecutablePath);
                 _applicationList.Items.Add(row);

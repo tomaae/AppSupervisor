@@ -229,7 +229,9 @@ internal sealed class ApplicationUsageRegistry : IDisposable
             Func<ManagedApplicationConfig, IManagedApplicationLifecycle> cleanupFactory)
         {
             ApplicationReference[] cleanupReferences = _references
-                .Where(reference => reference.Configuration.EnsureClosedUntilNeeded)
+                .Where(reference =>
+                    reference.Configuration.EnsureClosedUntilNeeded &&
+                    !reference.Configuration.LeaveRunningAfterProfileStops)
                 .ToArray();
 
             if (cleanupReferences.Length == 0)
@@ -267,7 +269,7 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         {
             return _references.Any(reference =>
                 !ReferenceEquals(reference.Owner, requestingOwner) &&
-                reference.KeepsResourcesActive());
+                reference.RequiresHelperToRemainRunning());
         }
 
         /// <summary>Starts a graceful cleanup only when no profile currently needs the helper.</summary>
@@ -328,7 +330,7 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         /// <returns><see langword="true"/> when cleanup must not proceed.</returns>
         private bool IsRequiredByAnyOwner()
         {
-            return _references.Any(reference => reference.KeepsResourcesActive());
+            return _references.Any(reference => reference.RequiresHelperToRemainRunning());
         }
 
         /// <summary>Converts the managed-application failure into a group-level cleanup failure.</summary>
@@ -376,5 +378,11 @@ internal sealed class ApplicationUsageRegistry : IDisposable
 
         /// <summary>Gets the predicate that reports whether the owner still needs its resources.</summary>
         public Func<bool> KeepsResourcesActive { get; }
+
+        /// <summary>Reports whether active use or persistent-helper configuration protects this executable.</summary>
+        public bool RequiresHelperToRemainRunning()
+        {
+            return Configuration.LeaveRunningAfterProfileStops || KeepsResourcesActive();
+        }
     }
 }

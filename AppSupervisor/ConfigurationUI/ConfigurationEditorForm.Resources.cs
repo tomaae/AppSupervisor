@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using System.Drawing.Drawing2D;
 
 namespace AppSupervisor.ConfigurationUI;
 
@@ -7,8 +8,17 @@ namespace AppSupervisor.ConfigurationUI;
 /// </summary>
 public sealed partial class ConfigurationEditorForm
 {
-    private readonly ListBox _resourceList = new() { Dock = DockStyle.Fill };
+    private readonly ListBox _resourceList = new()
+    {
+        Dock = DockStyle.Fill,
+        DrawMode = DrawMode.OwnerDrawFixed,
+        IntegralHeight = false
+    };
     private readonly ContextMenuStrip _addResourceMenu = new();
+    private readonly Dictionary<string, Icon> _resourceApplicationIcons =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _resourceApplicationIconFailures =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly Panel _resourceEditorPanel = new() { Dock = DockStyle.Fill };
     private readonly Panel _resourceTypeEditorPanel = new() { Dock = DockStyle.Fill };
     private readonly Label _resourceTypeLabel = new() { AutoSize = true };
@@ -41,6 +51,8 @@ public sealed partial class ConfigurationEditorForm
     private Control BuildResourceListPanel()
     {
         var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+        int iconSize = Math.Max(16, 16 * DeviceDpi / 96);
+        _resourceList.ItemHeight = Math.Max(_resourceList.Font.Height + 2, iconSize + 2);
         var buttons = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -299,6 +311,209 @@ public sealed partial class ConfigurationEditorForm
             return;
 
         e.Value = GetResourceDisplayName(resource);
+    }
+
+    /// <summary>Draws one compact resource row with a standard small icon and an ellipsized label.</summary>
+    /// <param name="sender">The owner-drawn resource list.</param>
+    /// <param name="e">The row drawing surface and state.</param>
+    private void ResourceListDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        e.DrawBackground();
+
+        if (e.Index < 0 || e.Index >= _resourceList.Items.Count ||
+            _resourceList.Items[e.Index] is not ManagedResourceConfig resource)
+        {
+            return;
+        }
+
+        int preferredIconSize = Math.Max(16, 16 * DeviceDpi / 96);
+        int iconSize = Math.Min(preferredIconSize, e.Bounds.Height - 2);
+        int iconTop = e.Bounds.Top + (e.Bounds.Height - iconSize) / 2;
+        var iconBounds = new Rectangle(e.Bounds.Left + 3, iconTop, iconSize, iconSize);
+        DrawResourceIcon(e.Graphics, iconBounds, resource, e.ForeColor);
+
+        var textBounds = new Rectangle(
+            iconBounds.Right + 4,
+            e.Bounds.Top,
+            Math.Max(0, e.Bounds.Right - iconBounds.Right - 7),
+            e.Bounds.Height
+        );
+        TextRenderer.DrawText(
+            e.Graphics,
+            GetResourceDisplayName(resource),
+            _resourceList.Font,
+            textBounds,
+            e.ForeColor,
+            TextFormatFlags.Left |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.EndEllipsis |
+                TextFormatFlags.NoPrefix
+        );
+        e.DrawFocusRectangle();
+    }
+
+    /// <summary>Draws an executable icon when available, otherwise a compact type pictogram.</summary>
+    private void DrawResourceIcon(
+        Graphics graphics,
+        Rectangle bounds,
+        ManagedResourceConfig resource,
+        Color color)
+    {
+        if (resource is ManagedApplicationConfig application &&
+            TryGetApplicationIcon(application.Path) is Icon applicationIcon)
+        {
+            graphics.DrawIcon(applicationIcon, bounds);
+            return;
+        }
+
+        SmoothingMode previousSmoothingMode = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        try
+        {
+            float strokeWidth = Math.Max(1f, bounds.Width / 11f);
+            using var pen = new Pen(color, strokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            if (resource is ManagedServiceConfig)
+                DrawServiceIcon(graphics, pen, bounds);
+            else if (resource is DelayResourceConfig)
+                DrawDelayIcon(graphics, pen, bounds);
+            else if (resource is HomeAssistantResourceConfig)
+                DrawHomeIcon(graphics, pen, bounds);
+            else
+                DrawApplicationIcon(graphics, pen, bounds);
+        }
+        finally
+        {
+            graphics.SmoothingMode = previousSmoothingMode;
+        }
+    }
+
+    /// <summary>Returns a cached executable icon without allowing inaccessible paths to disrupt painting.</summary>
+    private Icon? TryGetApplicationIcon(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        string fullPath;
+
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (_resourceApplicationIcons.TryGetValue(fullPath, out Icon? cachedIcon))
+            return cachedIcon;
+
+        if (_resourceApplicationIconFailures.Contains(fullPath))
+            return null;
+
+        try
+        {
+            using Icon? extractedIcon = Icon.ExtractAssociatedIcon(fullPath);
+
+            if (extractedIcon is not null)
+            {
+                var ownedIcon = (Icon)extractedIcon.Clone();
+                _resourceApplicationIcons.Add(fullPath, ownedIcon);
+                return ownedIcon;
+            }
+        }
+        catch
+        {
+            // Missing, inaccessible, and non-Win32 files use the generic application pictogram.
+        }
+
+        _resourceApplicationIconFailures.Add(fullPath);
+        return null;
+    }
+
+    /// <summary>Draws a compact application-window fallback pictogram.</summary>
+    private static void DrawApplicationIcon(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        var window = RectangleF.Inflate(bounds, -bounds.Width * 0.12f, -bounds.Height * 0.18f);
+        graphics.DrawRectangle(pen, window.X, window.Y, window.Width, window.Height);
+        graphics.DrawLine(
+            pen,
+            window.Left,
+            window.Top + window.Height * 0.28f,
+            window.Right,
+            window.Top + window.Height * 0.28f
+        );
+    }
+
+    /// <summary>Draws a compact service/gear pictogram.</summary>
+    private static void DrawServiceIcon(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        var center = new PointF(bounds.Left + bounds.Width / 2f, bounds.Top + bounds.Height / 2f);
+        float outerRadius = bounds.Width * 0.36f;
+        float innerRadius = bounds.Width * 0.12f;
+
+        for (int index = 0; index < 8; index++)
+        {
+            double angle = index * Math.PI / 4;
+            graphics.DrawLine(
+                pen,
+                center.X + (float)Math.Cos(angle) * outerRadius * 0.72f,
+                center.Y + (float)Math.Sin(angle) * outerRadius * 0.72f,
+                center.X + (float)Math.Cos(angle) * outerRadius,
+                center.Y + (float)Math.Sin(angle) * outerRadius
+            );
+        }
+
+        graphics.DrawEllipse(
+            pen,
+            center.X - outerRadius * 0.72f,
+            center.Y - outerRadius * 0.72f,
+            outerRadius * 1.44f,
+            outerRadius * 1.44f
+        );
+        graphics.DrawEllipse(
+            pen,
+            center.X - innerRadius,
+            center.Y - innerRadius,
+            innerRadius * 2,
+            innerRadius * 2
+        );
+    }
+
+    /// <summary>Draws a compact clock pictogram for explicit delays.</summary>
+    private static void DrawDelayIcon(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        var clock = RectangleF.Inflate(bounds, -bounds.Width * 0.12f, -bounds.Height * 0.12f);
+        graphics.DrawEllipse(pen, clock);
+        var center = new PointF(clock.Left + clock.Width / 2f, clock.Top + clock.Height / 2f);
+        graphics.DrawLine(pen, center, new PointF(center.X, clock.Top + clock.Height * 0.25f));
+        graphics.DrawLine(pen, center, new PointF(clock.Right - clock.Width * 0.23f, center.Y));
+    }
+
+    /// <summary>Draws a compact house pictogram for Home Assistant actions.</summary>
+    private static void DrawHomeIcon(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        float left = bounds.Left + bounds.Width * 0.14f;
+        float right = bounds.Right - bounds.Width * 0.14f;
+        float roofY = bounds.Top + bounds.Height * 0.43f;
+        float bottom = bounds.Bottom - bounds.Height * 0.12f;
+        float centerX = bounds.Left + bounds.Width / 2f;
+        float top = bounds.Top + bounds.Height * 0.10f;
+        graphics.DrawLines(pen,
+        [
+            new PointF(left, roofY),
+            new PointF(centerX, top),
+            new PointF(right, roofY)
+        ]);
+        graphics.DrawLine(pen, left, roofY, left, bottom);
+        graphics.DrawLine(pen, right, roofY, right, bottom);
+        graphics.DrawLine(pen, left, bottom, right, bottom);
     }
 
 

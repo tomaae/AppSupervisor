@@ -34,6 +34,7 @@ public sealed class ConfigFileWriterTests
 
         Assert.Single(loaded);
         Assert.Equal("Writer test", loaded[0].Name);
+        Assert.True(loaded[0].Applications[0].LeaveRunningAfterProfileStops);
         Assert.Empty(Directory.GetFiles(directory.Path, "*.tmp"));
     }
 
@@ -72,6 +73,7 @@ public sealed class ConfigFileWriterTests
                     new ManagedApplicationConfig
                     {
                         Path = Environment.ProcessPath!,
+                        LeaveRunningAfterProfileStops = true,
                         Notifications = new NotificationConfig { Target = [] },
                         HealthChecks =
                         [

@@ -18,6 +18,7 @@ public sealed class RunningProcessPickerDialog : Form
     private readonly Label _statusLabel;
     private readonly Button _refreshButton;
     private readonly Button _selectButton;
+    private readonly ExecutableIconList _icons;
     private readonly CancellationTokenSource _refreshCancellation = new();
     private List<ProcessRow> _allRows = [];
     private bool _refreshRunning;
@@ -30,6 +31,7 @@ public sealed class RunningProcessPickerDialog : Form
         MinimumSize = new Size(760, 450);
         Size = new Size(920, 560);
         AutoScaleMode = AutoScaleMode.Dpi;
+        _icons = new ExecutableIconList(DeviceDpi);
 
         var topPanel = new TableLayoutPanel
         {
@@ -79,7 +81,8 @@ public sealed class RunningProcessPickerDialog : Form
             FullRowSelect = true,
             HideSelection = false,
             MultiSelect = false,
-            Sorting = SortOrder.Ascending
+            Sorting = SortOrder.Ascending,
+            SmallImageList = _icons.Images
         };
         _processList.Columns.Add("Application", 220);
         _processList.Columns.Add("Executable path", 650);
@@ -346,6 +349,7 @@ public sealed class RunningProcessPickerDialog : Form
         {
             _refreshCancellation.Cancel();
             _refreshCancellation.Dispose();
+            _icons.Dispose();
         }
 
         base.Dispose(disposing);
@@ -391,7 +395,11 @@ public sealed class RunningProcessPickerDialog : Form
                     continue;
                 }
 
-                var item = new ListViewItem(row.Name) { Tag = row };
+                var item = new ListViewItem(row.Name)
+                {
+                    Tag = row,
+                    ImageKey = _icons.GetImageKey(row.Path)
+                };
                 item.SubItems.Add(row.Path ?? "Unavailable");
                 _processList.Items.Add(item);
             }

@@ -54,6 +54,31 @@ public sealed class SteamLibraryCatalogTests
         }
     }
 
+    /// <summary>Confirms icon discovery finds a likely executable without traversing the full installation.</summary>
+    [Fact]
+    public void FindIconExecutableCandidate_NestedWin64Executable_ReturnsShallowMatch()
+    {
+        string root = CreateTemporaryDirectory();
+
+        try
+        {
+            string installDirectory = Path.Combine(root, "steamapps", "common", "Example Game");
+            string binaryDirectory = Path.Combine(installDirectory, "bin", "win64");
+            Directory.CreateDirectory(binaryDirectory);
+            string executablePath = Path.Combine(binaryDirectory, "ExampleGame.exe");
+            File.WriteAllText(executablePath, "");
+            var item = new InstalledSteamItem(42, "Example Game", installDirectory, root);
+
+            string? result = SteamLibraryCatalog.FindIconExecutableCandidate(item);
+
+            Assert.Equal(executablePath, result);
+        }
+        finally
+        {
+            DeleteTemporaryDirectory(root);
+        }
+    }
+
     /// <summary>Creates an isolated directory owned by the current test.</summary>
     /// <returns>The new temporary directory path.</returns>
     private static string CreateTemporaryDirectory()

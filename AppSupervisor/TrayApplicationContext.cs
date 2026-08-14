@@ -37,6 +37,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private List<SupervisorProfile> _profiles = [];
     private ApplicationUsageRegistry _applicationUsageRegistry = new();
     private readonly object _runtimeStateLock = new();
+    private readonly object _trayStateLock = new();
     private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
     private readonly HashSet<SupervisorProfile> _reportedStartupTickErrors = [];
     private volatile bool _paused = true;
@@ -45,6 +46,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly HashSet<RuntimeErrorIdentity> _activeRuntimeErrors = [];
     private bool _inactiveCleanupError;
     private readonly record struct RuntimeErrorIdentity(SupervisorProfile Profile, IManagedResource Resource);
+    private TrayStateSnapshot? _lastScheduledTrayState;
     private volatile bool _hasValidConfiguration;
     private bool _configurationEditorOpen;
     private int _configurationLoadGeneration;
@@ -831,31 +833,60 @@ public partial class TrayApplicationContext : ApplicationContext
             text = "AppSupervisor - Waiting for monitored applications";
         }
 
-        RunOnUiThread(() => ApplyTrayState(pauseEnabled, pauseText, icon, text));
+        var state = new TrayStateSnapshot(pauseEnabled, pauseText, icon, text);
+
+        lock (_trayStateLock)
+        {
+            if (_lastScheduledTrayState is TrayStateSnapshot previous &&
+                previous.Matches(state))
+            {
+                return;
+            }
+
+            _lastScheduledTrayState = state;
+            RunOnUiThread(() => ApplyTrayState(state));
+        }
     }
 
     /// <summary>Applies a precomputed immutable tray snapshot on the WinForms thread.</summary>
-    private void ApplyTrayState(bool pauseEnabled, string pauseText, Icon icon, string text)
+    private void ApplyTrayState(TrayStateSnapshot state)
     {
         if (_exiting)
             return;
 
-        bool transition = !string.Equals(_trayIcon.Text, text, StringComparison.Ordinal);
+        bool transition = !string.Equals(_trayIcon.Text, state.Text, StringComparison.Ordinal);
 
         if (transition)
         {
             SupervisorLog.WriteInformation(
-                $"TRACE Tray transition applying: '{_trayIcon.Text}' -> '{text}'."
+                $"TRACE Tray transition applying: '{_trayIcon.Text}' -> '{state.Text}'."
             );
         }
 
-        _pauseResumeItem.Enabled = pauseEnabled;
-        _pauseResumeItem.Text = pauseText;
-        _trayIcon.Icon = icon;
-        _trayIcon.Text = text;
+        _pauseResumeItem.Enabled = state.PauseEnabled;
+        _pauseResumeItem.Text = state.PauseText;
+        _trayIcon.Icon = state.Icon;
+        _trayIcon.Text = state.Text;
 
         if (transition)
-            SupervisorLog.WriteInformation($"TRACE Tray transition applied: '{text}'.");
+            SupervisorLog.WriteInformation($"TRACE Tray transition applied: '{state.Text}'.");
+    }
+
+    /// <summary>Describes every user-visible tray value that must change as one UI update.</summary>
+    private readonly record struct TrayStateSnapshot(
+        bool PauseEnabled,
+        string PauseText,
+        Icon Icon,
+        string Text)
+    {
+        /// <summary>Compares stable tray values without relying on native icon-handle equality.</summary>
+        public bool Matches(TrayStateSnapshot other)
+        {
+            return PauseEnabled == other.PauseEnabled &&
+                string.Equals(PauseText, other.PauseText, StringComparison.Ordinal) &&
+                ReferenceEquals(Icon, other.Icon) &&
+                string.Equals(Text, other.Text, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>Posts a UI-only operation without waiting for the WinForms message pump.</summary>

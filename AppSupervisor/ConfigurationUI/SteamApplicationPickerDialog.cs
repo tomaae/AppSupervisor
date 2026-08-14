@@ -12,6 +12,7 @@ internal sealed class SteamApplicationPickerDialog : Form
     private readonly Label _statusLabel;
     private readonly Button _selectButton;
     private readonly CancellationTokenSource _loadCancellation = new();
+    private readonly ExecutableIconList _icons;
     private CancellationTokenSource? _candidateCancellation;
 
     /// <summary>Creates the installed-item picker from every locally registered Steam library.</summary>
@@ -22,6 +23,7 @@ internal sealed class SteamApplicationPickerDialog : Form
         MinimumSize = new Size(760, 520);
         Size = new Size(940, 650);
         AutoScaleMode = AutoScaleMode.Dpi;
+        _icons = new ExecutableIconList(DeviceDpi);
 
         var filterPanel = new TableLayoutPanel
         {
@@ -49,7 +51,8 @@ internal sealed class SteamApplicationPickerDialog : Form
             FullRowSelect = true,
             HideSelection = false,
             MultiSelect = false,
-            Enabled = false
+            Enabled = false,
+            SmallImageList = _icons.Images
         };
         _itemList.Columns.Add("Steam item", 300);
         _itemList.Columns.Add("App ID", 100);
@@ -74,8 +77,11 @@ internal sealed class SteamApplicationPickerDialog : Form
         _executableSelector = new ComboBox
         {
             Dock = DockStyle.Fill,
-            DropDownStyle = ComboBoxStyle.DropDownList
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DrawMode = DrawMode.OwnerDrawFixed,
+            ItemHeight = Math.Max(Font.Height + 2, _icons.Images.ImageSize.Height + 2)
         };
+        _executableSelector.DrawItem += ExecutableSelectorDrawItem;
         _executableSelector.SelectedIndexChanged += ExecutableSelectionChanged;
         executablePanel.Controls.Add(_executableSelector, 1, 0);
         _statusLabel = new Label
@@ -131,6 +137,7 @@ internal sealed class SteamApplicationPickerDialog : Form
             _loadCancellation.Dispose();
             _candidateCancellation?.Cancel();
             _candidateCancellation?.Dispose();
+            _icons.Dispose();
         }
 
         base.Dispose(disposing);
@@ -233,6 +240,45 @@ internal sealed class SteamApplicationPickerDialog : Form
             _executableSelector.SelectedItem is string;
     }
 
+    /// <summary>Draws executable candidates with the exact file icon and a compact path label.</summary>
+    private void ExecutableSelectorDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        e.DrawBackground();
+
+        if (e.Index < 0 || e.Index >= _executableSelector.Items.Count ||
+            _executableSelector.Items[e.Index] is not string path)
+        {
+            return;
+        }
+
+        int iconSize = Math.Min(_icons.Images.ImageSize.Width, e.Bounds.Height - 2);
+        var iconBounds = new Rectangle(
+            e.Bounds.Left + 2,
+            e.Bounds.Top + (e.Bounds.Height - iconSize) / 2,
+            iconSize,
+            iconSize
+        );
+        _icons.Draw(e.Graphics, iconBounds, path);
+        var textBounds = new Rectangle(
+            iconBounds.Right + 4,
+            e.Bounds.Top,
+            Math.Max(0, e.Bounds.Right - iconBounds.Right - 6),
+            e.Bounds.Height
+        );
+        TextRenderer.DrawText(
+            e.Graphics,
+            path,
+            _executableSelector.Font,
+            textBounds,
+            e.ForeColor,
+            TextFormatFlags.Left |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.EndEllipsis |
+                TextFormatFlags.NoPrefix
+        );
+        e.DrawFocusRectangle();
+    }
+
     /// <summary>Stores the chosen executable and Steam app URI.</summary>
     /// <param name="sender">The Select button.</param>
     /// <param name="e">The click event data.</param>
@@ -269,7 +315,11 @@ internal sealed class SteamApplicationPickerDialog : Form
                     continue;
                 }
 
-                var row = new ListViewItem(item.Name) { Tag = item };
+                var row = new ListViewItem(item.Name)
+                {
+                    Tag = item,
+                    ImageKey = _icons.GetImageKey(item.IconExecutablePath)
+                };
                 row.SubItems.Add(item.AppId.ToString());
                 row.SubItems.Add(item.InstallDirectory);
                 _itemList.Items.Add(row);

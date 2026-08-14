@@ -133,6 +133,29 @@ public sealed class ConfigurationEditorResourceLayoutTests
                         list => list.Items.Count == 2 &&
                             list.Items.Cast<object>().All(item => item is ManagedResourceConfig)
                     );
+                    Assert.Equal(DrawMode.OwnerDrawFixed, resourceList.DrawMode);
+                    int standardIconSize = Math.Max(16, 16 * resourceList.DeviceDpi / 96);
+                    Assert.Equal(
+                        Math.Max(resourceList.Font.Height + 2, standardIconSize + 2),
+                        resourceList.ItemHeight
+                    );
+                    CheckBox leaveRunning = Assert.Single(
+                        controls.OfType<CheckBox>(),
+                        checkBox => checkBox.Visible &&
+                            checkBox.Text == "Leave helper running after monitored app closes"
+                    );
+                    CheckBox ensureClosed = Assert.Single(
+                        controls.OfType<CheckBox>(),
+                        checkBox => checkBox.Visible &&
+                            checkBox.Text == "Ensure closed until needed"
+                    );
+                    Assert.False(leaveRunning.Checked);
+                    Assert.True(ensureClosed.Enabled);
+
+                    leaveRunning.Checked = true;
+
+                    Assert.False(ensureClosed.Checked);
+                    Assert.False(ensureClosed.Enabled);
                     resourceList.SelectedIndex = 1;
                     Application.DoEvents();
                     form.PerformLayout();

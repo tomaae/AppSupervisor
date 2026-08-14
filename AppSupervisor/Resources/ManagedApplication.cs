@@ -290,6 +290,9 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <returns><see langword="true"/> when another profile still needs this executable.</returns>
     private bool ShouldRemainRunning()
     {
+        if (Config.LeaveRunningAfterProfileStops)
+            return true;
+
         try
         {
             return _shouldRemainRunning?.Invoke() == true;

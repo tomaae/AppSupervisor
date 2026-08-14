@@ -169,7 +169,12 @@ public sealed partial class ConfigurationEditorForm
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
             _addResourceMenu.Dispose();
+            foreach (Icon icon in _resourceApplicationIcons.Values)
+                icon.Dispose();
+            _resourceApplicationIcons.Clear();
+        }
 
         if (disposing && !_serviceRefreshDisposed)
         {
