@@ -70,7 +70,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
             return;
         }
 
-        SynchronizeConfiguredStates();
+        SynchronizeConfiguredStates(refreshRoles: true);
         RaiseOfflineDevicesChanged();
     }
 
@@ -206,20 +206,28 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
 
         DateTime graceEndsUtc = observedSessionStart + StartupGrace;
 
+        var connectedSerials = snapshot.Devices
+            .Where(device => device.Connected)
+            .Select(device => device.SerialNumber)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        SynchronizeConfiguredStates(refreshRoles: false);
+        UpdateObservedRoles(snapshot.Devices);
+
+        foreach (DeviceState state in _states.Values)
+        {
+            if (connectedSerials.Contains(state.Device.SerialNumber))
+                state.SeenConnectedThisSession = true;
+        }
+
         if (nowUtc < graceEndsUtc)
         {
             _nextCheckUtc = graceEndsUtc;
             return;
         }
 
-        var connectedSerials = snapshot.Devices
-            .Where(device => device.Connected)
-            .Select(device => device.SerialNumber)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var newlyOffline = new List<DeviceState>();
         var recovered = new List<DeviceState>();
-
-        SynchronizeConfiguredStates();
 
         foreach (DeviceState state in _states.Values)
         {
@@ -235,6 +243,13 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
                     state.Silenced = false;
                 }
 
+                continue;
+            }
+
+            if (state.Device.DeviceClass == SteamVrDeviceClass.GenericTracker &&
+                !state.SeenConnectedThisSession)
+            {
+                state.ConsecutiveFailures = 0;
                 continue;
             }
 
@@ -257,7 +272,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
             NotificationRequested?.Invoke(new SupervisorNotification(
                 NotificationSeverity.Information,
                 "SteamVR device recovered",
-                $"{state.Device.Name} is connected again.",
+                $"{Describe(state)} is connected again.",
                 _config.Notifications.Target
             ));
         }
@@ -288,7 +303,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         RequestOfflineAlert(reminders, reminder: true);
     }
 
-    private void SynchronizeConfiguredStates()
+    private void SynchronizeConfiguredStates(bool refreshRoles)
     {
         var enabledSerials = _config.Devices
             .Where(device => device.Enabled)
@@ -301,9 +316,28 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         foreach (SteamVrDeviceConfig device in _config.Devices.Where(device => device.Enabled))
         {
             if (_states.TryGetValue(device.SerialNumber, out DeviceState? state))
+            {
                 state.Device = device;
+                if (refreshRoles)
+                    state.Role = device.Role;
+            }
             else
                 _states.Add(device.SerialNumber, new DeviceState(device));
+        }
+    }
+
+    /// <summary>Refreshes role labels from the live snapshot without rewriting the saved configuration.</summary>
+    private void UpdateObservedRoles(IEnumerable<SteamVrDeviceSnapshot> devices)
+    {
+        foreach (SteamVrDeviceSnapshot device in devices)
+        {
+            if (_states.TryGetValue(device.SerialNumber, out DeviceState? state) &&
+                (device.Connected ||
+                    device.Role != SteamVrDeviceRole.None ||
+                    state.Role == SteamVrDeviceRole.None))
+            {
+                state.Role = device.Role;
+            }
         }
     }
 
@@ -314,7 +348,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
     {
         string names = string.Join(
             Environment.NewLine,
-            devices.Select(state => $"• {state.Device.Name}")
+            devices.Select(state => $"• {Describe(state)}")
         );
         AlertRequested?.Invoke(new SupervisorNotification(
             NotificationSeverity.Error,
@@ -323,6 +357,13 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
             _config.Notifications.Target
         ));
     }
+
+    private static string Describe(DeviceState state)
+        => SteamVrDeviceDisplay.Description(
+            state.Device.Name,
+            state.Device.DeviceClass,
+            state.Role
+        );
 
     private TimeSpan ReminderInterval => TimeSpan.FromMinutes(_config.ReminderIntervalMinutes);
 
@@ -335,6 +376,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         foreach (DeviceState state in _states.Values)
         {
             state.ConsecutiveFailures = 0;
+            state.SeenConnectedThisSession = false;
 
             if (clearIncidents)
             {
@@ -356,6 +398,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
                 state.Device.SerialNumber,
                 state.Device.Name,
                 state.Device.DeviceClass,
+                state.Role,
                 state.OfflineSinceUtc!.Value,
                 state.Silenced
             ))
@@ -371,9 +414,12 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         public DeviceState(SteamVrDeviceConfig device)
         {
             Device = device;
+            Role = device.Role;
         }
 
         public SteamVrDeviceConfig Device { get; set; }
+        public SteamVrDeviceRole Role { get; set; }
+        public bool SeenConnectedThisSession { get; set; }
         public int ConsecutiveFailures { get; set; }
         public DateTime? OfflineSinceUtc { get; set; }
         public DateTime? NextReminderUtc { get; set; }
@@ -386,5 +432,6 @@ internal sealed record SteamVrOfflineDevice(
     string SerialNumber,
     string Name,
     SteamVrDeviceClass DeviceClass,
+    SteamVrDeviceRole Role,
     DateTime OfflineSinceUtc,
     bool Silenced);

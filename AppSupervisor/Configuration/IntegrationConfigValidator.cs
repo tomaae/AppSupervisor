@@ -52,6 +52,9 @@ public static class IntegrationConfigValidator
 
                     if (!Enum.IsDefined(device.DeviceClass))
                         errors.Add($"{label} has an unsupported deviceClass.");
+
+                    if (!Enum.IsDefined(device.Role))
+                        errors.Add($"{label} has an unsupported role.");
                 }
             }
 

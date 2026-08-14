@@ -21,7 +21,7 @@ public sealed class SteamVrIntegrationConfig
     };
 }
 
-/// <summary>Identifies one expected SteamVR tracker or tracking reference.</summary>
+/// <summary>Identifies one expected SteamVR controller, tracker, or tracking reference.</summary>
 public sealed class SteamVrDeviceConfig
 {
     /// <summary>Gets or sets whether this expected device participates in monitoring.</summary>
@@ -38,14 +38,46 @@ public sealed class SteamVrDeviceConfig
 
     /// <summary>Gets or sets the model string captured during discovery.</summary>
     public string ModelNumber { get; set; } = "";
+
+    /// <summary>Gets or sets the last controller or tracker assignment captured from SteamVR.</summary>
+    public SteamVrDeviceRole Role { get; set; }
 }
 
 /// <summary>Lists the observation-worthy OpenVR device classes supported by this integration.</summary>
 public enum SteamVrDeviceClass
 {
+    /// <summary>A hand controller or another controller-role device.</summary>
+    Controller,
+
     /// <summary>A generic tracked accessory such as a Vive Tracker.</summary>
     GenericTracker,
 
     /// <summary>A tracking reference such as a Lighthouse base station.</summary>
     TrackingReference
+}
+
+/// <summary>Lists controller roles and user-assigned SteamVR tracker body roles.</summary>
+public enum SteamVrDeviceRole
+{
+    /// <summary>No role is currently assigned or the role could not be determined.</summary>
+    None,
+
+    LeftHand,
+    RightHand,
+    OptOut,
+    Treadmill,
+    Stylus,
+    Handed,
+    LeftFoot,
+    RightFoot,
+    LeftShoulder,
+    RightShoulder,
+    LeftElbow,
+    RightElbow,
+    LeftKnee,
+    RightKnee,
+    Waist,
+    Chest,
+    Camera,
+    Keyboard
 }

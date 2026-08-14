@@ -84,15 +84,13 @@ internal sealed class SteamVrOfflineDevicesForm : Form
 
         foreach (SteamVrOfflineDevice device in _snapshot)
         {
-            string kind = device.DeviceClass == SteamVrDeviceClass.TrackingReference
-                ? "Base station"
-                : "Tracker";
             string duration = FormatDuration(DateTime.UtcNow - device.OfflineSinceUtc);
             string status = device.Silenced ? "silenced" : "reminders active";
             _devices.Items.Add(
                 new OfflineDeviceItem(
                     device.SerialNumber,
-                    $"{device.Name} — {kind}, offline for {duration}, {status}"
+                    $"{SteamVrDeviceDisplay.Description(device.Name, device.DeviceClass, device.Role)}, " +
+                    $"offline for {duration}, {status}"
                 ),
                 isChecked: checkedSerials.Contains(device.SerialNumber)
             );

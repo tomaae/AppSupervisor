@@ -12,7 +12,7 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
 - Provides per-application listener and VRChat OSCQuery health checks, including optional recovery after a confirmed failure.
-- Monitors expected SteamVR trackers and base stations without starting or controlling SteamVR.
+- Monitors expected SteamVR controllers, trackers, and base stations without starting or controlling SteamVR.
 - Sends per-resource alerts through popup dialogs, Windows notifications, or XSOverlay.
 - Includes a graphical configuration editor with application, Steam, Store, service, and running-process pickers.
 - Validates configuration before applying it and keeps the last valid configuration active if a reload fails.
@@ -68,9 +68,11 @@ Home Assistant uses a shared URL and long-lived access token. The token is store
 
 ### SteamVR device monitoring
 
-AppSupervisor can monitor configured trackers and Lighthouse/base-station devices while SteamVR is already running. It does not start or restart SteamVR and does not control devices.
+AppSupervisor can monitor configured controllers, trackers, and Lighthouse/base-station devices while SteamVR is already running. Discovery records controller handedness and SteamVR tracker assignments such as left foot, left knee, or waist, so offline and recovery notifications identify the missing role. It does not start or restart SteamVR and does not control devices.
 
 After repeated connection failures, it sends the selected notifications and shows an offline-device window. Reminders can be silenced for the current outage; recovery is detected automatically.
+
+Generic/FBT trackers are monitored only after SteamVR reports them connected at least once in the current SteamVR session. A tracker intentionally left powered off for the whole session therefore does not produce an offline alert. Hand controllers and tracking references such as base stations remain mandatory from session startup.
 
 ### Notifications
 

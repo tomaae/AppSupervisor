@@ -29,7 +29,8 @@ public sealed class IntegrationConfigTests
                                 SerialNumber = " LHR-TEST ",
                                 Name = " Waist tracker ",
                                 DeviceClass = SteamVrDeviceClass.GenericTracker,
-                                ModelNumber = " Tundra Tracker "
+                                ModelNumber = " Tundra Tracker ",
+                                Role = SteamVrDeviceRole.LeftFoot
                             }
                         ],
                         Notifications = new NotificationConfig
@@ -49,6 +50,7 @@ public sealed class IntegrationConfigTests
             SteamVrDeviceConfig device = Assert.Single(steamVr.Devices);
             Assert.Equal("LHR-TEST", device.SerialNumber);
             Assert.Equal("Waist tracker", device.Name);
+            Assert.Equal(SteamVrDeviceRole.LeftFoot, device.Role);
             Assert.Equal([NotificationTarget.XsOverlay], steamVr.Notifications.Target);
         }
         finally

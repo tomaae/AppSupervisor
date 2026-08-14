@@ -72,7 +72,8 @@ public sealed partial class ConfigurationEditorForm
         AddSpanningEditorRow(settings, _steamVrEnabled);
         AddEditorRow(settings, "Timing", new Label
         {
-            Text = "30-second startup grace, checks every 30 seconds, offline after 2 failed checks",
+            Text = "30-second startup grace, checks every 30 seconds, offline after 2 failed checks; " +
+                "FBT trackers arm when first connected in the session",
             AutoSize = true,
             Anchor = AnchorStyles.Left
         });
@@ -302,6 +303,13 @@ public sealed partial class ConfigurationEditorForm
         });
         _steamVrDevices.Columns.Add(new DataGridViewTextBoxColumn
         {
+            DataPropertyName = nameof(SteamVrDeviceEditorRow.RoleText),
+            HeaderText = "Assignment",
+            ReadOnly = true,
+            Width = 105
+        });
+        _steamVrDevices.Columns.Add(new DataGridViewTextBoxColumn
+        {
             DataPropertyName = nameof(SteamVrDeviceEditorRow.SerialNumber),
             HeaderText = "Serial number",
             ReadOnly = true,
@@ -417,6 +425,7 @@ public sealed partial class ConfigurationEditorForm
                 {
                     existing.ModelNumber = device.ModelNumber;
                     existing.DeviceClass = device.DeviceClass;
+                    existing.Role = device.Role;
                     continue;
                 }
 
@@ -431,7 +440,7 @@ public sealed partial class ConfigurationEditorForm
             {
                 MessageBox.Show(
                     this,
-                    "SteamVR is running, but it did not expose any trackers or tracking references.",
+                    "SteamVR is running, but it did not expose any controllers, trackers, or tracking references.",
                     "No supported devices found",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information
@@ -492,10 +501,12 @@ public sealed partial class ConfigurationEditorForm
         public string SerialNumber { get; set; } = "";
         public string ModelNumber { get; set; } = "";
         public SteamVrDeviceClass DeviceClass { get; set; }
+        public SteamVrDeviceRole Role { get; set; }
         public string Status { get; set; } = "Not checked";
-        public string ClassText => DeviceClass == SteamVrDeviceClass.TrackingReference
-            ? "Base station"
-            : "Tracker";
+        public string ClassText => SteamVrDeviceDisplay.ClassName(DeviceClass);
+        public string RoleText => DeviceClass == SteamVrDeviceClass.TrackingReference
+            ? "—"
+            : SteamVrDeviceDisplay.RoleName(Role);
 
         public static SteamVrDeviceEditorRow FromConfig(SteamVrDeviceConfig device) => new()
         {
@@ -503,18 +514,20 @@ public sealed partial class ConfigurationEditorForm
             Name = device.Name,
             SerialNumber = device.SerialNumber,
             ModelNumber = device.ModelNumber,
-            DeviceClass = device.DeviceClass
+            DeviceClass = device.DeviceClass,
+            Role = device.Role
         };
 
         public static SteamVrDeviceEditorRow FromSnapshot(SteamVrDeviceSnapshot device) => new()
         {
             Enabled = true,
             Name = string.IsNullOrWhiteSpace(device.ModelNumber)
-                ? $"{(device.DeviceClass == SteamVrDeviceClass.TrackingReference ? "Base station" : "Tracker")} {device.SerialNumber}"
+                ? $"{SteamVrDeviceDisplay.ClassName(device.DeviceClass)} {device.SerialNumber}"
                 : device.ModelNumber,
             SerialNumber = device.SerialNumber,
             ModelNumber = device.ModelNumber,
             DeviceClass = device.DeviceClass,
+            Role = device.Role,
             Status = device.Connected ? "Connected" : "Offline"
         };
 
@@ -524,7 +537,8 @@ public sealed partial class ConfigurationEditorForm
             Name = Name,
             SerialNumber = SerialNumber,
             ModelNumber = ModelNumber,
-            DeviceClass = DeviceClass
+            DeviceClass = DeviceClass,
+            Role = Role
         };
     }
 }

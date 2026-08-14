@@ -18,7 +18,8 @@ public sealed class IsolatedOpenVrDeviceSourceTests
                     "LHR-TEST",
                     "Tracker",
                     SteamVrDeviceClass.GenericTracker,
-                    true
+                    true,
+                    SteamVrDeviceRole.LeftKnee
                 )
             ]
         );
@@ -36,6 +37,7 @@ public sealed class IsolatedOpenVrDeviceSourceTests
         SteamVrDeviceSnapshot device = Assert.Single(actual.Devices);
         Assert.Equal("LHR-TEST", device.SerialNumber);
         Assert.True(device.Connected);
+        Assert.Equal(SteamVrDeviceRole.LeftKnee, device.Role);
     }
 
     /// <summary>Confirms missing or corrupt child output becomes an ordinary source error.</summary>

@@ -26,6 +26,59 @@ public sealed class SteamVrDeviceMonitorTests
         Assert.False(incident.Silenced);
     }
 
+    [Fact]
+    public void ProcessSnapshot_TrackerNeverConnectedThisSession_DoesNotRaiseIncident()
+    {
+        using var monitor = CreateMonitor(seenConnectedThisSession: false);
+        var alerts = new List<SupervisorNotification>();
+        monitor.AlertRequested += alerts.Add;
+        SteamVrSnapshot missing = CreateSnapshot(connected: false);
+
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(60));
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromMinutes(5));
+
+        Assert.False(monitor.HasOfflineDevices);
+        Assert.Empty(alerts);
+    }
+
+    [Fact]
+    public void ProcessSnapshot_TrackerConnectedDuringGrace_IsMonitoredAfterDisconnect()
+    {
+        using var monitor = CreateMonitor(seenConnectedThisSession: false);
+        SteamVrSnapshot missing = CreateSnapshot(connected: false);
+
+        monitor.ProcessSnapshot(
+            CreateSnapshot(connected: true),
+            SessionStartUtc + TimeSpan.FromSeconds(10)
+        );
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(60));
+
+        Assert.Single(monitor.OfflineDevices);
+    }
+
+    [Theory]
+    [InlineData(SteamVrDeviceClass.Controller)]
+    [InlineData(SteamVrDeviceClass.TrackingReference)]
+    public void ProcessSnapshot_MandatoryDeviceNeverConnected_RaisesIncident(
+        SteamVrDeviceClass deviceClass)
+    {
+        using var monitor = new SteamVrDeviceMonitor(new UnusedSource());
+        SteamVrIntegrationConfig configuration = CreateConfiguration([]);
+        configuration.Devices[0].DeviceClass = deviceClass;
+        configuration.Devices[0].Role = deviceClass == SteamVrDeviceClass.Controller
+            ? SteamVrDeviceRole.LeftHand
+            : SteamVrDeviceRole.None;
+        monitor.ApplyConfiguration(configuration);
+
+        SteamVrSnapshot missing = CreateSnapshot(connected: false);
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(60));
+
+        Assert.Single(monitor.OfflineDevices);
+    }
+
     /// <summary>
     /// Confirms a newly offline device raises one inseparable alert containing configured XSOverlay content.
     /// </summary>
@@ -43,6 +96,68 @@ public sealed class SteamVrDeviceMonitorTests
         Assert.NotNull(alert);
         Assert.Equal([NotificationTarget.XsOverlay], alert.Targets);
         Assert.Equal(NotificationSeverity.Error, alert.Severity);
+        Assert.Contains("Waist tracker", alert.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ProcessSnapshot_ObservedTrackerAssignment_UsesRoleInAlert()
+    {
+        using var monitor = CreateMonitor([NotificationTarget.XsOverlay]);
+        SupervisorNotification? alert = null;
+        monitor.AlertRequested += notification => alert = notification;
+        var disconnected = new SteamVrSnapshot(
+            true,
+            SessionStartUtc,
+            [
+                new SteamVrDeviceSnapshot(
+                    "LHR-TEST",
+                    "Test tracker",
+                    SteamVrDeviceClass.GenericTracker,
+                    false,
+                    SteamVrDeviceRole.LeftKnee
+                )
+            ]
+        );
+
+        monitor.ProcessSnapshot(disconnected, SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(disconnected, SessionStartUtc + TimeSpan.FromSeconds(60));
+
+        Assert.NotNull(alert);
+        Assert.Contains("Left knee tracker", alert.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SteamVrDeviceRole.LeftKnee, Assert.Single(monitor.OfflineDevices).Role);
+    }
+
+    [Fact]
+    public void ProcessSnapshot_ConnectedUnassignedTracker_ClearsStaleRoleInAlert()
+    {
+        using var monitor = CreateMonitor([NotificationTarget.XsOverlay]);
+        SupervisorNotification? alert = null;
+        monitor.AlertRequested += notification => alert = notification;
+        var connectedUnassigned = new SteamVrSnapshot(
+            true,
+            SessionStartUtc,
+            [
+                new SteamVrDeviceSnapshot(
+                    "LHR-TEST",
+                    "Test tracker",
+                    SteamVrDeviceClass.GenericTracker,
+                    true,
+                    SteamVrDeviceRole.None
+                )
+            ]
+        );
+        SteamVrSnapshot missing = CreateSnapshot(connected: false);
+
+        monitor.ProcessSnapshot(
+            connectedUnassigned,
+            SessionStartUtc + TimeSpan.FromSeconds(10)
+        );
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(60));
+
+        Assert.NotNull(alert);
+        Assert.Contains("Unassigned tracker", alert.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SteamVrDeviceRole.None, Assert.Single(monitor.OfflineDevices).Role);
     }
 
     [Fact]
@@ -174,10 +289,20 @@ public sealed class SteamVrDeviceMonitorTests
     /// <param name="notificationTargets">The destinations assigned to SteamVR incidents.</param>
     /// <returns>A freshly configured monitor.</returns>
     private static SteamVrDeviceMonitor CreateMonitor(
-        IReadOnlyList<NotificationTarget>? notificationTargets = null)
+        IReadOnlyList<NotificationTarget>? notificationTargets = null,
+        bool seenConnectedThisSession = true)
     {
         var monitor = new SteamVrDeviceMonitor(new UnusedSource());
         monitor.ApplyConfiguration(CreateConfiguration(notificationTargets));
+
+        if (seenConnectedThisSession)
+        {
+            monitor.ProcessSnapshot(
+                CreateSnapshot(connected: true),
+                SessionStartUtc + TimeSpan.FromSeconds(1)
+            );
+        }
+
         return monitor;
     }
 
@@ -199,7 +324,8 @@ public sealed class SteamVrDeviceMonitorTests
                     SerialNumber = "LHR-TEST",
                     Name = "Waist tracker",
                     DeviceClass = SteamVrDeviceClass.GenericTracker,
-                    ModelNumber = "Test tracker"
+                    ModelNumber = "Test tracker",
+                    Role = SteamVrDeviceRole.Waist
                 }
             ],
             Notifications = new NotificationConfig
@@ -212,7 +338,16 @@ public sealed class SteamVrDeviceMonitorTests
     private static SteamVrSnapshot CreateSnapshot(bool connected)
     {
         IReadOnlyList<SteamVrDeviceSnapshot> devices = connected
-            ? [new SteamVrDeviceSnapshot("LHR-TEST", "Test tracker", SteamVrDeviceClass.GenericTracker, true)]
+            ?
+            [
+                new SteamVrDeviceSnapshot(
+                    "LHR-TEST",
+                    "Test tracker",
+                    SteamVrDeviceClass.GenericTracker,
+                    true,
+                    SteamVrDeviceRole.Waist
+                )
+            ]
             : [];
         return new SteamVrSnapshot(true, SessionStartUtc, devices);
     }

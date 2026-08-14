@@ -12,10 +12,14 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
     private const int NoServerForBackgroundApp = 121;
     private const string SystemInterfaceVersion = "FnTable:IVRSystem_026";
     private const int MaximumTrackedDeviceCount = 64;
+    private const int ControllerClass = 2;
     private const int GenericTrackerClass = 3;
     private const int TrackingReferenceClass = 4;
+    private const int TrackingSystemNameProperty = 1000;
     private const int ModelNumberProperty = 1001;
     private const int SerialNumberProperty = 1002;
+    private const string SettingsInterfaceVersion = "FnTable:IVRSettings_003";
+    private const string TrackersSettingsSection = "trackers";
 
     private readonly object _sync = new();
     private IntPtr _library;
@@ -27,8 +31,10 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
     private VrGetGenericInterfaceDelegate? _getInterface;
     private VrGetErrorDescriptionDelegate? _getErrorDescription;
     private GetTrackedDeviceClassDelegate? _getDeviceClass;
+    private GetControllerRoleForTrackedDeviceIndexDelegate? _getControllerRole;
     private IsTrackedDeviceConnectedDelegate? _isDeviceConnected;
     private GetStringTrackedDevicePropertyDelegate? _getStringProperty;
+    private GetSettingsStringDelegate? _getSettingsString;
     private bool _disposed;
 
     /// <summary>Captures supported device state without starting SteamVR when it is absent.</summary>
@@ -136,8 +142,15 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
             throw new OpenVrUnavailableException(DescribeError(error), error);
 
         _getDeviceClass = BindFunction<GetTrackedDeviceClassDelegate>(table, 20);
+        _getControllerRole = BindFunction<GetControllerRoleForTrackedDeviceIndexDelegate>(table, 19);
         _isDeviceConnected = BindFunction<IsTrackedDeviceConnectedDelegate>(table, 21);
         _getStringProperty = BindFunction<GetStringTrackedDevicePropertyDelegate>(table, 28);
+
+        error = 0;
+        IntPtr settingsTable = _getInterface!(SettingsInterfaceVersion, ref error);
+
+        if (settingsTable != IntPtr.Zero && error == 0)
+            _getSettingsString = BindFunction<GetSettingsStringDelegate>(settingsTable, 9);
     }
 
     private IReadOnlyList<SteamVrDeviceSnapshot> EnumerateDevices()
@@ -149,6 +162,7 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
             int nativeClass = _getDeviceClass!(index);
             SteamVrDeviceClass? deviceClass = nativeClass switch
             {
+                ControllerClass => SteamVrDeviceClass.Controller,
                 GenericTrackerClass => SteamVrDeviceClass.GenericTracker,
                 TrackingReferenceClass => SteamVrDeviceClass.TrackingReference,
                 _ => null
@@ -166,7 +180,8 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
                 serial,
                 ReadStringProperty(index, ModelNumberProperty),
                 deviceClass.Value,
-                _isDeviceConnected!(index) != 0
+                _isDeviceConnected!(index) != 0,
+                ReadDeviceRole(index, serial, deviceClass.Value)
             ));
         }
 
@@ -177,6 +192,71 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
             .ThenBy(device => device.SerialNumber, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    /// <summary>Reads the runtime-selected controller role or user-selected tracker role.</summary>
+    private SteamVrDeviceRole ReadDeviceRole(
+        uint deviceIndex,
+        string serial,
+        SteamVrDeviceClass deviceClass)
+    {
+        if (deviceClass == SteamVrDeviceClass.Controller)
+            return MapControllerRole(_getControllerRole?.Invoke(deviceIndex) ?? 0);
+
+        if (deviceClass != SteamVrDeviceClass.GenericTracker || _getSettingsString is null)
+            return SteamVrDeviceRole.None;
+
+        string trackingSystem = ReadStringProperty(deviceIndex, TrackingSystemNameProperty);
+
+        if (string.IsNullOrWhiteSpace(trackingSystem))
+            return SteamVrDeviceRole.None;
+
+        string settingsKey = BuildTrackerSettingsKey(trackingSystem, serial);
+        IntPtr buffer = Marshal.AllocHGlobal(256);
+
+        try
+        {
+            Marshal.WriteByte(buffer, 0);
+            int error = 0;
+            _getSettingsString(TrackersSettingsSection, settingsKey, buffer, 256, ref error);
+            string role = error == 0 ? Marshal.PtrToStringUTF8(buffer) ?? "" : "";
+            return MapTrackerRole(role);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    internal static string BuildTrackerSettingsKey(string trackingSystem, string serial)
+        => $"/devices/{trackingSystem}/{serial}";
+
+    internal static SteamVrDeviceRole MapControllerRole(int nativeRole) => nativeRole switch
+    {
+        1 => SteamVrDeviceRole.LeftHand,
+        2 => SteamVrDeviceRole.RightHand,
+        3 => SteamVrDeviceRole.OptOut,
+        4 => SteamVrDeviceRole.Treadmill,
+        5 => SteamVrDeviceRole.Stylus,
+        _ => SteamVrDeviceRole.None
+    };
+
+    internal static SteamVrDeviceRole MapTrackerRole(string role) => role switch
+    {
+        "TrackerRole_Handed" => SteamVrDeviceRole.Handed,
+        "TrackerRole_LeftFoot" => SteamVrDeviceRole.LeftFoot,
+        "TrackerRole_RightFoot" => SteamVrDeviceRole.RightFoot,
+        "TrackerRole_LeftShoulder" => SteamVrDeviceRole.LeftShoulder,
+        "TrackerRole_RightShoulder" => SteamVrDeviceRole.RightShoulder,
+        "TrackerRole_LeftElbow" => SteamVrDeviceRole.LeftElbow,
+        "TrackerRole_RightElbow" => SteamVrDeviceRole.RightElbow,
+        "TrackerRole_LeftKnee" => SteamVrDeviceRole.LeftKnee,
+        "TrackerRole_RightKnee" => SteamVrDeviceRole.RightKnee,
+        "TrackerRole_Waist" => SteamVrDeviceRole.Waist,
+        "TrackerRole_Chest" => SteamVrDeviceRole.Chest,
+        "TrackerRole_Camera" => SteamVrDeviceRole.Camera,
+        "TrackerRole_Keyboard" => SteamVrDeviceRole.Keyboard,
+        _ => SteamVrDeviceRole.None
+    };
 
     private string ReadStringProperty(uint deviceIndex, int property)
     {
@@ -246,8 +326,10 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
         _openVrInitialized = false;
         _connectedProcessId = 0;
         _getDeviceClass = null;
+        _getControllerRole = null;
         _isDeviceConnected = null;
         _getStringProperty = null;
+        _getSettingsString = null;
     }
 
     private static RunningVrServer? FindRunningVrServer()
@@ -295,12 +377,23 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
     private delegate int GetTrackedDeviceClassDelegate(uint deviceIndex);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate int GetControllerRoleForTrackedDeviceIndexDelegate(uint deviceIndex);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate byte IsTrackedDeviceConnectedDelegate(uint deviceIndex);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate uint GetStringTrackedDevicePropertyDelegate(
         uint deviceIndex,
         int property,
+        IntPtr value,
+        uint bufferSize,
+        ref int error);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Ansi)]
+    private delegate void GetSettingsStringDelegate(
+        string section,
+        string key,
         IntPtr value,
         uint bufferSize,
         ref int error);
