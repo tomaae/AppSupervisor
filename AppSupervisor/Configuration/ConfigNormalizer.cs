@@ -101,6 +101,47 @@ internal static class ConfigNormalizer
                     resource.EntityName = NormalizeText(resource.EntityName);
                 }
             }
+
+            if (profile.ObsResources is not null)
+            {
+                foreach (ObsResourceConfig? resource in profile.ObsResources)
+                {
+                    if (resource is null)
+                        continue;
+
+                    NormalizeResource(resource);
+                    resource.SceneName = NormalizeText(resource.SceneName);
+                    resource.InputName = NormalizeText(resource.InputName);
+                    resource.SourceName = NormalizeText(resource.SourceName);
+                }
+            }
+
+            if (profile.TwitchResources is not null)
+            {
+                foreach (TwitchResourceConfig? resource in profile.TwitchResources)
+                {
+                    if (resource is null)
+                        continue;
+                    NormalizeResource(resource);
+                    resource.Message = resource.Message?.Trim() ?? "";
+                }
+            }
+
+            if (profile.AudioInterfaces is not null)
+            {
+                foreach (AudioInterfaceResourceConfig? resource in profile.AudioInterfaces)
+                {
+                    if (resource is null)
+                        continue;
+
+                    NormalizeResource(resource);
+                    resource.EndpointId = NormalizeText(resource.EndpointId);
+                    resource.DeviceInstanceId = NormalizeText(resource.DeviceInstanceId);
+                    resource.ContainerId = NormalizeText(resource.ContainerId);
+                    resource.FriendlyName = NormalizeText(resource.FriendlyName);
+                    resource.InterfaceName = NormalizeText(resource.InterfaceName);
+                }
+            }
         }
     }
 

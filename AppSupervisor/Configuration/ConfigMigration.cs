@@ -75,5 +75,20 @@ internal static class ConfigMigration
             foreach (HomeAssistantResourceConfig? resource in profile.HomeAssistantResources)
                 if (resource is not null)
                     yield return resource;
+
+        if (profile.ObsResources is not null)
+            foreach (ObsResourceConfig? resource in profile.ObsResources)
+                if (resource is not null)
+                    yield return resource;
+
+        if (profile.TwitchResources is not null)
+            foreach (TwitchResourceConfig? resource in profile.TwitchResources)
+                if (resource is not null)
+                    yield return resource;
+
+        if (profile.AudioInterfaces is not null)
+            foreach (AudioInterfaceResourceConfig? resource in profile.AudioInterfaces)
+                if (resource is not null)
+                    yield return resource;
     }
 }

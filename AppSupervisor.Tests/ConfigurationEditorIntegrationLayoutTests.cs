@@ -72,7 +72,7 @@ public sealed class ConfigurationEditorIntegrationLayoutTests
                     );
                     NumericUpDown reminder = Assert.Single(
                         controls.OfType<NumericUpDown>(),
-                        numeric => numeric.Visible
+                        numeric => numeric.Visible && numeric.Maximum == 1_440
                     );
                     CheckBox popup = Assert.Single(
                         controls.OfType<CheckBox>(),

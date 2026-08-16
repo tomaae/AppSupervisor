@@ -179,7 +179,7 @@ public sealed class ConfigurationEditorDirtyStateTests
                     );
                     NumericUpDown startupWait = Assert.Single(
                         controls.OfType<NumericUpDown>(),
-                        numeric => numeric.Value == 100
+                        numeric => numeric.Value == 100 && numeric.Maximum > 100
                     );
                     NumericUpDown steamVrReminder = Assert.Single(
                         controls.OfType<NumericUpDown>(),

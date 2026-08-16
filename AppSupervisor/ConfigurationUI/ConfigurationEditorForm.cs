@@ -1,6 +1,8 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.Notifications;
 using AppSupervisor.HomeAssistant;
+using AppSupervisor.Obs;
+using AppSupervisor.WindowsAudio;
 
 using AppSupervisor.SteamVr;
 using AppSupervisor.ServiceControl;
@@ -18,6 +20,7 @@ public sealed partial class ConfigurationEditorForm : Form
     private readonly List<SupervisorProfileConfig> _profiles;
 
     private readonly Func<CancellationToken, Task<IReadOnlyList<InstalledServiceInfo>>> _serviceCatalogLoader;
+    private readonly Func<CancellationToken, Task<IReadOnlyList<AudioEndpointSnapshot>>> _audioEndpointLoader;
 
     private IReadOnlyList<InstalledServiceInfo> _installedServices = [];
 
@@ -150,7 +153,11 @@ public sealed partial class ConfigurationEditorForm : Form
         Action<SupervisorNotification>? notificationPublisher,
         Func<CancellationToken, Task<SteamVrSnapshot>>? steamVrDeviceLoader = null,
         Func<HomeAssistantIntegrationConfig, CancellationToken, Task<HomeAssistantCatalog>>?
-            homeAssistantCatalogLoader = null)
+            homeAssistantCatalogLoader = null,
+        Func<ObsIntegrationConfig, CancellationToken, Task<ObsCatalog>>?
+            obsCatalogLoader = null,
+        Func<CancellationToken, Task<IReadOnlyList<AudioEndpointSnapshot>>>?
+            audioEndpointLoader = null)
 
     {
 
@@ -161,6 +168,12 @@ public sealed partial class ConfigurationEditorForm : Form
         _steamVrDeviceLoader = steamVrDeviceLoader ?? LoadSteamVrDevicesAsync;
         _homeAssistantCatalogLoader = homeAssistantCatalogLoader ??
             HomeAssistantClient.LoadCatalogAsync;
+        _obsCatalogLoader = obsCatalogLoader ?? ObsWebSocketClient.LoadCatalogAsync;
+        _audioEndpointLoader = audioEndpointLoader ?? (cancellationToken => Task.Run(
+            () => (IReadOnlyList<AudioEndpointSnapshot>)new WindowsAudioController()
+                .GetActiveEndpoints(),
+            cancellationToken
+        ));
         (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
         _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
@@ -706,7 +719,10 @@ public sealed partial class ConfigurationEditorForm : Form
             Applications = [],
             Services = [],
             Delays = [],
-            HomeAssistantResources = []
+            HomeAssistantResources = [],
+            ObsResources = [],
+            TwitchResources = [],
+            AudioInterfaces = []
         };
         _profiles.Add(profile);
         BindProfileSelector(profile);
@@ -1341,6 +1357,18 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <summary>Gets the currently selected Home Assistant action.</summary>
     private HomeAssistantResourceConfig? SelectedHomeAssistant =>
         SelectedResource as HomeAssistantResourceConfig;
+
+    /// <summary>Gets the currently selected OBS action.</summary>
+    private ObsResourceConfig? SelectedObs =>
+        SelectedResource as ObsResourceConfig;
+
+    /// <summary>Gets the currently selected Twitch action.</summary>
+    private TwitchResourceConfig? SelectedTwitch =>
+        SelectedResource as TwitchResourceConfig;
+
+    /// <summary>Gets the currently selected Windows audio endpoint action.</summary>
+    private AudioInterfaceResourceConfig? SelectedAudioInterface =>
+        SelectedResource as AudioInterfaceResourceConfig;
 
     /// <summary>Gets the currently selected health check.</summary>
     private HealthCheckConfig? SelectedHealthCheck =>

@@ -18,6 +18,7 @@ public static partial class ConfigValidator
         var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var activeServiceNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var activeHomeAssistantEntities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string? activeTwitchProfile = null;
 
         for (int profileIndex = 0; profileIndex < profiles.Count; profileIndex++)
         {
@@ -78,6 +79,9 @@ public static partial class ConfigValidator
                 activeHomeAssistantEntities,
                 profile.Enabled
             );
+            ValidateObsResources(profile, profileLabel, errors);
+            ValidateTwitchResources(profile, profileLabel, errors, ref activeTwitchProfile);
+            ValidateAudioInterfaces(profile, profileLabel, errors);
 
             ValidateResourceStartup(profile, profileLabel, errors);
         }

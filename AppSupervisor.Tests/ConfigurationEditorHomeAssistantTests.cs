@@ -90,7 +90,9 @@ public sealed class ConfigurationEditorHomeAssistantTests
                     Assert.NotNull(add);
                     Label actionLabel = Assert.Single(
                         controls.OfType<Label>(),
-                        label => label.Text == "Action"
+                        label => label.Text == "Action" &&
+                            label.Parent!.Controls.OfType<ComboBox>().Any(combo =>
+                                combo.Items.Cast<object>().OfType<HomeAssistantEntityInfo>().Any())
                     );
                     Assert.Single(
                         actionLabel.Parent!.Controls.OfType<Button>(),

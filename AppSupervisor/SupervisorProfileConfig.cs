@@ -29,4 +29,13 @@ public class SupervisorProfileConfig
 
     /// <summary>Gets or sets Home Assistant actions supervised by this profile.</summary>
     public List<HomeAssistantResourceConfig> HomeAssistantResources { get; set; } = [];
+
+    /// <summary>Gets or sets one-way OBS actions issued when this profile activates.</summary>
+    public List<ObsResourceConfig> ObsResources { get; set; } = [];
+
+    /// <summary>Gets or sets Twitch broadcaster actions supervised by this profile.</summary>
+    public List<TwitchResourceConfig> TwitchResources { get; set; } = [];
+
+    /// <summary>Gets or sets Windows audio endpoint volume and mute actions.</summary>
+    public List<AudioInterfaceResourceConfig> AudioInterfaces { get; set; } = [];
 }

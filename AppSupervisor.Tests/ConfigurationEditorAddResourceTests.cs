@@ -1,8 +1,10 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.HomeAssistant;
+using AppSupervisor.Obs;
 using AppSupervisor.ServiceControl;
 using AppSupervisor.SteamVr;
+using AppSupervisor.WindowsAudio;
 using System.Windows.Forms;
 
 namespace AppSupervisor.Tests;
@@ -62,6 +64,43 @@ public sealed class ConfigurationEditorAddResourceTests
                                 [new HomeAssistantServiceInfo("switch.turn_on", ["switch"])],
                                 [new HomeAssistantEntityInfo("switch.test", "Test switch", "off")]
                             )
+                        ),
+                        obsCatalogLoader: (_, _) => Task.FromResult(
+                            new ObsCatalog(
+                                "5.6.0",
+                                ["Main"],
+                                ["Microphone"],
+                                [new ObsSceneSource("Main", "Camera")]
+                            )
+                        ),
+                        audioEndpointLoader: _ => Task.FromResult<IReadOnlyList<AudioEndpointSnapshot>>(
+                            [
+                            new AudioEndpointSnapshot(
+                                "default-output-id",
+                                "default-output-instance",
+                                "3d8cb175-1c34-49ea-bf40-c831feb05221",
+                                "Test speakers",
+                                "Test audio",
+                                AudioInterfaceDirection.Output,
+                                FollowsDefault: true
+                            ),
+                            new AudioEndpointSnapshot(
+                                "default-input-id",
+                                "default-input-instance",
+                                "349818ac-c51e-42f1-a81a-16baea0c1a4e",
+                                "Test microphone",
+                                "Test audio",
+                                AudioInterfaceDirection.Input,
+                                FollowsDefault: true
+                            ),
+                            new AudioEndpointSnapshot(
+                                "test-endpoint",
+                                "test-instance",
+                                "54056bb1-4eb4-473b-8640-5f03e83f6871",
+                                "Other speakers",
+                                "Test audio",
+                                AudioInterfaceDirection.Output
+                            )]
                         )
                     );
                     form.ShowInTaskbar = false;
@@ -85,11 +124,13 @@ public sealed class ConfigurationEditorAddResourceTests
                     InvokeMenuItem(menu, "Add service");
                     InvokeMenuItem(menu, "Add delay");
                     InvokeMenuItem(menu, "Add Home Assistant");
+                    InvokeMenuItem(menu, "Add OBS action");
+                    InvokeMenuItem(menu, "Add Windows audio interface");
                     Application.DoEvents();
 
                     ListBox resources = Assert.Single(
                         EnumerateControls(form).OfType<ListBox>(),
-                        list => list.Items.Count == 4 &&
+                        list => list.Items.Count == 6 &&
                             list.Items.Cast<object>().All(item => item is ManagedResourceConfig)
                     );
                     Assert.Collection(
@@ -97,7 +138,18 @@ public sealed class ConfigurationEditorAddResourceTests
                         resource => Assert.IsType<ManagedApplicationConfig>(resource),
                         resource => Assert.IsType<ManagedServiceConfig>(resource),
                         resource => Assert.IsType<DelayResourceConfig>(resource),
-                        resource => Assert.IsType<HomeAssistantResourceConfig>(resource)
+                        resource => Assert.IsType<HomeAssistantResourceConfig>(resource),
+                        resource => Assert.IsType<ObsResourceConfig>(resource),
+                        resource => Assert.IsType<AudioInterfaceResourceConfig>(resource)
+                    );
+                    AudioInterfaceResourceConfig audio = Assert.IsType<AudioInterfaceResourceConfig>(
+                        resources.Items[5]
+                    );
+                    Assert.True(audio.UseDefaultDevice);
+                    Assert.Equal(AudioInterfaceDirection.Output, audio.Direction);
+                    Assert.Single(
+                        EnumerateControls(form).OfType<Button>(),
+                        button => button.Visible && button.Text == "Test for 5 seconds"
                     );
                 }
                 catch (Exception exception)

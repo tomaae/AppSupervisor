@@ -54,6 +54,12 @@ public static class ConfigLoader
             integrations.HomeAssistant.Token = integrations.HomeAssistant.Token?.Trim() ?? "";
         }
 
+        if (integrations.Obs is not null)
+        {
+            integrations.Obs.Host = integrations.Obs.Host?.Trim() ?? "";
+            integrations.Obs.Password ??= "";
+        }
+
         if (integrations.SteamVr?.Devices is null)
             return;
 

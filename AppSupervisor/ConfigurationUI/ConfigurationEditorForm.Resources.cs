@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using AppSupervisor.Resources;
 using System.Drawing.Drawing2D;
 
 namespace AppSupervisor.ConfigurationUI;
@@ -127,6 +128,9 @@ public sealed partial class ConfigurationEditorForm
         _resourceTypeEditorPanel.Controls.Add(BuildServiceEditor());
         _resourceTypeEditorPanel.Controls.Add(BuildDelayEditor());
         _resourceTypeEditorPanel.Controls.Add(BuildHomeAssistantEditor());
+        _resourceTypeEditorPanel.Controls.Add(BuildObsEditor());
+        _resourceTypeEditorPanel.Controls.Add(BuildTwitchEditor());
+        _resourceTypeEditorPanel.Controls.Add(BuildAudioInterfaceEditor());
         scrollableSection.Controls.Add(_resourceTypeEditorPanel);
         _resourceEditorPanel.Controls.Add(scrollableSection);
         _resourceEditorPanel.Controls.Add(startupPanel);
@@ -197,6 +201,9 @@ public sealed partial class ConfigurationEditorForm
             .Concat(profile.Services)
             .Concat(profile.Delays)
             .Concat(profile.HomeAssistantResources)
+            .Concat(profile.ObsResources)
+            .Concat(profile.TwitchResources)
+            .Concat(profile.AudioInterfaces)
             .Select((resource, stableOrder) => (resource, stableOrder))
             .OrderBy(item => item.resource.StartupOrder < 0
                 ? int.MaxValue
@@ -222,6 +229,9 @@ public sealed partial class ConfigurationEditorForm
                 ManagedServiceConfig => "Windows service",
                 DelayResourceConfig => "Delay",
                 HomeAssistantResourceConfig => "Home Assistant",
+                ObsResourceConfig => "OBS action",
+                TwitchResourceConfig => "Twitch action",
+                AudioInterfaceResourceConfig => "Windows audio interface",
                 _ => ""
             };
             BindResourceDependency(resource);
@@ -229,6 +239,9 @@ public sealed partial class ConfigurationEditorForm
             _serviceEditorPanel.Visible = resource is ManagedServiceConfig;
             _delayEditorPanel.Visible = resource is DelayResourceConfig;
             _homeAssistantEditorPanel.Visible = resource is HomeAssistantResourceConfig;
+            _obsEditorPanel.Visible = resource is ObsResourceConfig;
+            _twitchEditorPanel.Visible = resource is TwitchResourceConfig;
+            _audioInterfaceEditorPanel.Visible = resource is AudioInterfaceResourceConfig;
 
             if (_applicationEditorPanel.Visible)
                 _applicationEditorPanel.BringToFront();
@@ -238,6 +251,12 @@ public sealed partial class ConfigurationEditorForm
                 _delayEditorPanel.BringToFront();
             else if (_homeAssistantEditorPanel.Visible)
                 _homeAssistantEditorPanel.BringToFront();
+            else if (_obsEditorPanel.Visible)
+                _obsEditorPanel.BringToFront();
+            else if (_twitchEditorPanel.Visible)
+                _twitchEditorPanel.BringToFront();
+            else if (_audioInterfaceEditorPanel.Visible)
+                _audioInterfaceEditorPanel.BringToFront();
         }
         finally
         {
@@ -248,6 +267,9 @@ public sealed partial class ConfigurationEditorForm
         LoadSelectedService();
         LoadSelectedDelay();
         _ = LoadSelectedHomeAssistantAsync();
+        _ = LoadSelectedObsAsync();
+        LoadSelectedTwitch();
+        _ = LoadSelectedAudioInterfaceAsync();
         UpdateResourceMoveButtons();
     }
 
@@ -385,6 +407,12 @@ public sealed partial class ConfigurationEditorForm
                 DrawDelayIcon(graphics, pen, bounds);
             else if (resource is HomeAssistantResourceConfig)
                 DrawHomeIcon(graphics, pen, bounds);
+            else if (resource is ObsResourceConfig)
+                DrawObsIcon(graphics, pen, bounds);
+            else if (resource is TwitchResourceConfig)
+                DrawApplicationIcon(graphics, pen, bounds);
+            else if (resource is AudioInterfaceResourceConfig)
+                DrawAudioIcon(graphics, pen, bounds);
             else
                 DrawApplicationIcon(graphics, pen, bounds);
         }
@@ -514,6 +542,20 @@ public sealed partial class ConfigurationEditorForm
         graphics.DrawLine(pen, left, roofY, left, bottom);
         graphics.DrawLine(pen, right, roofY, right, bottom);
         graphics.DrawLine(pen, left, bottom, right, bottom);
+    }
+
+    /// <summary>Draws a compact video-frame pictogram for OBS actions.</summary>
+    private static void DrawObsIcon(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        var frame = RectangleF.Inflate(bounds, -bounds.Width * 0.10f, -bounds.Height * 0.20f);
+        graphics.DrawRectangle(pen, frame.X, frame.Y, frame.Width, frame.Height);
+        graphics.DrawLine(
+            pen,
+            frame.Left + frame.Width * 0.38f,
+            frame.Top,
+            frame.Left + frame.Width * 0.38f,
+            frame.Bottom
+        );
     }
 
 
@@ -658,6 +700,10 @@ public sealed partial class ConfigurationEditorForm
                     homeAssistant.EntityName,
                     DisplayName(homeAssistant.EntityId, "New action")
                 )}",
+            ObsResourceConfig obs => $"[OBS] {ObsResource.GetDisplayName(obs)}",
+            TwitchResourceConfig twitch => $"[Twitch] {TwitchResource.GetDisplayName(twitch)}",
+            AudioInterfaceResourceConfig audio =>
+                $"[Audio] {AudioInterfaceResource.GetDisplayName(audio)}",
             _ => "[Resource]"
         };
         return name + (resource.Enabled ? "" : " (disabled)");
@@ -676,6 +722,12 @@ public sealed partial class ConfigurationEditorForm
             RemoveDelayClicked(sender, e);
         else if (SelectedResource is HomeAssistantResourceConfig)
             RemoveHomeAssistantClicked(sender, e);
+        else if (SelectedResource is ObsResourceConfig)
+            RemoveObsClicked(sender, e);
+        else if (SelectedResource is TwitchResourceConfig)
+            RemoveTwitchClicked(sender, e);
+        else if (SelectedResource is AudioInterfaceResourceConfig)
+            RemoveAudioInterfaceClicked(sender, e);
     }
 
     /// <summary>Moves the selected resource one position earlier.</summary>
@@ -750,7 +802,10 @@ public sealed partial class ConfigurationEditorForm
             .Cast<ManagedResourceConfig>()
             .Concat(profile.Services)
             .Concat(profile.Delays)
-            .Concat(profile.HomeAssistantResources))
+            .Concat(profile.HomeAssistantResources)
+            .Concat(profile.ObsResources)
+            .Concat(profile.TwitchResources)
+            .Concat(profile.AudioInterfaces))
         {
             if (string.Equals(
                 resource.DependencyResourceId,
@@ -783,6 +838,9 @@ public sealed partial class ConfigurationEditorForm
         _addResourceMenu.Items.Add("Add service", null, AddServiceClicked);
         _addResourceMenu.Items.Add("Add delay", null, AddDelayClicked);
         _addResourceMenu.Items.Add("Add Home Assistant", null, AddHomeAssistantClicked);
+        _addResourceMenu.Items.Add("Add OBS action", null, AddObsClicked);
+        _addResourceMenu.Items.Add("Add Twitch action", null, AddTwitchClicked);
+        _addResourceMenu.Items.Add("Add Windows audio interface", null, AddAudioInterfaceClicked);
     }
 
     /// <summary>Shows the persistent resource-type menu requested by the Add command.</summary>

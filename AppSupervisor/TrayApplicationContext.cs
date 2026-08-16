@@ -2,6 +2,7 @@ using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
+using AppSupervisor.Twitch;
 using Microsoft.Win32;
 
 namespace AppSupervisor;
@@ -26,6 +27,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly System.Threading.Timer _monitorTimer;
     private readonly System.Threading.Timer _lifecycleTimer;
     private readonly System.Threading.Timer _ensureClosedTimer;
+    private readonly System.Threading.Timer _twitchAuthorizationTimer;
     private readonly ToolStripMenuItem _pauseResumeItem;
     private readonly NotificationService _notificationService;
     private readonly SemaphoreSlim _supervisionGate = new(1, 1);
@@ -33,6 +35,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private int _monitorWorkPending;
     private int _lifecycleWorkPending;
     private int _cleanupWorkPending;
+    private int _twitchValidationPending;
     private int _pauseVisualPending;
     private bool _monitorPreferSharedSnapshot;
     private bool _lifecyclePreferSharedSnapshot;
@@ -128,6 +131,12 @@ public partial class TrayApplicationContext : ApplicationContext
         );
         _ensureClosedTimer = new System.Threading.Timer(
             EnsureClosedTimerTick,
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan
+        );
+        _twitchAuthorizationTimer = new System.Threading.Timer(
+            TwitchAuthorizationTimerTick,
             null,
             Timeout.InfiniteTimeSpan,
             Timeout.InfiniteTimeSpan
@@ -252,6 +261,49 @@ public partial class TrayApplicationContext : ApplicationContext
         }
 
         _ensureClosedTimer.Change(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+    }
+
+    /// <summary>Validates a stored Twitch OAuth session at startup and hourly as Twitch requires.</summary>
+    private void ResetTwitchAuthorizationTimer()
+    {
+        if (_exiting)
+        {
+            _twitchAuthorizationTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            return;
+        }
+
+        _twitchAuthorizationTimer.Change(TimeSpan.Zero, TimeSpan.FromHours(1));
+    }
+
+    private void TwitchAuthorizationTimerTick(object? state)
+    {
+        if (_exiting || Interlocked.Exchange(ref _twitchValidationPending, 1) != 0)
+            return;
+        _ = ValidateTwitchAuthorizationAsync();
+    }
+
+    private async Task ValidateTwitchAuthorizationAsync()
+    {
+        try
+        {
+            if (_exiting)
+                return;
+            using var authorization = new TwitchAuthorizationService(
+                new TwitchIntegrationConfig()
+            );
+            await authorization.GetStatusAsync(_supervisionCancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_exiting)
+        {
+        }
+        catch (Exception ex)
+        {
+            SupervisorLog.WriteError("The stored Twitch authorization could not be validated.", ex);
+        }
+        finally
+        {
+            Volatile.Write(ref _twitchValidationPending, 0);
+        }
     }
 
     /// <summary>Coalesces the demand-driven lifecycle timer into the serialized worker.</summary>
@@ -507,6 +559,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         ResetEnsureClosedTimer();
         ResetLifecycleTimer();
+        ResetTwitchAuthorizationTimer();
     }
 
     /// <summary>
@@ -599,7 +652,9 @@ public partial class TrayApplicationContext : ApplicationContext
                                     "The profile close guard was evaluated before profile construction completed."
                                 )
                             ),
-                        newConfig.Integrations.HomeAssistant
+                        newConfig.Integrations.HomeAssistant,
+                        newConfig.Integrations.Obs,
+                        newConfig.Integrations.Twitch
                     );
                     profile.ResourceRestarted += OnResourceRestarted;
                     profile.ErrorOccurred += OnSupervisionError;
@@ -1135,6 +1190,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _monitorTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         _lifecycleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         _ensureClosedTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _twitchAuthorizationTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
         await ExecuteSupervisionAsync(() =>
         {
@@ -1153,6 +1209,7 @@ public partial class TrayApplicationContext : ApplicationContext
         await Task.Run(_notificationService.Dispose);
 
         _ensureClosedTimer.Dispose();
+        _twitchAuthorizationTimer.Dispose();
         _lifecycleTimer.Dispose();
         _monitorTimer.Dispose();
 

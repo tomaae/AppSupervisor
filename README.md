@@ -14,13 +14,14 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 
 ## Functionality summary
 
-- Activates profiles when their monitored process starts, then processes applications, services, delays, and Home Assistant actions in the configured order.
+- Activates profiles when their monitored process starts, then processes applications, services, delays, Windows audio interfaces, Home Assistant, OBS, and Twitch actions in the configured order.
 - Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
 - Runs ordered per-application Startup macros after confirmed launches, including delays, hotkeys, and window placement actions.
 - Provides per-application listener and VRChat OSCQuery health checks, including optional recovery after a confirmed failure.
 - Monitors expected SteamVR controllers, trackers, and base stations without starting or controlling SteamVR.
+- Runs Twitch broadcaster chat messages, ads, and reversible chat-mode changes when a profile activates.
 - Sends per-resource alerts through popup dialogs, Windows notifications, or XSOverlay.
 - Includes a graphical configuration editor with application, Steam, Store, service, and running-process pickers.
 - Validates configuration before applying it and keeps the last valid configuration active if a reload fails.
@@ -38,6 +39,9 @@ Resources can include:
 - Windows services.
 - Nonblocking delays between startup entries.
 - Home Assistant actions.
+- OBS actions.
+- Twitch broadcaster actions.
+- Windows audio interface actions.
 
 A resource may depend on one earlier application or service being ready. Profiles operate independently, so a delay or slow resource in one profile does not hold up another. Pausing or exiting AppSupervisor leaves external applications and services untouched.
 
@@ -95,6 +99,18 @@ Profiles can run `turn_on`, `turn_off`, and `button.press` actions against compa
 
 Home Assistant uses a shared URL and long-lived access token. The token is stored in the local configuration files, so those files must be treated as credentials.
 
+### OBS WebSocket
+
+Profiles can switch the OBS program scene, mute or unmute an OBS input, and show or hide a source in a scene. OBS actions are ordinary ordered resources, so a profile may monitor `obs64.exe` and run them after OBS starts. Each action runs once during profile activation; closing the monitored app never restores or toggles the resulting OBS state.
+
+OBS uses the standard WebSocket 5.x protocol over `ws` with a shared host, port, and optional password. The password is stored in the local configuration files, so those files must be treated as credentials.
+
+### Windows audio interfaces
+
+Profiles can set the master volume and mute state of an active Windows playback or recording interface. The interface picker includes **Default output** and **Default input** choices that follow the current Windows multimedia defaults. Before applying the requested state, AppSupervisor captures the current volume and mute values. By default it restores both values when the monitored app closes; clear **Restore original volume and mute when monitored app closes** when the requested state should remain in place. **Test for 5 seconds** temporarily applies the configured state and always attempts to restore the original values.
+
+Windows can replace an audio endpoint ID after a driver update, reconnect, or device re-enumeration. AppSupervisor therefore stores the endpoint's device-instance ID, physical container ID, direction, and friendly names as recovery signals. It prefers exact and stable identity matches, and accepts a name-only fallback only when exactly one active interface matches; ambiguous matches require selecting the interface again in the editor.
+
 ### SteamVR device monitoring
 
 AppSupervisor can monitor configured controllers, trackers, and Lighthouse/base-station devices while SteamVR is already running. Discovery records controller handedness and SteamVR tracker assignments such as left foot, left knee, or waist, so offline and recovery notifications identify the missing role. It does not start or restart SteamVR and does not control devices.
@@ -103,9 +119,15 @@ After repeated connection failures, it sends the selected notifications and show
 
 Generic/FBT trackers are monitored only after SteamVR reports them connected at least once in the current SteamVR session. A tracker intentionally left powered off for the whole session therefore does not produce an offline alert. Hand controllers and tracking references such as base stations remain mandatory from session startup.
 
+### Twitch
+
+Profiles can send a chat message, run a 30–180 second advertisement, or temporarily change emote-only, followers-only, slow, and subscribers-only chat modes. Messages and ads run once when the profile activates. Chat modes capture their previous Twitch values and restore those exact values after the monitored process closes.
+
+Twitch uses one global broadcaster connection and allows Twitch resources in only one enabled profile at a time. Authorization uses Twitch's public-client device flow: the broadcaster approves access in a browser once, access tokens refresh automatically, and rotating credentials are stored in Windows Credential Manager for the current user. AppSupervisor includes its public Twitch application identity; users do not configure a Client ID or client secret.
+
 ### Notifications
 
-Applications, services, health checks, Home Assistant actions, and SteamVR devices can report through:
+Applications, services, health checks, Windows audio interfaces, Home Assistant actions, and SteamVR devices can report through:
 
 - Popup dialogs.
 - Windows notifications.
@@ -117,7 +139,7 @@ If XSOverlay is unavailable, its notifications fall back to Windows notification
 
 Open the editor from **Configure...** in the tray menu or by double-clicking the tray icon. It supports adding, duplicating, removing, enabling, reordering, and configuring profiles and resources.
 
-The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, and SteamVR devices. Integrations such as Home Assistant and SteamVR monitoring are configured globally rather than inside a profile.
+The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, and SteamVR devices. Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
 
 **Validate** checks the complete configuration without saving. **Save & Apply** validates and writes it, then replaces the running configuration. If the new configuration cannot be applied, the previous valid configuration remains active.
 
@@ -129,7 +151,7 @@ AppSupervisor requires administrator privileges to manage configured services co
 
 Configuration is stored in `config.json` beside `AppSupervisor.exe`. If the file is missing, AppSupervisor creates an empty valid configuration. The last verified configuration is also saved as `config.json.old` during normal shutdown.
 
-Both files are excluded from Git and omitted from release packages. Do not share or commit them if they contain a Home Assistant access token.
+Both files are excluded from Git and omitted from release packages. Do not share or commit them if they contain a Home Assistant access token or OBS WebSocket password. Twitch OAuth credentials are not written to these files; Windows Credential Manager stores them separately for the current Windows user.
 
 ## Running a packaged build
 

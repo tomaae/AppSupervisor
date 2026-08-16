@@ -18,7 +18,13 @@ public static class SupervisorProfileFactory
     /// <param name="config">The validated configuration entry to translate.</param>
     /// <returns>A fresh supervisor profile containing configured applications and Windows services.</returns>
     public static SupervisorProfile Create(SupervisorProfileConfig config)
-        => Create(config, _ => null, new HomeAssistantIntegrationConfig());
+        => Create(
+            config,
+            _ => null,
+            new HomeAssistantIntegrationConfig(),
+            new ObsIntegrationConfig(),
+            new TwitchIntegrationConfig()
+        );
 
     /// <summary>
     /// Builds a profile whose applications consult global shared-helper ownership before closing.
@@ -29,7 +35,9 @@ public static class SupervisorProfileFactory
     internal static SupervisorProfile Create(
         SupervisorProfileConfig config,
         Func<ManagedApplicationConfig, Func<bool>?> closeGuardFactory,
-        HomeAssistantIntegrationConfig homeAssistantIntegration)
+        HomeAssistantIntegrationConfig homeAssistantIntegration,
+        ObsIntegrationConfig obsIntegration,
+        TwitchIntegrationConfig twitchIntegration)
     {
         var trigger = new ProcessTrigger(config.MonitorProcess);
 
@@ -96,6 +104,36 @@ public static class SupervisorProfileFactory
             configuredResources.Add((
                 homeAssistantConfig,
                 new HomeAssistantResource(homeAssistantConfig, homeAssistantIntegration),
+                stableOrder++
+            ));
+        }
+
+        foreach (ObsResourceConfig obsConfig in
+            config.ObsResources.Where(resource => resource.Enabled))
+        {
+            configuredResources.Add((
+                obsConfig,
+                new ObsResource(obsConfig, obsIntegration),
+                stableOrder++
+            ));
+        }
+
+        foreach (TwitchResourceConfig twitchConfig in
+            config.TwitchResources.Where(resource => resource.Enabled))
+        {
+            configuredResources.Add((
+                twitchConfig,
+                new TwitchResource(twitchConfig, twitchIntegration),
+                stableOrder++
+            ));
+        }
+
+        foreach (AudioInterfaceResourceConfig audioConfig in
+            config.AudioInterfaces.Where(resource => resource.Enabled))
+        {
+            configuredResources.Add((
+                audioConfig,
+                new AudioInterfaceResource(audioConfig),
                 stableOrder++
             ));
         }

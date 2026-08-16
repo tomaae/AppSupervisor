@@ -126,7 +126,7 @@ public sealed class StartupSequencingTests
         Assert.True(profile.StartupPending);
 
         resource.Started = true;
-        profile.AdvanceStartup(DateTime.UtcNow);
+        profile.AdvanceStartup(SupervisorTime.UtcNow);
 
         Assert.False(profile.StartupPending);
     }

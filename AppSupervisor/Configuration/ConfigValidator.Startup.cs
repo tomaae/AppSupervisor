@@ -15,7 +15,9 @@ public static partial class ConfigValidator
         ICollection<string> errors)
     {
         if (profile.Applications is null || profile.Services is null ||
-            profile.Delays is null || profile.HomeAssistantResources is null)
+            profile.Delays is null || profile.HomeAssistantResources is null ||
+            profile.ObsResources is null || profile.TwitchResources is null ||
+            profile.AudioInterfaces is null)
             return;
 
         List<(ManagedResourceConfig Config, string Label)> resources = [];
@@ -44,6 +46,27 @@ public static partial class ConfigValidator
             .Select((resource, index) => (
                 (ManagedResourceConfig?)resource,
                 $"{profileLabel}, Home Assistant entry {index + 1}"
+            ))
+            .Where(item => item.Item1 is not null)
+            .Select(item => (item.Item1!, item.Item2)));
+        resources.AddRange(profile.ObsResources
+            .Select((resource, index) => (
+                (ManagedResourceConfig?)resource,
+                $"{profileLabel}, OBS entry {index + 1}"
+            ))
+            .Where(item => item.Item1 is not null)
+            .Select(item => (item.Item1!, item.Item2)));
+        resources.AddRange(profile.TwitchResources
+            .Select((resource, index) => (
+                (ManagedResourceConfig?)resource,
+                $"{profileLabel}, Twitch entry {index + 1}"
+            ))
+            .Where(item => item.Item1 is not null)
+            .Select(item => (item.Item1!, item.Item2)));
+        resources.AddRange(profile.AudioInterfaces
+            .Select((resource, index) => (
+                (ManagedResourceConfig?)resource,
+                $"{profileLabel}, audio interface entry {index + 1}"
             ))
             .Where(item => item.Item1 is not null)
             .Select(item => (item.Item1!, item.Item2)));

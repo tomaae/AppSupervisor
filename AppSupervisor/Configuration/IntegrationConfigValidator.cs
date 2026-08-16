@@ -12,6 +12,8 @@ public static class IntegrationConfigValidator
     {
         var errors = new List<string>();
         ValidateHomeAssistant(integrations.HomeAssistant, profiles, errors);
+        ValidateTwitch(integrations.Twitch, errors);
+        ValidateObs(integrations.Obs, profiles, errors);
         SteamVrIntegrationConfig? steamVr = integrations.SteamVr;
 
         if (steamVr is null)
@@ -65,6 +67,32 @@ public static class IntegrationConfigValidator
             throw new ConfigValidationException(errors);
     }
 
+    private static void ValidateObs(
+        ObsIntegrationConfig? obs,
+        IReadOnlyList<SupervisorProfileConfig?>? profiles,
+        ICollection<string> errors)
+    {
+        if (obs is null)
+        {
+            errors.Add("The integrations object must contain an obs object.");
+            return;
+        }
+
+        bool required = profiles?.Any(profile => profile?.Enabled == true &&
+            profile.ObsResources?.Any(resource => resource?.Enabled == true) == true) == true;
+        bool configured = !string.IsNullOrWhiteSpace(obs.Host) || !string.IsNullOrEmpty(obs.Password) ||
+            obs.Port != 4455;
+
+        if (!required && !configured)
+            return;
+
+        if (string.IsNullOrWhiteSpace(obs.Host))
+            errors.Add("OBS WebSocket host must be provided when the integration is configured or used.");
+
+        if (obs.Port is < 1 or > 65_535)
+            errors.Add("OBS WebSocket port must be between 1 and 65535.");
+    }
+
     private static void ValidateHomeAssistant(
         HomeAssistantIntegrationConfig? homeAssistant,
         IReadOnlyList<SupervisorProfileConfig?>? profiles,
@@ -94,6 +122,17 @@ public static class IntegrationConfigValidator
 
         if (!hasToken)
             errors.Add("Home Assistant token must be provided when the integration is configured or used.");
+    }
+
+    private static void ValidateTwitch(
+        TwitchIntegrationConfig? twitch,
+        ICollection<string> errors)
+    {
+        if (twitch is null)
+        {
+            errors.Add("The integrations object must contain a twitch object.");
+            return;
+        }
     }
 
     private static void ValidateNotifications(

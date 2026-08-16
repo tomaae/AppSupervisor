@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using AppSupervisor.HomeAssistant;
+using AppSupervisor.Obs;
 using AppSupervisor.SteamVr;
+using AppSupervisor.Twitch;
 
 namespace AppSupervisor.ConfigurationUI;
 
@@ -20,6 +22,34 @@ public sealed partial class ConfigurationEditorForm
     private Button _testHomeAssistantButton = null!;
     private HomeAssistantCatalog? _homeAssistantCatalog;
     private string _homeAssistantCatalogConnectionKey = "";
+    private readonly Func<
+        ObsIntegrationConfig,
+        CancellationToken,
+        Task<ObsCatalog>> _obsCatalogLoader;
+    private readonly TextBox _obsHost = new() { Dock = DockStyle.Fill };
+    private readonly NumericUpDown _obsPort = new()
+    {
+        Minimum = 1,
+        Maximum = 65_535,
+        Width = 110
+    };
+    private readonly TextBox _obsPassword = new()
+    {
+        Dock = DockStyle.Fill,
+        UseSystemPasswordChar = true
+    };
+    private Button _testObsButton = null!;
+    private ObsCatalog? _obsCatalog;
+    private string _obsCatalogConnectionKey = "";
+    private readonly Label _twitchConnectionStatus = new()
+    {
+        AutoSize = true,
+        ForeColor = SystemColors.GrayText,
+        Text = "Not connected"
+    };
+    private Button _connectTwitchButton = null!;
+    private Button _disconnectTwitchButton = null!;
+    private bool _twitchAuthorizationPending;
     private readonly Func<CancellationToken, Task<SteamVrSnapshot>> _steamVrDeviceLoader;
     private readonly CheckBox _steamVrEnabled = new()
     {
@@ -54,12 +84,16 @@ public sealed partial class ConfigurationEditorForm
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 2
+            RowCount = 4
         };
         integrationsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         integrationsLayout.Controls.Add(BuildHomeAssistantIntegrationGroup(), 0, 0);
+        integrationsLayout.Controls.Add(BuildObsIntegrationGroup(), 0, 1);
+        integrationsLayout.Controls.Add(BuildTwitchIntegrationGroup(), 0, 2);
         var group = new GroupBox
         {
             Text = "Global — SteamVR device monitoring",
@@ -105,10 +139,12 @@ public sealed partial class ConfigurationEditorForm
 
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
-        integrationsLayout.Controls.Add(group, 0, 1);
+        integrationsLayout.Controls.Add(group, 0, 3);
         page.Controls.Add(integrationsLayout);
 
         LoadHomeAssistantIntegration();
+        LoadObsIntegration();
+        LoadTwitchIntegration();
         LoadSteamVrIntegration();
         _steamVrEnabled.CheckedChanged += SteamVrSettingsChanged;
         _steamVrReminderMinutes.ValueChanged += SteamVrSettingsChanged;
@@ -117,6 +153,268 @@ public sealed partial class ConfigurationEditorForm
         _steamVrDevices.CellValueChanged += SteamVrDeviceCellValueChanged;
         _steamVrDevices.CurrentCellDirtyStateChanged += SteamVrDeviceCellDirtyStateChanged;
         return page;
+    }
+
+    private Control BuildTwitchIntegrationGroup()
+    {
+        var group = new GroupBox
+        {
+            Text = "Global — Twitch broadcaster",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(12),
+            Margin = new Padding(0, 10, 0, 0)
+        };
+        TableLayoutPanel layout = CreateEditorTable();
+        AddEditorRow(layout, "Connection", _twitchConnectionStatus);
+        var buttons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = Padding.Empty
+        };
+        _connectTwitchButton = CreateButton("Connect Twitch", ConnectTwitchClicked);
+        _disconnectTwitchButton = CreateButton("Disconnect", DisconnectTwitchClicked);
+        buttons.Controls.Add(_connectTwitchButton);
+        buttons.Controls.Add(_disconnectTwitchButton);
+        AddEditorRow(layout, "", buttons);
+        AddEditorRow(layout, "", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(720, 0),
+            ForeColor = SystemColors.GrayText,
+            Text = "Authorization opens Twitch in your browser once. AppSupervisor uses its built-in public application identity; rotating OAuth credentials are kept in Windows Credential Manager and reused automatically."
+        });
+        group.Controls.Add(layout);
+        return group;
+    }
+
+    private void LoadTwitchIntegration()
+    {
+        _ = RefreshTwitchConnectionStatusAsync();
+    }
+
+    private async Task RefreshTwitchConnectionStatusAsync()
+    {
+        try
+        {
+            using var authorization = new TwitchAuthorizationService(
+                new TwitchIntegrationConfig()
+            );
+            TwitchAuthorizationStatus status = await authorization.GetStatusAsync(CancellationToken.None);
+            if (IsDisposed)
+                return;
+            _twitchConnectionStatus.Text = status.Connected
+                ? $"Connected as {status.Login}"
+                : "Not connected";
+            _disconnectTwitchButton.Enabled = status.Connected;
+        }
+        catch (Exception ex)
+        {
+            if (!IsDisposed)
+            {
+                _twitchConnectionStatus.Text = ex.Message;
+                _disconnectTwitchButton.Enabled = true;
+            }
+        }
+    }
+
+    private async void ConnectTwitchClicked(object? sender, EventArgs e)
+    {
+        if (_twitchAuthorizationPending)
+            return;
+        _twitchAuthorizationPending = true;
+        _connectTwitchButton.Enabled = false;
+        try
+        {
+            var integration = new TwitchIntegrationConfig();
+            using var authorization = new TwitchAuthorizationService(integration);
+            TwitchDeviceAuthorization device = await authorization.BeginConnectAsync(CancellationToken.None);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(device.VerificationUri.AbsoluteUri)
+            {
+                UseShellExecute = true
+            });
+            MessageBox.Show(
+                this,
+                $"Twitch opened in your browser. Enter this code if Twitch asks for it:\n\n{device.UserCode}\n\nAuthorize the broadcaster account, then return here. AppSupervisor will finish connecting automatically.",
+                "Authorize Twitch",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+            _twitchConnectionStatus.Text = "Waiting for Twitch authorization...";
+            TwitchAuthorizationStatus status = await authorization.CompleteConnectAsync(device, CancellationToken.None);
+            _twitchConnectionStatus.Text = $"Connected as {status.Login}";
+            _disconnectTwitchButton.Enabled = true;
+            MessageBox.Show(this, $"Connected as {status.Login}.", "Twitch connected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            _twitchConnectionStatus.Text = ex.Message;
+            MessageBox.Show(this, ex.Message, "Twitch connection failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _twitchAuthorizationPending = false;
+            if (!_connectTwitchButton.IsDisposed)
+                _connectTwitchButton.Enabled = true;
+        }
+    }
+
+    private async void DisconnectTwitchClicked(object? sender, EventArgs e)
+    {
+        if (MessageBox.Show(this, "Disconnect the stored Twitch broadcaster authorization?", "Disconnect Twitch", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+        _disconnectTwitchButton.Enabled = false;
+        try
+        {
+            using var authorization = new TwitchAuthorizationService(
+                new TwitchIntegrationConfig()
+            );
+            await authorization.DisconnectAsync(CancellationToken.None);
+            _twitchConnectionStatus.Text = "Not connected";
+        }
+        catch (Exception ex)
+        {
+            _twitchConnectionStatus.Text = ex.Message;
+            MessageBox.Show(this, ex.Message, "Twitch disconnect failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    /// <summary>Builds global OBS WebSocket endpoint and password settings.</summary>
+    private Control BuildObsIntegrationGroup()
+    {
+        var group = new GroupBox
+        {
+            Text = "Global — OBS WebSocket",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(12),
+            Margin = new Padding(0, 10, 0, 0)
+        };
+        TableLayoutPanel layout = CreateEditorTable();
+        AddEditorRow(layout, "Host", _obsHost);
+        AddEditorRow(layout, "Port", _obsPort);
+        AddEditorRow(layout, "Password", _obsPassword);
+        _testObsButton = CreateButton("Test connection", TestObsConnectionClicked);
+        AddEditorRow(layout, "", _testObsButton);
+        AddEditorRow(layout, "", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(720, 0),
+            ForeColor = SystemColors.GrayText,
+            Text = "Uses the standard OBS WebSocket 5.x protocol over ws. The password is masked here but stored in the local configuration file."
+        });
+        group.Controls.Add(layout);
+        return group;
+    }
+
+    private void LoadObsIntegration()
+    {
+        ObsIntegrationConfig configuration = _configuration.Integrations.Obs;
+        _obsHost.Text = configuration.Host;
+        _obsPort.Value = Math.Clamp(configuration.Port, 1, 65_535);
+        _obsPassword.Text = configuration.Password;
+        _obsHost.TextChanged += ObsSettingsChanged;
+        _obsPort.ValueChanged += ObsSettingsChanged;
+        _obsPort.TextChanged += ObsSettingsChanged;
+        _obsPassword.TextChanged += ObsSettingsChanged;
+    }
+
+    private void ObsSettingsChanged(object? sender, EventArgs e)
+    {
+        if (_loadingControls)
+            return;
+
+        ObsIntegrationConfig configuration = _configuration.Integrations.Obs;
+        configuration.Host = _obsHost.Text;
+        configuration.Port = ReadDisplayedNumber(_obsPort);
+        configuration.Password = _obsPassword.Text;
+        _obsCatalog = null;
+        _obsCatalogConnectionKey = "";
+        bool wasLoading = _loadingControls;
+        _loadingControls = true;
+
+        try
+        {
+            ClearObsSelectors();
+        }
+        finally
+        {
+            _loadingControls = wasLoading;
+        }
+        UpdateStatus();
+    }
+
+    private async void TestObsConnectionClicked(object? sender, EventArgs e)
+    {
+        _testObsButton.Enabled = false;
+
+        try
+        {
+            ObsCatalog catalog = await LoadObsCatalogAsync(
+                forceRefresh: true,
+                CancellationToken.None
+            );
+            MessageBox.Show(
+                this,
+                $"Connected to OBS WebSocket {catalog.Version}. Found " +
+                $"{catalog.Scenes.Count} scenes and {catalog.AudioInputs.Count} audio sources.",
+                "OBS connection succeeded",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                ex.Message,
+                "OBS connection failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning
+            );
+        }
+        finally
+        {
+            if (!_testObsButton.IsDisposed)
+                _testObsButton.Enabled = true;
+        }
+    }
+
+    private async Task<ObsCatalog> LoadObsCatalogAsync(
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        ObsIntegrationConfig configuration = _configuration.Integrations.Obs;
+        string key = $"{configuration.Host.Trim()}\n{configuration.Port}\n{configuration.Password}";
+
+        if (!forceRefresh && _obsCatalog is not null &&
+            string.Equals(key, _obsCatalogConnectionKey, StringComparison.Ordinal))
+        {
+            return _obsCatalog;
+        }
+
+        if (string.IsNullOrWhiteSpace(configuration.Host) ||
+            configuration.Port is < 1 or > 65_535)
+        {
+            throw new InvalidOperationException(
+                "Enter a valid global OBS WebSocket host and port first."
+            );
+        }
+
+        ObsCatalog catalog = await _obsCatalogLoader(
+            new ObsIntegrationConfig
+            {
+                Host = configuration.Host.Trim(),
+                Port = configuration.Port,
+                Password = configuration.Password
+            },
+            cancellationToken
+        );
+        _obsCatalog = catalog;
+        _obsCatalogConnectionKey = key;
+        return catalog;
     }
 
     /// <summary>Builds global Home Assistant authentication settings and the connection test.</summary>
