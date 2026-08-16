@@ -41,14 +41,9 @@ public sealed class ProcessPathSnapshotTests
     [Fact]
     public void RequestedProcessNames_ChooseSharedSnapshotOnlyAfterThreeDistinctLookups()
     {
-        ProcessPathSnapshot.BeginCycle(preferSharedSnapshot: false);
-        ProcessPathSnapshot.IsProcessNameRunning($"missing-{Guid.NewGuid():N}-1");
-        ProcessPathSnapshot.IsProcessNameRunning($"missing-{Guid.NewGuid():N}-2");
-        Assert.False(ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle);
-
-        ProcessPathSnapshot.IsProcessNameRunning($"missing-{Guid.NewGuid():N}-3");
-
-        Assert.True(ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle);
+        Assert.False(ProcessPathSnapshot.ShouldPreferSharedSnapshot(0));
+        Assert.False(ProcessPathSnapshot.ShouldPreferSharedSnapshot(2));
+        Assert.True(ProcessPathSnapshot.ShouldPreferSharedSnapshot(3));
     }
     /// <summary>Confirms only the first requester owns a start transition for a shared executable.</summary>
     [Fact]

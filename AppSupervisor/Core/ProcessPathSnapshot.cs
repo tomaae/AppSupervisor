@@ -297,9 +297,13 @@ internal static class ProcessPathSnapshot
         get
         {
             lock (SyncRoot)
-                return _requestedProcessNames.Count >= 3;
+                return ShouldPreferSharedSnapshot(_requestedProcessNames.Count);
         }
     }
+
+    /// <summary>Chooses targeted lookups below the measured full-snapshot break-even point.</summary>
+    internal static bool ShouldPreferSharedSnapshot(int distinctProcessNameCount) =>
+        distinctProcessNameCount >= 3;
 
     /// <summary>Completes an owned transition and promotes its queued opposite only after success.</summary>
     internal static void CompleteTransition(
