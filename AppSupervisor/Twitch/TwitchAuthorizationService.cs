@@ -10,11 +10,11 @@ internal sealed class TwitchAuthorizationService : IDisposable
     internal const string RequiredScopes =
         "moderator:manage:chat_settings user:write:chat channel:edit:commercial";
     private static readonly Uri IdentityBase = new("https://id.twitch.tv/");
+    private static readonly SemaphoreSlim CredentialGate = new(1, 1);
     private readonly TwitchIntegrationConfig _configuration;
     private readonly ITwitchCredentialStore _store;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
-    private readonly SemaphoreSlim _gate = new(1, 1);
     private DateTimeOffset _lastValidatedUtc = DateTimeOffset.MinValue;
 
     public TwitchAuthorizationService(TwitchIntegrationConfig configuration)
@@ -116,7 +116,7 @@ internal sealed class TwitchAuthorizationService : IDisposable
             TwitchAccess access = await GetAccessAsync(cancellationToken).ConfigureAwait(false);
             return new TwitchAuthorizationStatus(true, access.Login);
         }
-        catch (InvalidOperationException)
+        catch (TwitchNotConnectedException)
         {
             return TwitchAuthorizationStatus.Disconnected;
         }
@@ -124,7 +124,7 @@ internal sealed class TwitchAuthorizationService : IDisposable
 
     public async Task<TwitchAccess> GetAccessAsync(CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await CredentialGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             TwitchStoredAuthorization stored = LoadMatchingAuthorization();
@@ -152,13 +152,13 @@ internal sealed class TwitchAuthorizationService : IDisposable
         }
         finally
         {
-            _gate.Release();
+            CredentialGate.Release();
         }
     }
 
     public async Task<TwitchAccess> ForceRefreshAsync(CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await CredentialGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             TwitchStoredAuthorization stored = await RefreshNoLockAsync(
@@ -169,7 +169,7 @@ internal sealed class TwitchAuthorizationService : IDisposable
         }
         finally
         {
-            _gate.Release();
+            CredentialGate.Release();
         }
     }
 
@@ -203,8 +203,12 @@ internal sealed class TwitchAuthorizationService : IDisposable
     {
         string clientId = RequireClientId();
         TwitchStoredAuthorization? stored = _store.Load();
-        if (stored is null || !string.Equals(stored.ClientId, clientId, StringComparison.Ordinal))
-            throw new InvalidOperationException("Twitch is not connected. Open Integrations and authorize the broadcaster account.");
+        if (stored is null)
+            throw new TwitchNotConnectedException();
+        if (!string.Equals(stored.ClientId, clientId, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "The stored Twitch authorization belongs to a different AppSupervisor application identity. Reconnect Twitch."
+            );
         if (string.IsNullOrWhiteSpace(stored.RefreshToken))
             throw new InvalidOperationException("The stored Twitch authorization cannot be refreshed. Reconnect Twitch.");
         return stored;
@@ -225,13 +229,31 @@ internal sealed class TwitchAuthorizationService : IDisposable
         };
         using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken)
             .ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            string errorBody = await response.Content.ReadAsStringAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (errorBody.Contains("invalid refresh token", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "The stored Twitch authorization can no longer be refreshed. Reconnect Twitch once."
+                );
+            }
+        }
         using JsonDocument document = await ReadDocumentAsync(response, "refresh Twitch authorization", cancellationToken)
             .ConfigureAwait(false);
         TwitchStoredAuthorization refreshed = CreateStoredAuthorization(stored.ClientId, document.RootElement);
-        TwitchAccess validated = await ValidateAsync(refreshed, cancellationToken).ConfigureAwait(false);
-        refreshed.UserId = validated.UserId;
-        refreshed.Login = validated.Login;
+        refreshed.UserId = stored.UserId;
+        refreshed.Login = stored.Login;
         _store.Save(refreshed);
+        TwitchAccess validated = await ValidateAsync(refreshed, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(refreshed.UserId, validated.UserId, StringComparison.Ordinal) ||
+            !string.Equals(refreshed.Login, validated.Login, StringComparison.Ordinal))
+        {
+            refreshed.UserId = validated.UserId;
+            refreshed.Login = validated.Login;
+            _store.Save(refreshed);
+        }
         _lastValidatedUtc = DateTimeOffset.UtcNow;
         return refreshed;
     }
@@ -333,10 +355,10 @@ internal sealed class TwitchAuthorizationService : IDisposable
 
     public void Dispose()
     {
-        _gate.Dispose();
         if (_ownsHttpClient)
             _httpClient.Dispose();
     }
 
+    private sealed class TwitchNotConnectedException : InvalidOperationException;
     private sealed class TwitchUnauthorizedException : Exception;
 }

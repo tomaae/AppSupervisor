@@ -9,6 +9,99 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies that global integration settings use the editor's shared label and input grid.</summary>
 public sealed class ConfigurationEditorIntegrationLayoutTests
 {
+    /// <summary>Confirms compact editor windows can scroll to integrations below the fold.</summary>
+    [Fact]
+    public void Constructor_CompactIntegrationsPage_ShowsVerticalScrollbar()
+    {
+        string directoryPath = Path.Combine(
+            Path.GetTempPath(),
+            $"AppSupervisor.IntegrationScrollTests-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(directoryPath);
+        string configPath = Path.Combine(directoryPath, "config.json");
+        ConfigFileWriter.SaveAtomic(configPath, new AppSupervisorConfig());
+        Exception? threadException = null;
+
+        try
+        {
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new ConfigurationEditorForm(
+                        configPath,
+                        _ => Task.FromResult<IReadOnlyList<InstalledServiceInfo>>([]),
+                        notificationPublisher: null
+                    )
+                    {
+                        ShowInTaskbar = false,
+                        Opacity = 0,
+                        Size = new Size(1180, 700)
+                    };
+                    form.Show();
+                    Application.DoEvents();
+                    TabControl tabs = Assert.Single(form.Controls.OfType<TabControl>());
+                    tabs.SelectedTab = Assert.Single(
+                        tabs.TabPages.Cast<TabPage>(),
+                        page => page.Text == "Integrations"
+                    );
+                    Application.DoEvents();
+                    form.PerformLayout();
+
+                    Panel scrolling = Assert.Single(
+                        EnumerateControls(tabs.SelectedTab)
+                            .OfType<Panel>(),
+                        panel => panel.Name == "IntegrationsScrollPanel"
+                    );
+                    Assert.True(scrolling.AutoScroll);
+                    Assert.True(scrolling.VerticalScroll.Visible);
+                    Assert.True(scrolling.DisplayRectangle.Height > scrolling.ClientSize.Height);
+
+                    GroupBox twitch = Assert.Single(
+                        EnumerateControls(scrolling).OfType<GroupBox>(),
+                        group => group.Text == "Global — Twitch broadcaster"
+                    );
+                    scrolling.ScrollControlIntoView(twitch);
+                    Application.DoEvents();
+
+                    Assert.True(scrolling.VerticalScroll.Value > 0);
+
+                    GroupBox steamVr = Assert.Single(
+                        EnumerateControls(scrolling).OfType<GroupBox>(),
+                        group => group.Text == "Global — SteamVR device monitoring"
+                    );
+                    scrolling.ScrollControlIntoView(steamVr);
+                    Application.DoEvents();
+                    form.PerformLayout();
+                    DataGridView devices = Assert.Single(
+                        EnumerateControls(steamVr).OfType<DataGridView>()
+                    );
+
+                    Assert.True(
+                        devices.ClientSize.Height >= 200,
+                        $"The SteamVR device table must retain at least 200 pixels of visible height; actual height was {devices.ClientSize.Height}."
+                    );
+                }
+                catch (Exception exception)
+                {
+                    threadException = exception;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            Assert.True(
+                thread.Join(TimeSpan.FromSeconds(10)),
+                "Integration scrollbar layout test timed out."
+            );
+        }
+        finally
+        {
+            Directory.Delete(directoryPath, recursive: true);
+        }
+
+        Assert.Null(threadException);
+    }
+
     /// <summary>Confirms every visible SteamVR label and editor begins on its shared column edge.</summary>
     [Fact]
     public void Constructor_SteamVrSettings_AlignLabelsAndEditors()

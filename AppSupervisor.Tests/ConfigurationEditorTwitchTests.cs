@@ -1,6 +1,8 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.ServiceControl;
+using AppSupervisor.Twitch;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace AppSupervisor.Tests;
@@ -8,6 +10,72 @@ namespace AppSupervisor.Tests;
 /// <summary>Protects Twitch action-specific editor visibility and selector layout.</summary>
 public sealed class ConfigurationEditorTwitchTests
 {
+    [Fact]
+    public void ConnectionStatus_EnablesOnlyApplicableConnectionButton()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"AppSupervisor.TwitchConnectionEditorTests-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(directory);
+        string configPath = Path.Combine(directory, "config.json");
+        ConfigFileWriter.SaveAtomic(configPath, new AppSupervisorConfig());
+        Exception? threadException = null;
+
+        try
+        {
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new ConfigurationEditorForm(
+                        configPath,
+                        _ => Task.FromResult<IReadOnlyList<InstalledServiceInfo>>([]),
+                        notificationPublisher: null
+                    );
+                    MethodInfo applyStatus = typeof(ConfigurationEditorForm).GetMethod(
+                        "ApplyTwitchConnectionStatus",
+                        BindingFlags.Instance | BindingFlags.NonPublic
+                    )!;
+                    Button connect = Assert.Single(
+                        EnumerateControls(form).OfType<Button>(),
+                        button => button.Text == "Connect Twitch"
+                    );
+                    Button disconnect = Assert.Single(
+                        EnumerateControls(form).OfType<Button>(),
+                        button => button.Text == "Disconnect"
+                    );
+
+                    applyStatus.Invoke(form, [new TwitchAuthorizationStatus(true, "broadcaster")]);
+
+                    Assert.False(connect.Enabled);
+                    Assert.True(disconnect.Enabled);
+
+                    applyStatus.Invoke(form, [TwitchAuthorizationStatus.Disconnected]);
+
+                    Assert.True(connect.Enabled);
+                    Assert.False(disconnect.Enabled);
+                }
+                catch (Exception exception)
+                {
+                    threadException = exception;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            Assert.True(
+                thread.Join(TimeSpan.FromSeconds(10)),
+                "Twitch connection-button editor test timed out."
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        Assert.Null(threadException);
+    }
+
     [Fact]
     public void ActionSelection_ShowsOnlyApplicableModeRowsAndDoesNotClipAdLength()
     {

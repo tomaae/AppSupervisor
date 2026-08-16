@@ -85,9 +85,17 @@ public sealed partial class ConfigurationEditorForm
     private TabPage BuildIntegrationsPage()
     {
         var page = new TabPage("Integrations");
+        var scrolling = new Panel
+        {
+            Name = "IntegrationsScrollPanel",
+            Dock = DockStyle.Fill,
+            AutoScroll = true
+        };
         var integrationsLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(12),
             ColumnCount = 1,
             RowCount = 5
@@ -97,7 +105,7 @@ public sealed partial class ConfigurationEditorForm
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.Controls.Add(BuildSupervisorApiIntegrationGroup(), 0, 0);
         integrationsLayout.Controls.Add(BuildHomeAssistantIntegrationGroup(), 0, 1);
         integrationsLayout.Controls.Add(BuildObsIntegrationGroup(), 0, 2);
@@ -105,7 +113,8 @@ public sealed partial class ConfigurationEditorForm
         var group = new GroupBox
         {
             Text = "Global — SteamVR device monitoring",
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
+            MinimumSize = new Size(0, 480),
             Padding = new Padding(12),
             Margin = new Padding(0, 10, 0, 0)
         };
@@ -148,7 +157,8 @@ public sealed partial class ConfigurationEditorForm
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
         integrationsLayout.Controls.Add(group, 0, 4);
-        page.Controls.Add(integrationsLayout);
+        scrolling.Controls.Add(integrationsLayout);
+        page.Controls.Add(scrolling);
 
         LoadSupervisorApiIntegration();
         LoadHomeAssistantIntegration();
@@ -259,16 +269,14 @@ public sealed partial class ConfigurationEditorForm
             TwitchAuthorizationStatus status = await authorization.GetStatusAsync(CancellationToken.None);
             if (IsDisposed)
                 return;
-            _twitchConnectionStatus.Text = status.Connected
-                ? $"Connected as {status.Login}"
-                : "Not connected";
-            _disconnectTwitchButton.Enabled = status.Connected;
+            ApplyTwitchConnectionStatus(status);
         }
         catch (Exception ex)
         {
             if (!IsDisposed)
             {
                 _twitchConnectionStatus.Text = ex.Message;
+                _connectTwitchButton.Enabled = true;
                 _disconnectTwitchButton.Enabled = true;
             }
         }
@@ -280,6 +288,7 @@ public sealed partial class ConfigurationEditorForm
             return;
         _twitchAuthorizationPending = true;
         _connectTwitchButton.Enabled = false;
+        bool connected = false;
         try
         {
             var integration = new TwitchIntegrationConfig();
@@ -298,8 +307,8 @@ public sealed partial class ConfigurationEditorForm
             );
             _twitchConnectionStatus.Text = "Waiting for Twitch authorization...";
             TwitchAuthorizationStatus status = await authorization.CompleteConnectAsync(device, CancellationToken.None);
-            _twitchConnectionStatus.Text = $"Connected as {status.Login}";
-            _disconnectTwitchButton.Enabled = true;
+            ApplyTwitchConnectionStatus(status);
+            connected = true;
             MessageBox.Show(this, $"Connected as {status.Login}.", "Twitch connected", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
@@ -311,7 +320,7 @@ public sealed partial class ConfigurationEditorForm
         {
             _twitchAuthorizationPending = false;
             if (!_connectTwitchButton.IsDisposed)
-                _connectTwitchButton.Enabled = true;
+                _connectTwitchButton.Enabled = !connected;
         }
     }
 
@@ -326,13 +335,26 @@ public sealed partial class ConfigurationEditorForm
                 new TwitchIntegrationConfig()
             );
             await authorization.DisconnectAsync(CancellationToken.None);
-            _twitchConnectionStatus.Text = "Not connected";
+            ApplyTwitchConnectionStatus(TwitchAuthorizationStatus.Disconnected);
         }
         catch (Exception ex)
         {
             _twitchConnectionStatus.Text = ex.Message;
+            _connectTwitchButton.Enabled = true;
+            _disconnectTwitchButton.Enabled = true;
             MessageBox.Show(this, ex.Message, "Twitch disconnect failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    /// <summary>Updates Twitch connection text and mutually exclusive connect controls.</summary>
+    /// <param name="status">The current persistent broadcaster authorization state.</param>
+    private void ApplyTwitchConnectionStatus(TwitchAuthorizationStatus status)
+    {
+        _twitchConnectionStatus.Text = status.Connected
+            ? $"Connected as {status.Login}"
+            : "Not connected";
+        _connectTwitchButton.Enabled = !status.Connected && !_twitchAuthorizationPending;
+        _disconnectTwitchButton.Enabled = status.Connected;
     }
 
     /// <summary>Builds global OBS WebSocket endpoint and password settings.</summary>
