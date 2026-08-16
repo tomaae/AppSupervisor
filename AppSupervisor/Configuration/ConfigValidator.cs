@@ -202,6 +202,7 @@ public static partial class ConfigValidator
             string applicationLabel = $"{profileLabel}, application entry {applicationIndex + 1}";
             ValidateNotifications(application.Notifications, applicationLabel, errors);
             ValidateHealthChecks(application, applicationLabel, errors);
+            ValidateStartupMacros(application, applicationLabel, errors);
 
             if (!profileEnabled || !application.Enabled)
                 continue;

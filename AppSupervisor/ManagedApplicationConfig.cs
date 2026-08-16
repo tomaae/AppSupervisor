@@ -44,4 +44,7 @@ public class ManagedApplicationConfig : ManagedResourceConfig
 
     /// <summary>Gets or sets independently debounced network checks owned by this helper.</summary>
     public List<HealthCheckConfig> HealthChecks { get; set; } = [];
+
+    /// <summary>Gets or sets ordered actions executed after AppSupervisor confirms a helper launch.</summary>
+    public List<StartupMacroActionConfig> StartupMacros { get; set; } = [];
 }

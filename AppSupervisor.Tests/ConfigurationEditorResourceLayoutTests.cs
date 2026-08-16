@@ -152,6 +152,68 @@ public sealed class ConfigurationEditorResourceLayoutTests
                     Assert.False(leaveRunning.Checked);
                     Assert.True(ensureClosed.Enabled);
 
+                    Label startupMacros = Assert.Single(
+                        controls.OfType<Label>(),
+                        label => label.Visible && label.Text == "Startup macros"
+                    );
+                    Label healthChecks = Assert.Single(
+                        controls.OfType<Label>(),
+                        label => label.Visible && label.Text == "Health checks"
+                    );
+                    TableLayoutPanel applicationLayout = Assert.IsType<TableLayoutPanel>(
+                        startupMacros.Parent
+                    );
+                    Control startupPanel = applicationLayout.GetControlFromPosition(
+                        1,
+                        applicationLayout.GetRow(startupMacros)
+                    )!;
+                    Control healthPanel = applicationLayout.GetControlFromPosition(
+                        1,
+                        applicationLayout.GetRow(healthChecks)
+                    )!;
+                    ListBox startupList = Assert.Single(
+                        EnumerateControls(startupPanel).OfType<ListBox>()
+                    );
+                    ListBox healthList = Assert.Single(
+                        EnumerateControls(healthPanel).OfType<ListBox>()
+                    );
+                    Assert.InRange(Math.Abs(ScreenTop(startupMacros) - ScreenTop(startupList)), 0, 8);
+                    Assert.InRange(Math.Abs(ScreenTop(healthChecks) - ScreenTop(healthList)), 0, 8);
+
+                    CheckBox responsiveness = Assert.Single(
+                        controls.OfType<CheckBox>(),
+                        checkBox => checkBox.Visible &&
+                            checkBox.Text == "Monitor application responsiveness"
+                    );
+                    Label responsivenessHelp = Assert.Single(
+                        controls.OfType<Label>(),
+                        label => label.Visible &&
+                            label.Text.StartsWith("Responsiveness monitoring checks")
+                    );
+                    CheckBox minimizeAfterStart = Assert.Single(
+                        controls.OfType<CheckBox>(),
+                        checkBox => checkBox.Visible &&
+                            checkBox.Text == "Minimize windows after starting"
+                    );
+                    CheckBox forceKill = Assert.Single(
+                        controls.OfType<CheckBox>(),
+                        checkBox => checkBox.Visible &&
+                            checkBox.Text.StartsWith("Allow force-kill")
+                    );
+                    Label forceKillHelp = Assert.Single(
+                        controls.OfType<Label>(),
+                        label => label.Visible &&
+                            label.Text.StartsWith("Force-kill is intentionally disabled")
+                    );
+                    Label notifications = Assert.Single(
+                        controls.OfType<Label>(),
+                        label => label.Visible && label.Text == "Notifications"
+                    );
+                    Assert.True(ScreenTop(responsiveness) < ScreenTop(responsivenessHelp));
+                    Assert.True(ScreenTop(responsivenessHelp) < ScreenTop(minimizeAfterStart));
+                    Assert.True(ScreenTop(forceKill) < ScreenTop(forceKillHelp));
+                    Assert.True(ScreenTop(forceKillHelp) < ScreenTop(notifications));
+
                     leaveRunning.Checked = true;
 
                     Assert.False(ensureClosed.Checked);

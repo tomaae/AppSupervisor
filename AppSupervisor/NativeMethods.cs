@@ -9,10 +9,22 @@ internal static class NativeMethods
 {
     public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public const int SW_MINIMIZE = 6;
+    public const uint WM_SYSCOMMAND = 0x0112;
+    public const uint SC_MINIMIZE = 0xF020;
+    public const uint SC_MAXIMIZE = 0xF030;
+    public const uint SC_RESTORE = 0xF120;
+    public const uint INPUT_KEYBOARD = 1;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOZORDER = 0x0004;
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint GW_OWNER = 4;
     public const uint WM_NULL = 0x0000;
     public const uint WM_CLOSE = 0x0010;
     /// <summary>Identifies the shared parent used by Windows message-only windows.</summary>
     public static readonly IntPtr HWND_MESSAGE = new(-3);
+    public static readonly IntPtr HWND_TOP = IntPtr.Zero;
     /// <summary>Represents a failed Tool Help snapshot handle.</summary>
     public static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
 
@@ -32,6 +44,88 @@ internal static class NativeMethods
 
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
         public string szExeFile;
+    }
+
+    /// <summary>Contains one keyboard, mouse, or hardware event supplied to <see cref="SendInput"/>.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT
+    {
+        public uint type;
+        public INPUTUNION data;
+    }
+
+    /// <summary>Provides the native union size required by INPUT on both 32-bit and 64-bit Windows.</summary>
+    [StructLayout(LayoutKind.Explicit)]
+    public struct INPUTUNION
+    {
+        [FieldOffset(0)]
+        public MOUSEINPUT mouse;
+
+        [FieldOffset(0)]
+        public KEYBDINPUT keyboard;
+
+        [FieldOffset(0)]
+        public HARDWAREINPUT hardware;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
+    }
+
+    /// <summary>Contains display-adapter or monitor identity returned by EnumDisplayDevices.</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DISPLAY_DEVICE
+    {
+        public int cb;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string DeviceString;
+
+        public uint StateFlags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string DeviceID;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string DeviceKey;
+    }
+
+    /// <summary>Contains the outer bounds of a native window.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 
     /// <summary>Creates a snapshot used to enumerate current process-parent relationships.</summary>
@@ -66,6 +160,14 @@ internal static class NativeMethods
     /// <returns><see langword="true"/> when the handle was released.</returns>
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(IntPtr handle);
+
+    /// <summary>Injects keyboard input into the current Windows input desktop without selecting a target window.</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint SendInput(
+        uint inputCount,
+        INPUT[] inputs,
+        int inputSize
+    );
 
     /// <summary>Selects timeout and hung-window handling for <see cref="SendMessageTimeout"/>.</summary>
     [Flags]
@@ -109,6 +211,15 @@ internal static class NativeMethods
         IntPtr lParam
     );
 
+    /// <summary>Enumerates the physical monitors attached to a display device.</summary>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool EnumDisplayDevices(
+        string? device,
+        uint deviceIndex,
+        ref DISPLAY_DEVICE displayDevice,
+        uint flags
+    );
+
     /// <summary>Finds a child window after a previous child, including children of the message-only window parent.</summary>
     /// <param name="parentWindow">The parent whose direct children are searched.</param>
     /// <param name="childAfter">The previous child, or zero to begin the search.</param>
@@ -142,6 +253,30 @@ internal static class NativeMethods
     /// <returns><see langword="true"/> when the window is visible.</returns>
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    /// <summary>Determines whether a native window is maximized.</summary>
+    [DllImport("user32.dll")]
+    public static extern bool IsZoomed(IntPtr hWnd);
+
+    /// <summary>Reads the outer screen-coordinate bounds of a native window.</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rectangle);
+
+    /// <summary>Returns a related window such as the owner of a top-level candidate.</summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+
+    /// <summary>Moves, resizes, or reorders a window without requiring activation.</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags
+    );
 
     /// <summary>
     /// Changes the display state of a native window.

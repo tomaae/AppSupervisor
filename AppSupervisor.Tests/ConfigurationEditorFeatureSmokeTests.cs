@@ -10,7 +10,7 @@ namespace AppSupervisor.Tests;
 /// </summary>
 public sealed class ConfigurationEditorFeatureSmokeTests
 {
-    /// <summary>Confirms Browse, Pick running, notification test, and health test controls are constructed.</summary>
+    /// <summary>Confirms process, notification, health, and Startup macro controls are constructed.</summary>
     [Fact]
     public void Constructor_FeatureControls_ArePresent()
     {
@@ -57,6 +57,9 @@ public sealed class ConfigurationEditorFeatureSmokeTests
 
                     Assert.True(buttonTexts.Count(text => text == "Test notification") >= 3);
                     Assert.Contains("Test check", buttonTexts);
+                    Assert.Contains("Test action", buttonTexts);
+                    Assert.Contains("Test macro", buttonTexts);
+                    Assert.Contains("Startup macros", visibleTexts);
                     Assert.DoesNotContain(
                         visibleTexts,
                         text => retiredTerms.Any(term =>

@@ -18,6 +18,7 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 - Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
+- Runs ordered per-application Startup macros after confirmed launches, including delays, hotkeys, and window placement actions.
 - Provides per-application listener and VRChat OSCQuery health checks, including optional recovery after a confirmed failure.
 - Monitors expected SteamVR controllers, trackers, and base stations without starting or controlling SteamVR.
 - Sends per-resource alerts through popup dialogs, Windows notifications, or XSOverlay.
@@ -53,6 +54,27 @@ Per-application options include:
 - Minimizing its windows after launch.
 - Detecting unresponsive windows and restarting after repeated failures.
 - Choosing notification destinations.
+
+### Startup macros
+
+Each helper application can have an ordered **Startup macros** sequence. AppSupervisor runs the sequence after it confirms a launch or relaunch that it requested; it does not run merely because an already-running process was discovered.
+
+Available actions are:
+
+- A nonblocking delay.
+- A captured multi-key hotkey.
+- Moving a window to coordinates relative to a selected monitor's working area.
+- Resizing a window.
+- Minimizing, maximizing, or restoring a window.
+- Bringing a window to the front without explicitly activating it.
+
+The editor displays detected monitor hardware names and stable Windows display identifiers. Move and resize actions can read the running helper window's current position or size, and every non-delay action can be tested individually. The complete sequence can also be tested before saving.
+
+Hotkeys use Windows `SendInput`, so they are injected system-wide rather than sent to one window. AppSupervisor does not explicitly activate the helper, but the active application may also observe the shortcut and the helper's resulting command may change focus.
+
+Window actions require exactly one eligible visible top-level helper window. Missing or ambiguous windows produce a helper error through its configured notification destinations. Safe later actions continue, and a macro failure does not itself restart the helper.
+
+The existing **Minimize windows after starting** option remains the simpler persistent minimization behavior. When a Startup macro contains a Minimize action, that option is disabled and ignored to prevent the two mechanisms from competing.
 
 ### Windows services
 

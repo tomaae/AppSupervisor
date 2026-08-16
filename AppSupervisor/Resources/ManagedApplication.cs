@@ -19,6 +19,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
     private readonly TimeSpan _restartTimeout;
     private readonly Func<bool>? _shouldRemainRunning;
+    private readonly StartupMacroExecutor _startupMacro;
 
     private CloseOperation? _closeOperation;
     private MinimizeOperation? _minimizeOperation;
@@ -29,7 +30,8 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private bool _launchIssued;
     private bool _reportPendingStartAsRestart;
     private bool _disposed;
-    private bool _errorActive;
+    private bool _lifecycleErrorActive;
+    private bool _startupMacroErrorActive;
 
     /// <summary>
     /// Creates a managed application with fresh restart, close, and minimization state.
@@ -57,6 +59,16 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         Config = config;
         _restartTimeout = restartTimeout;
         _shouldRemainRunning = shouldRemainRunning;
+        _startupMacro = new StartupMacroExecutor(
+            config.StartupMacros,
+            GetRunningProcessIds,
+            ReportStartupMacroError,
+            succeeded =>
+            {
+                if (succeeded)
+                    ClearStartupMacroError();
+            }
+        );
     }
 
     /// <summary>Occurs when the helper cannot complete a requested lifecycle operation.</summary>
@@ -75,7 +87,8 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <summary>Gets whether this instance owns process mutation or post-launch window work.</summary>
     bool IManagedResourceLifecycleWork.LifecycleWorkPending =>
         ProcessPathSnapshot.GetOwnedTransition(Config.Path, this) is not null ||
-        _minimizeOperation is not null;
+        _minimizeOperation is not null ||
+        _startupMacro.Pending;
 
     /// <summary>Gets the helper executable filename used in notifications.</summary>
     public string DisplayName => Path.GetFileName(Config.Path);
@@ -209,6 +222,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
+        _startupMacro.Cancel();
         SupervisorLog.WriteInformation(
             $"TRACE Application '{DisplayName}': queued restart and minimize state cancelled."
         );
@@ -307,6 +321,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         _disposed = true;
         CancelCloseOperation();
         CancelMinimizeAfterStart();
+        _startupMacro.Cancel();
         ProcessPathSnapshot.ReleaseOwner(this);
         ErrorOccurred = null;
         ErrorCleared = null;
@@ -345,6 +360,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             AdvanceOwnedCloseOperation(nowUtc);
 
         AdvanceMinimizeAfterStart(nowUtc);
+        _startupMacro.Advance(nowUtc);
         return update;
     }
 
@@ -395,8 +411,13 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
                 _missingSince = null;
                 ClearError();
 
-                if (Config.MinimizeAfterStart)
+                bool macroMinimizes = Config.StartupMacros.Any(action =>
+                    action.Type == StartupMacroActionType.Minimize);
+
+                if (Config.MinimizeAfterStart && !macroMinimizes)
                     StartMinimizeAfterStart(nowUtc);
+
+                _startupMacro.Start();
 
                 return reportRestart
                     ? ManagedResourceUpdate.Restarted
@@ -512,6 +533,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         DateTime nowUtc)
     {
         CancelMinimizeAfterStart();
+        _startupMacro.Cancel();
         CancelCloseOperation();
 
         _closeOperation = new CloseOperation
@@ -1015,18 +1037,39 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <param name="message">The error message to forward to the tray application.</param>
     private void ReportError(string message)
     {
-        _errorActive = true;
+        _lifecycleErrorActive = true;
         ErrorOccurred?.Invoke(this, message);
     }
 
     /// <summary>Clears one active lifecycle error after the helper returns to a valid state.</summary>
     private void ClearError()
     {
-        if (!_errorActive)
+        if (!_lifecycleErrorActive)
             return;
 
-        _errorActive = false;
-        ErrorCleared?.Invoke(this);
+        _lifecycleErrorActive = false;
+
+        if (!_startupMacroErrorActive)
+            ErrorCleared?.Invoke(this);
+    }
+
+    /// <summary>Reports a macro-specific recoverable error through this helper's notification targets.</summary>
+    private void ReportStartupMacroError(string message)
+    {
+        _startupMacroErrorActive = true;
+        ErrorOccurred?.Invoke(this, message);
+    }
+
+    /// <summary>Clears only the macro error after a later complete macro run succeeds.</summary>
+    private void ClearStartupMacroError()
+    {
+        if (!_startupMacroErrorActive)
+            return;
+
+        _startupMacroErrorActive = false;
+
+        if (!_lifecycleErrorActive)
+            ErrorCleared?.Invoke(this);
     }
 
     /// <summary>

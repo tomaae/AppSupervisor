@@ -88,8 +88,12 @@ public sealed class ConfigurationEditorHomeAssistantTests
                         button => button.Text is "Add application" or "Add service"
                     );
                     Assert.NotNull(add);
+                    Label actionLabel = Assert.Single(
+                        controls.OfType<Label>(),
+                        label => label.Text == "Action"
+                    );
                     Assert.Single(
-                        controls.OfType<Button>(),
+                        actionLabel.Parent!.Controls.OfType<Button>(),
                         button => button.Text == "Test action"
                     );
                     ComboBox service = Assert.Single(

@@ -335,19 +335,6 @@ public sealed partial class ConfigurationEditorForm : Form
             Text = "Leave running skips the normal close when this profile becomes inactive. Ensure closed checks every five minutes and closes the helper only when no enabled profile using the same executable needs it. These options are mutually exclusive."
         });
         AddEditorRow(layout, "Responsiveness", _applicationMonitorResponsiveness);
-        AddEditorRow(layout, "After launch", _applicationMinimize);
-        AddEditorRow(layout, "Close fallback", _applicationForceKill);
-        AddEditorRow(layout, "Notifications", BuildNotificationTestPanel(
-            _applicationNotifications,
-            TestApplicationNotificationClicked
-        ));
-        AddEditorRow(layout, "", new Label
-        {
-            AutoSize = true,
-            MaximumSize = new Size(680, 0),
-            ForeColor = SystemColors.GrayText,
-            Text = "Force-kill is intentionally disabled by default. Without it, AppSupervisor reports an error when graceful close attempts fail and leaves the process running."
-        });
         AddEditorRow(layout, "", new Label
         {
             AutoSize = true,
@@ -355,7 +342,21 @@ public sealed partial class ConfigurationEditorForm : Form
             ForeColor = SystemColors.GrayText,
             Text = "Responsiveness monitoring checks hidden and visible helper windows. After three failed checks, AppSupervisor gracefully restarts the helper. Helpers without an owned window are not treated as frozen."
         });
-        AddEditorRow(layout, "Health checks", BuildHealthCheckPanel());
+        AddEditorRow(layout, "After launch", _applicationMinimize);
+        AddEditorRow(layout, "Close fallback", _applicationForceKill);
+        AddEditorRow(layout, "", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(680, 0),
+            ForeColor = SystemColors.GrayText,
+            Text = "Force-kill is intentionally disabled by default. Without it, AppSupervisor reports an error when graceful close attempts fail and leaves the process running."
+        });
+        AddEditorRow(layout, "Notifications", BuildNotificationTestPanel(
+            _applicationNotifications,
+            TestApplicationNotificationClicked
+        ));
+        AddEditorRow(layout, "Startup macros", BuildStartupMacroPanel(), alignTop: true);
+        AddEditorRow(layout, "Health checks", BuildHealthCheckPanel(), alignTop: true);
         scrolling.Controls.Add(layout);
         _applicationEditorPanel.Controls.Add(scrolling);
         return _applicationEditorPanel;
@@ -539,6 +540,7 @@ public sealed partial class ConfigurationEditorForm : Form
             _applicationNotifications.LoadTargets(
                 application?.Notifications.Target ?? []
             );
+            BindStartupMacroList(application);
             BindHealthCheckList(application);
         }
         finally
@@ -1298,7 +1300,8 @@ public sealed partial class ConfigurationEditorForm : Form
     private static void AddEditorRow(
         TableLayoutPanel layout,
         string labelText,
-        Control control)
+        Control control,
+        bool alignTop = false)
     {
         int row = layout.RowCount++;
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -1306,7 +1309,9 @@ public sealed partial class ConfigurationEditorForm : Form
         {
             Text = labelText,
             AutoSize = true,
-            Anchor = AnchorStyles.Left,
+            Anchor = alignTop
+                ? AnchorStyles.Top | AnchorStyles.Left
+                : AnchorStyles.Left,
             Margin = new Padding(0, 8, 12, 6)
         }, 0, row);
         control.Margin = new Padding(0, 4, 0, 7);

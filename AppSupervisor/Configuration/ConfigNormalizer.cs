@@ -30,6 +30,23 @@ internal static class ConfigNormalizer
                     application.PackageApplicationId = NormalizeNullableText(application.PackageApplicationId);
                     application.PackageExecutable = NormalizeNullableText(application.PackageExecutable);
 
+                    if (application.StartupMacros is not null)
+                    {
+                        foreach (StartupMacroActionConfig? action in application.StartupMacros)
+                        {
+                            if (action is null)
+                                continue;
+
+                            action.Monitor = NormalizeNullableText(action.Monitor);
+
+                            if (action.Keys is not null)
+                            {
+                                for (int index = 0; index < action.Keys.Count; index++)
+                                    action.Keys[index] = NormalizeText(action.Keys[index]);
+                            }
+                        }
+                    }
+
                     if (application.HealthChecks is null)
                         continue;
 
