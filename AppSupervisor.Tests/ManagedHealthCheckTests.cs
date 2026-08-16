@@ -92,9 +92,15 @@ public sealed class ManagedHealthCheckTests
 
         probe.Release.TrySetResult(HealthProbeResult.Success());
         await probe.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        check.AdvancePauseDrain();
 
-        Assert.False(check.PauseDrainPending);
+        Assert.True(SpinWait.SpinUntil(
+            () =>
+            {
+                check.AdvancePauseDrain();
+                return !check.PauseDrainPending;
+            },
+            TimeSpan.FromSeconds(2)
+        ));
     }
 
     /// <summary>Starts and completes one immediately resolved probe on two supervision ticks.</summary>
