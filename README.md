@@ -1,4 +1,11 @@
 # AppSupervisor
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/tomaae/AppSupervisor?style=plastic)
+![Project Stage](https://img.shields.io/badge/project%20stage-development-yellow.svg?style=plastic)
+![GitHub all releases](https://img.shields.io/github/downloads/tomaae/AppSupervisor/total?style=plastic)
+
+![GitHub commits since latest release](https://img.shields.io/github/commits-since/tomaae/AppSupervisor/latest?style=plastic)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/m/tomaae/AppSupervisor?style=plastic)
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/tomaae/AppSupervisor/ci.yml?style=plastic)
 
 AppSupervisor is a lightweight Windows tray application that starts, supervises, restarts, and closes groups of helper applications and Windows services based on whether a configured monitor process is running.
 
