@@ -15,6 +15,7 @@ public static partial class ConfigValidator
     public static void Validate(IReadOnlyList<SupervisorProfileConfig?> profiles)
     {
         var errors = new List<string>();
+        var profileIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var activeServiceNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var activeHomeAssistantEntities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -33,6 +34,15 @@ public static partial class ConfigValidator
             string profileLabel = string.IsNullOrWhiteSpace(profile.Name)
                 ? $"Profile entry {profileIndex + 1}"
                 : $"Profile '{profile.Name}'";
+
+            if (string.IsNullOrWhiteSpace(profile.ProfileId))
+            {
+                errors.Add($"{profileLabel} must have a non-empty profileId.");
+            }
+            else if (!profileIds.Add(profile.ProfileId.Trim()))
+            {
+                errors.Add($"Profile profileId '{profile.ProfileId}' is duplicated.");
+            }
 
             if (string.IsNullOrWhiteSpace(profile.Name))
             {

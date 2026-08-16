@@ -78,6 +78,12 @@ public sealed class HealthCheckedApplication :
     public IReadOnlyList<NotificationTarget> NotificationTargets =>
         _application.NotificationTargets;
 
+    /// <summary>Gets timer-owned health state for the read-only Supervisor API.</summary>
+    internal IReadOnlyList<ManagedHealthCheck> ApiHealthChecks => _healthChecks;
+
+    /// <summary>Gets the wrapped application for timer-cached API status.</summary>
+    internal IManagedApplicationLifecycle ApiApplication => _application;
+
     /// <summary>Gets whether the wrapped application is still completing a close request.</summary>
     public bool DeactivationPending => _application.CloseOperationPending;
 

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using AppSupervisor.HomeAssistant;
 using AppSupervisor.Obs;
 using AppSupervisor.SteamVr;
+using AppSupervisor.SupervisorApi;
 using AppSupervisor.Twitch;
 
 namespace AppSupervisor.ConfigurationUI;
@@ -9,6 +10,11 @@ namespace AppSupervisor.ConfigurationUI;
 /// <summary>Provides global integration configuration independently of the selected profile.</summary>
 public sealed partial class ConfigurationEditorForm
 {
+    private readonly CheckBox _supervisorApiEnabled = new()
+    {
+        Text = "Enable read-only WS API",
+        AutoSize = true
+    };
     private readonly Func<
         HomeAssistantIntegrationConfig,
         CancellationToken,
@@ -84,16 +90,18 @@ public sealed partial class ConfigurationEditorForm
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 4
+            RowCount = 5
         };
         integrationsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        integrationsLayout.Controls.Add(BuildHomeAssistantIntegrationGroup(), 0, 0);
-        integrationsLayout.Controls.Add(BuildObsIntegrationGroup(), 0, 1);
-        integrationsLayout.Controls.Add(BuildTwitchIntegrationGroup(), 0, 2);
+        integrationsLayout.Controls.Add(BuildSupervisorApiIntegrationGroup(), 0, 0);
+        integrationsLayout.Controls.Add(BuildHomeAssistantIntegrationGroup(), 0, 1);
+        integrationsLayout.Controls.Add(BuildObsIntegrationGroup(), 0, 2);
+        integrationsLayout.Controls.Add(BuildTwitchIntegrationGroup(), 0, 3);
         var group = new GroupBox
         {
             Text = "Global — SteamVR device monitoring",
@@ -139,9 +147,10 @@ public sealed partial class ConfigurationEditorForm
 
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
-        integrationsLayout.Controls.Add(group, 0, 3);
+        integrationsLayout.Controls.Add(group, 0, 4);
         page.Controls.Add(integrationsLayout);
 
+        LoadSupervisorApiIntegration();
         LoadHomeAssistantIntegration();
         LoadObsIntegration();
         LoadTwitchIntegration();
@@ -153,6 +162,51 @@ public sealed partial class ConfigurationEditorForm
         _steamVrDevices.CellValueChanged += SteamVrDeviceCellValueChanged;
         _steamVrDevices.CurrentCellDirtyStateChanged += SteamVrDeviceCellDirtyStateChanged;
         return page;
+    }
+
+    /// <summary>Builds the global loopback-only Supervisor API toggle.</summary>
+    private Control BuildSupervisorApiIntegrationGroup()
+    {
+        var group = new GroupBox
+        {
+            Text = "Global — Supervisor API",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(12),
+            Margin = Padding.Empty
+        };
+        TableLayoutPanel layout = CreateEditorTable();
+        AddSpanningEditorRow(layout, _supervisorApiEnabled);
+        AddEditorRow(layout, "Endpoint", new Label
+        {
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Text = SupervisorApiServer.BaseAddress
+        });
+        AddEditorRow(layout, "Access", new Label
+        {
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            ForeColor = SystemColors.GrayText,
+            Text = "Passwordless, read-only JSON; accepts connections from this computer only."
+        });
+        group.Controls.Add(layout);
+        return group;
+    }
+
+    private void LoadSupervisorApiIntegration()
+    {
+        _supervisorApiEnabled.Checked = _configuration.Integrations.SupervisorApi.Enabled;
+        _supervisorApiEnabled.CheckedChanged += SupervisorApiSettingsChanged;
+    }
+
+    private void SupervisorApiSettingsChanged(object? sender, EventArgs e)
+    {
+        if (_loadingControls)
+            return;
+
+        _configuration.Integrations.SupervisorApi.Enabled = _supervisorApiEnabled.Checked;
+        UpdateStatus();
     }
 
     private Control BuildTwitchIntegrationGroup()

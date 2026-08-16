@@ -13,6 +13,7 @@ internal static class ConfigNormalizer
             if (profile is null)
                 continue;
 
+            profile.ProfileId = NormalizeText(profile.ProfileId);
             profile.Name = NormalizeText(profile.Name);
             profile.MonitorProcess = NormalizeText(profile.MonitorProcess);
 

@@ -738,6 +738,7 @@ public sealed partial class ConfigurationEditorForm : Form
             return;
 
         SupervisorProfileConfig duplicate = ConfigJson.Clone(selected);
+        duplicate.ProfileId = Guid.NewGuid().ToString("N");
         duplicate.Name = CreateUniqueProfileName($"{DisplayName(selected.Name, "Profile")} copy");
         _profiles.Add(duplicate);
         BindProfileSelector(duplicate);

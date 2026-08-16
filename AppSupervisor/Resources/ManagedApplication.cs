@@ -98,6 +98,12 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     public IReadOnlyList<NotificationTarget> NotificationTargets => Config.Notifications.Target;
 
+    /// <summary>Gets whether the startup macro is currently advancing from cached lifecycle state.</summary>
+    internal bool ApiMacroPending => _startupMacro.Pending;
+
+    /// <summary>Gets whether the last startup macro run has an uncleared error.</summary>
+    internal bool ApiMacroError => _startupMacroErrorActive;
+
     /// <summary>
     /// Rediscovers the application by full executable path.
     /// </summary>

@@ -2,6 +2,7 @@ using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
+using AppSupervisor.SupervisorApi;
 using AppSupervisor.Twitch;
 using Microsoft.Win32;
 
@@ -30,6 +31,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly System.Threading.Timer _twitchAuthorizationTimer;
     private readonly ToolStripMenuItem _pauseResumeItem;
     private readonly NotificationService _notificationService;
+    private readonly SupervisorApiServer _supervisorApi = new();
     private readonly SemaphoreSlim _supervisionGate = new(1, 1);
     private readonly CancellationTokenSource _supervisionCancellation = new();
     private int _monitorWorkPending;
@@ -219,6 +221,7 @@ public partial class TrayApplicationContext : ApplicationContext
         }
 
         _monitorPreferSharedSnapshot = ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle;
+        PublishSupervisorApiSnapshot();
         ResetLifecycleTimer();
         UpdateTrayState();
     }
@@ -614,6 +617,7 @@ public partial class TrayApplicationContext : ApplicationContext
         ResetEnsureClosedTimer();
         ResetLifecycleTimer();
         Volatile.Write(ref _pauseVisualPending, 0);
+        PublishSupervisorApiSnapshot();
         UpdateTrayState();
     }
 
@@ -739,6 +743,16 @@ public partial class TrayApplicationContext : ApplicationContext
                 foreach (SupervisorProfile newProfile in _profiles)
                     newProfile.InitializeResources();
 
+                PublishSupervisorApiSnapshot();
+                try
+                {
+                    _supervisorApi.ApplyConfiguration(newConfig.Integrations.SupervisorApi);
+                }
+                catch (Exception exception)
+                {
+                    SupervisorLog.WriteError("Could not apply Supervisor API configuration.", exception);
+                }
+
                 applied = true;
                 UpdateTrayState();
             });
@@ -780,6 +794,16 @@ public partial class TrayApplicationContext : ApplicationContext
             profile.Dispose();
 
         applicationUsageRegistry.Dispose();
+    }
+
+    /// <summary>Publishes one immutable API document without performing any system queries.</summary>
+    private void PublishSupervisorApiSnapshot()
+    {
+        _supervisorApi.Publish(SupervisorApiSnapshotFactory.Create(
+            _configuration,
+            _profiles,
+            _paused || _pausing || _systemSuspended || _resumeResetPending
+        ));
     }
 
     /// <summary>
@@ -1206,6 +1230,7 @@ public partial class TrayApplicationContext : ApplicationContext
         });
 
         _supervisionCancellation.Cancel();
+        _supervisorApi.Dispose();
         await Task.Run(_notificationService.Dispose);
 
         _ensureClosedTimer.Dispose();

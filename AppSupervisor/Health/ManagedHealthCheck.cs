@@ -17,6 +17,8 @@ public sealed class ManagedHealthCheck : IDisposable
     private DateTime _nextProbeUtc;
     private int _consecutiveFailures;
     private bool _unhealthy;
+    private bool _hasResult;
+    private string _lastDetail = "";
     private bool _discardProbeResult;
     private bool _resetProbeWhenCompleted;
     private bool _disposed;
@@ -49,6 +51,21 @@ public sealed class ManagedHealthCheck : IDisposable
 
     /// <summary>Gets the presentation targets configured specifically for this check.</summary>
     public IReadOnlyList<NotificationTarget> NotificationTargets => _config.Notifications.Target;
+
+    /// <summary>Gets whether this check is currently applicable to an active helper.</summary>
+    internal bool ApiActive => !_disposed && _activeSinceUtc is not null;
+
+    /// <summary>Gets the last timer-cached health state without running the probe.</summary>
+    internal string ApiStatus => !ApiActive
+        ? "inactive"
+        : _unhealthy
+            ? "unhealthy"
+            : _hasResult
+                ? "healthy"
+                : "checking";
+
+    /// <summary>Gets the detail returned by the last completed probe.</summary>
+    internal string ApiDetail => _lastDetail;
 
     /// <summary>Gets whether a cancelled probe task still needs to relinquish its resources.</summary>
     internal bool PauseDrainPending => _probeTask is not null;
@@ -115,6 +132,8 @@ public sealed class ManagedHealthCheck : IDisposable
         _activeSinceUtc = null;
         _nextProbeUtc = DateTime.MinValue;
         _consecutiveFailures = 0;
+        _hasResult = false;
+        _lastDetail = "";
 
         if (clearError && _unhealthy)
             Recovered?.Invoke(this, "The check is no longer applicable.");
@@ -212,6 +231,8 @@ public sealed class ManagedHealthCheck : IDisposable
         _probeCancellation = null;
 
         HealthProbeResult result = completedTask.GetAwaiter().GetResult();
+        _hasResult = true;
+        _lastDetail = result.Detail;
         bool withinStartupDelay = nowUtc - _activeSinceUtc <
             TimeSpan.FromSeconds(_config.StartupDelaySeconds);
 

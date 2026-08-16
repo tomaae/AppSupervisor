@@ -7,6 +7,30 @@ namespace AppSupervisor.Tests;
 public sealed class IntegrationConfigTests
 {
     [Fact]
+    public void SerializeAndLoad_SupervisorApi_RoundTripsGlobalToggle()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "config.json");
+
+        try
+        {
+            ConfigFileWriter.SaveAtomic(path, new AppSupervisorConfig
+            {
+                Integrations = new IntegrationsConfig
+                {
+                    SupervisorApi = new SupervisorApiConfig { Enabled = true }
+                }
+            });
+
+            Assert.True(ConfigLoader.Load(path).Integrations.SupervisorApi.Enabled);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void SerializeAndLoad_SteamVrDevice_RoundTripsGlobalSettings()
     {
         string directory = CreateTemporaryDirectory();

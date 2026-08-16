@@ -26,6 +26,7 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 - Includes a graphical configuration editor with application, Steam, Store, service, and running-process pickers.
 - Validates configuration before applying it and keeps the last valid configuration active if a reload fails.
 - Can register itself to start elevated when the user signs in to Windows.
+- Can expose cached supervision status through an optional passwordless, read-only local HTTP API.
 
 ## Detailed functionality
 
@@ -142,6 +143,153 @@ Open the editor from **Configure...** in the tray menu or by double-clicking the
 The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, and SteamVR devices. Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
 
 **Validate** checks the complete configuration without saving. **Save & Apply** validates and writes it, then replaces the running configuration. If the new configuration cannot be applied, the previous valid configuration remains active.
+
+### Supervisor API
+
+Enable **Enable read-only WS API** under **Integrations**, then choose **Save & Apply**. AppSupervisor serves HTTP JSON at:
+
+```text
+http://127.0.0.1:17834/
+```
+
+The listener accepts connections only from the same computer. It has no password, allows cross-origin reads, disables response caching, and accepts only `GET`; unsupported methods return HTTP `405`. It never performs work on behalf of a request. Responses serialize the last immutable snapshot published by the existing one-second supervision timer, so requesting API data does not inspect processes, services, listeners, windows, health probes, or integrations.
+
+#### Internal IDs
+
+Routes use stable internal IDs rather than visible names:
+
+- Profiles use `profileId`.
+- Helpers use their existing `resourceId`.
+- API responses expose both values as `internalId` and include ready-to-use relative `endpoint` fields.
+
+New IDs are compact hexadecimal strings, so spaces and visible names never appear in API URLs. Existing profiles that predate `profileId` receive one when the configuration is loaded and saved. Duplicating a profile generates a new ID.
+
+An abbreviated configuration therefore looks like:
+
+```json
+{
+  "profiles": [
+    {
+      "profileId": "518b32a93ca941a6a65aaf3dde50668d",
+      "name": "VR profile",
+      "applications": [
+        {
+          "resourceId": "3fd8f94e25614cb181f09648aaad4e38",
+          "path": "C:\\Tools\\helper.exe"
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Endpoints
+
+| Method and path | Response |
+| --- | --- |
+| `GET /` | All profiles with `name`, `internalId`, `enabled`, cached `status`, and `endpoint`. |
+| `GET /<profileId>` | One profile and all its helpers, including active/enabled state, configured health-check and macro counts, and helper endpoints. |
+| `GET /<profileId>/<resourceId>` | Helper identity, cached activity, lifecycle settings, configuration counts, and links to its health-check and macro endpoints. |
+| `GET /<profileId>/<resourceId>/healthcheck` | Every configured health check, including application-responsiveness monitoring, timing, recovery settings, and cached status/detail. |
+| `GET /<profileId>/<resourceId>/macro` | Whether a Startup macro is configured, its cached execution status, and its ordered actions. |
+
+Unknown profiles, helpers, or child endpoints return HTTP `404`. A helper executable filename may also be accepted in place of `resourceId` when it is unique within the profile, but clients should always use the returned `internalId`; ambiguous filenames return HTTP `409`.
+
+`updatedUtc` identifies when the one-second timer published the returned snapshot. A helper's `active` value means the profile startup sequence has activated that resource; it is not a fresh process query.
+
+Status values are:
+
+- Profile: `disabled`, `paused`, `active`, or `inactive`.
+- Helper: `disabled`, `active`, or `inactive`.
+- Health check: `disabled`, `inactive`, `checking`, `healthy`, or `unhealthy`.
+- Startup macro: `notConfigured`, `idle`, `running`, or `failed`.
+
+#### Example responses
+
+`GET /`:
+
+```json
+{
+  "updatedUtc": "2026-08-17T12:00:00Z",
+  "paused": false,
+  "profiles": [
+    {
+      "name": "VR profile",
+      "internalId": "518b32a93ca941a6a65aaf3dde50668d",
+      "enabled": true,
+      "status": "active",
+      "endpoint": "/518b32a93ca941a6a65aaf3dde50668d"
+    }
+  ]
+}
+```
+
+`GET /518b32a93ca941a6a65aaf3dde50668d`:
+
+```json
+{
+  "updatedUtc": "2026-08-17T12:00:00Z",
+  "name": "VR profile",
+  "internalId": "518b32a93ca941a6a65aaf3dde50668d",
+  "enabled": true,
+  "status": "active",
+  "monitorProcess": "VRChat.exe",
+  "helpers": [
+    {
+      "name": "helper.exe",
+      "internalId": "3fd8f94e25614cb181f09648aaad4e38",
+      "enabled": true,
+      "active": true,
+      "status": "active",
+      "healthChecksConfigured": 1,
+      "macroActionsConfigured": 2,
+      "endpoint": "/518b32a93ca941a6a65aaf3dde50668d/3fd8f94e25614cb181f09648aaad4e38"
+    }
+  ]
+}
+```
+
+The helper endpoint contains `healthCheckEndpoint` and `macroEndpoint`. Follow those links instead of constructing child paths manually.
+
+#### Windows `curl.exe` smoke test
+
+The following PowerShell script discovers internal IDs and requests every endpoint for the first configured helper:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$baseUrl = 'http://127.0.0.1:17834'
+
+function Get-CurlJson([string]$url) {
+    $body = & curl.exe --silent --show-error --fail-with-body $url
+    if ($LASTEXITCODE -ne 0) {
+        throw "curl failed for $url"
+    }
+    $body | ConvertFrom-Json
+}
+
+$root = Get-CurlJson "$baseUrl/"
+$profile = $root.profiles | Select-Object -First 1
+if ($null -eq $profile) { throw 'No profiles returned.' }
+
+$profileState = Get-CurlJson "$baseUrl/$($profile.internalId)"
+$helper = $profileState.helpers | Select-Object -First 1
+if ($null -eq $helper) { throw 'The selected profile has no helpers.' }
+
+$helperUrl = "$baseUrl/$($profile.internalId)/$($helper.internalId)"
+Get-CurlJson $helperUrl | ConvertTo-Json -Depth 20
+Get-CurlJson "$helperUrl/healthcheck" | ConvertTo-Json -Depth 20
+Get-CurlJson "$helperUrl/macro" | ConvertTo-Json -Depth 20
+```
+
+Error behavior can be checked directly:
+
+```powershell
+# 404: unknown profile
+curl.exe -sS -o NUL -w '%{http_code}\n' http://127.0.0.1:17834/not-a-profile
+
+# 405: the API is read-only
+curl.exe -sS -o NUL -w '%{http_code}\n' -X POST http://127.0.0.1:17834/
+```
 
 ### Administrator and startup behavior
 

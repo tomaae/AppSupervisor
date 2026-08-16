@@ -7,7 +7,7 @@ namespace AppSupervisor.Configuration;
 /// </summary>
 public static class HealthCheckFactory
 {
-    private const string ResponsivenessCheckName = "Application responsiveness";
+    internal const string ResponsivenessCheckName = "Application responsiveness";
 
     /// <summary>Creates one runtime health check with the correct probe and automatic activation condition.</summary>
     /// <param name="config">The validated health-check configuration.</param>

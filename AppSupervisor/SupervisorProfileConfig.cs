@@ -3,6 +3,9 @@ namespace AppSupervisor;
 /// <summary>Configures one monitored-process profile and its ordered managed resources.</summary>
 public class SupervisorProfileConfig
 {
+    /// <summary>Gets or sets the stable internal identifier used by API routes.</summary>
+    public string ProfileId { get; set; } = Guid.NewGuid().ToString("N");
+
     /// <summary>Gets or sets the unique user-facing profile name.</summary>
     public string Name { get; set; } = "";
 

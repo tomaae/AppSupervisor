@@ -119,6 +119,16 @@ public sealed class SupervisorProfile : IDisposable
     /// <summary>Gets whether the supervisor profile's activation trigger is currently present.</summary>
     public bool TriggerActive { get; private set; }
 
+    /// <summary>Finds a runtime resource by its stable profile-local configuration identifier.</summary>
+    internal IManagedResource? FindResource(string resourceId) =>
+        _startupResourcesById.TryGetValue(resourceId, out ManagedResourceStartup? startup)
+            ? startup.Resource
+            : null;
+
+    /// <summary>Gets whether startup has activated the supplied resource for the current profile run.</summary>
+    internal bool IsResourceActivated(IManagedResource resource) =>
+        _activatedResources.Contains(resource);
+
     /// <summary>
     /// Gets whether this active profile still has resources to issue or is waiting for an
     /// activated resource to report that it has started.
