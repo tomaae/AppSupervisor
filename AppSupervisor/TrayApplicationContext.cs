@@ -2,6 +2,7 @@ using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
+using Microsoft.Win32;
 
 namespace AppSupervisor;
 
@@ -23,15 +24,18 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly Form _dialogOwner;
     private readonly string _configPath;
     private readonly System.Threading.Timer _monitorTimer;
-    private readonly System.Threading.Timer _startupTimer;
+    private readonly System.Threading.Timer _lifecycleTimer;
     private readonly System.Threading.Timer _ensureClosedTimer;
     private readonly ToolStripMenuItem _pauseResumeItem;
     private readonly NotificationService _notificationService;
     private readonly SemaphoreSlim _supervisionGate = new(1, 1);
     private readonly CancellationTokenSource _supervisionCancellation = new();
     private int _monitorWorkPending;
-    private int _startupWorkPending;
+    private int _lifecycleWorkPending;
     private int _cleanupWorkPending;
+    private int _pauseVisualPending;
+    private bool _monitorPreferSharedSnapshot;
+    private bool _lifecyclePreferSharedSnapshot;
 
     private AppSupervisorConfig _configuration = new();
     private List<SupervisorProfile> _profiles = [];
@@ -39,8 +43,10 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly object _runtimeStateLock = new();
     private readonly object _trayStateLock = new();
     private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
-    private readonly HashSet<SupervisorProfile> _reportedStartupTickErrors = [];
+    private readonly HashSet<SupervisorProfile> _reportedLifecycleTickErrors = [];
     private volatile bool _paused = true;
+    private volatile bool _pausing;
+    private bool _pauseDrainStarted;
     private volatile bool _pausedManually;
     private volatile bool _configurationError;
     private readonly HashSet<RuntimeErrorIdentity> _activeRuntimeErrors = [];
@@ -51,6 +57,8 @@ public partial class TrayApplicationContext : ApplicationContext
     private bool _configurationEditorOpen;
     private int _configurationLoadGeneration;
     private volatile bool _exiting;
+    private volatile bool _systemSuspended;
+    private volatile bool _resumeResetPending;
 
     /// <summary>
     /// Creates the tray UI, notification providers, safe configuration loader, supervision timers, and startup check.
@@ -112,18 +120,19 @@ public partial class TrayApplicationContext : ApplicationContext
             TimeSpan.FromSeconds(1),
             TimeSpan.FromSeconds(1)
         );
-        _startupTimer = new System.Threading.Timer(
-            StartupTimerTick,
+        _lifecycleTimer = new System.Threading.Timer(
+            LifecycleTimerTick,
             null,
-            TimeSpan.FromMilliseconds(100),
-            TimeSpan.FromMilliseconds(100)
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan
         );
         _ensureClosedTimer = new System.Threading.Timer(
             EnsureClosedTimerTick,
             null,
-            TimeSpan.FromMinutes(5),
-            TimeSpan.FromMinutes(5)
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan
         );
+        SystemEvents.PowerModeChanged += SystemPowerModeChanged;
         Application.Idle += ApplicationBecameIdle;
     }
 
@@ -148,8 +157,9 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <summary>Runs one ordered profile, cleanup-progress, and SteamVR update away from WinForms.</summary>
     private void RunMonitorCycle()
     {
-        if (_paused)
+        if (_paused || _pausing || _systemSuspended || _resumeResetPending)
             return;
+        ProcessPathSnapshot.BeginCycle(_monitorPreferSharedSnapshot);
         _steamVrMonitor.Advance(DateTime.UtcNow);
 
 
@@ -199,8 +209,8 @@ public partial class TrayApplicationContext : ApplicationContext
             }
         }
 
-        _applicationUsageRegistry.AdvanceCleanup();
-
+        _monitorPreferSharedSnapshot = ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle;
+        ResetLifecycleTimer();
         UpdateTrayState();
     }
 
@@ -223,59 +233,66 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <summary>Runs one opted-in inactive-helper cleanup sweep away from WinForms.</summary>
     private void RunEnsureClosedSweep()
     {
-        if (_paused)
+        if (_paused || _pausing || _systemSuspended || _resumeResetPending)
             return;
 
+        ProcessPathSnapshot.BeginCycle(preferSharedSnapshot: false);
         _applicationUsageRegistry.Sweep();
+        ResetLifecycleTimer();
     }
 
-    /// <summary>Restarts the inactive-helper sweep interval without tying it to the UI message pump.</summary>
+    /// <summary>Enables the inactive-helper sweep only while effective cleanup targets can be supervised.</summary>
     private void ResetEnsureClosedTimer()
     {
-        if (_exiting)
+        if (_exiting || _paused || _pausing || _systemSuspended || _resumeResetPending ||
+            !_applicationUsageRegistry.HasCleanupTargets)
+        {
+            _ensureClosedTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             return;
+        }
 
         _ensureClosedTimer.Change(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
 
-    /// <summary>Coalesces the lightweight background startup timer into the serialized worker.</summary>
+    /// <summary>Coalesces the demand-driven lifecycle timer into the serialized worker.</summary>
     /// <param name="state">Unused timer state.</param>
-    private void StartupTimerTick(object? state)
+    private void LifecycleTimerTick(object? state)
     {
         if (_exiting)
             return;
 
-        if (Interlocked.Exchange(ref _startupWorkPending, 1) != 0)
+        if (Interlocked.Exchange(ref _lifecycleWorkPending, 1) != 0)
             return;
 
         QueueSupervisionWork(
-            RunStartupCycle,
-            () => Volatile.Write(ref _startupWorkPending, 0)
+            RunLifecycleCycle,
+            () => Volatile.Write(ref _lifecycleWorkPending, 0)
         );
     }
 
-    /// <summary>Advances every dependency and delay-gated startup sequence away from WinForms.</summary>
-    private void RunStartupCycle()
+    /// <summary>Advances starts, closes, minimization, and startup sequencing away from WinForms.</summary>
+    private void RunLifecycleCycle()
     {
-        if (_paused)
+        if (_paused || _systemSuspended || _resumeResetPending)
             return;
 
-        DateTime nowUtc = DateTime.UtcNow;
-        bool startupWasPending = _profiles.Any(profile => profile.StartupPending);
+        DateTime nowUtc = SupervisorTime.UtcNow;
+        bool workWasPending = HasLifecycleWork();
+        ProcessPathSnapshot.BeginCycle(_lifecyclePreferSharedSnapshot);
 
         foreach (SupervisorProfile profile in _profiles)
         {
             try
             {
-                profile.AdvanceStartup(nowUtc);
+                profile.AdvanceLifecycle(nowUtc);
                 lock (_runtimeStateLock)
-                    _reportedStartupTickErrors.Remove(profile);
+                    _reportedLifecycleTickErrors.Remove(profile);
             }
             catch (Exception ex)
             {
                 bool firstFailure;
                 lock (_runtimeStateLock)
-                    firstFailure = _reportedStartupTickErrors.Add(profile);
+                    firstFailure = _reportedLifecycleTickErrors.Add(profile);
                 UpdateTrayState();
 
                 if (!firstFailure)
@@ -284,14 +301,104 @@ public partial class TrayApplicationContext : ApplicationContext
                 PublishNotification(
                     NotificationSeverity.Error,
                     "Supervision error",
-                    $"{profile.Name}\nUnexpected startup sequencing failure: {ex.Message}",
+                    $"{profile.Name}\nUnexpected lifecycle failure: {ex.Message}",
                     profile.NotificationTargets
                 );
             }
         }
 
-        if (startupWasPending != _profiles.Any(profile => profile.StartupPending))
+        if (_pausing && _pauseDrainStarted)
+        {
+            foreach (SupervisorProfile profile in _profiles)
+                profile.AdvancePauseDrain();
+
+            _steamVrMonitor.AdvancePauseDrain();
+        }
+
+        _applicationUsageRegistry.AdvanceLifecycle(nowUtc);
+        _lifecyclePreferSharedSnapshot = ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle;
+
+        bool workPending = HasLifecycleWork();
+        if (workWasPending != workPending)
             UpdateTrayState();
+
+        ResetLifecycleTimer();
+    }
+
+    /// <summary>Gets whether any profile or inactive cleanup still needs the 100ms lifecycle timer.</summary>
+    private bool HasLifecycleWork()
+    {
+        return _profiles.Any(profile => profile.LifecycleWorkPending) ||
+            _applicationUsageRegistry.LifecycleWorkPending ||
+            (_pausing && _pauseDrainStarted &&
+                (_profiles.Any(profile => profile.PauseDrainPending) ||
+                    _steamVrMonitor.PauseDrainPending));
+    }
+
+    /// <summary>Gets whether lifecycle work needs another pass without waiting for a delay deadline.</summary>
+    private bool HasImmediateLifecycleWork()
+    {
+        return _profiles.Any(profile => profile.ImmediateLifecycleWorkPending) ||
+            _applicationUsageRegistry.LifecycleWorkPending ||
+            (_pausing && _pauseDrainStarted &&
+                (_profiles.Any(profile => profile.PauseDrainPending) ||
+                    _steamVrMonitor.PauseDrainPending));
+    }
+
+    /// <summary>Enables the lifecycle timer only while transitions or startup sequencing need it.</summary>
+    private void ResetLifecycleTimer()
+    {
+        bool hasWork = HasLifecycleWork();
+
+        if (_exiting || _paused || _systemSuspended || _resumeResetPending || !hasWork)
+        {
+            _lifecycleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+            if (!_systemSuspended && _pausing && _pauseDrainStarted && !hasWork)
+                CompletePause();
+
+            return;
+        }
+
+        if (HasImmediateLifecycleWork())
+        {
+            _lifecycleTimer.Change(
+                TimeSpan.FromMilliseconds(100),
+                TimeSpan.FromMilliseconds(100)
+            );
+            return;
+        }
+
+        DateTime nowUtc = SupervisorTime.UtcNow;
+        DateTime nextDueUtc = _profiles
+            .Select(profile => profile.NextStartupDueUtc)
+            .Where(dueUtc => dueUtc is not null)
+            .Select(dueUtc => dueUtc!.Value)
+            .DefaultIfEmpty(nowUtc + TimeSpan.FromMilliseconds(100))
+            .Min();
+        TimeSpan due = nextDueUtc > nowUtc
+            ? nextDueUtc - nowUtc
+            : TimeSpan.FromMilliseconds(1);
+        _lifecycleTimer.Change(due, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>Commits manual pause only after every already-issued lifecycle task has settled.</summary>
+    private void CompletePause()
+    {
+        if (!_pausing || !_pauseDrainStarted || HasLifecycleWork())
+            return;
+
+        _applicationUsageRegistry.SuspendCleanup();
+        _steamVrMonitor.Suspend();
+
+        foreach (SupervisorProfile profile in _profiles)
+            profile.SuspendMonitoring();
+
+        _paused = true;
+        _pausing = false;
+        _pauseDrainStarted = false;
+        _lifecycleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        Volatile.Write(ref _pauseVisualPending, 1);
     }
 
     /// <summary>Queues one coalesced runtime operation without ever executing it on the caller's thread.</summary>
@@ -303,7 +410,7 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             try
             {
-                await ExecuteSupervisionAsync(operation).ConfigureAwait(false);
+                await ExecuteSupervisionCoreAsync(operation).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_supervisionCancellation.IsCancellationRequested)
             {
@@ -315,6 +422,9 @@ public partial class TrayApplicationContext : ApplicationContext
             finally
             {
                 completed();
+
+                if (Interlocked.Exchange(ref _pauseVisualPending, 0) != 0)
+                    UpdateTrayState();
             }
         });
     }
@@ -323,19 +433,80 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <param name="operation">The operation requiring exclusive access to runtime state.</param>
     private Task ExecuteSupervisionAsync(Action operation)
     {
-        return Task.Run(async () =>
-        {
-            await _supervisionGate.WaitAsync(_supervisionCancellation.Token).ConfigureAwait(false);
+        return Task.Run(
+            () => ExecuteSupervisionCoreAsync(operation),
+            _supervisionCancellation.Token
+        );
+    }
 
-            try
-            {
-                operation();
-            }
-            finally
-            {
-                _supervisionGate.Release();
-            }
-        }, _supervisionCancellation.Token);
+    /// <summary>Executes one operation under the common gate without scheduling a second worker.</summary>
+    private async Task ExecuteSupervisionCoreAsync(Action operation)
+    {
+        await _supervisionGate.WaitAsync(_supervisionCancellation.Token).ConfigureAwait(false);
+
+        try
+        {
+            operation();
+        }
+        finally
+        {
+            _supervisionGate.Release();
+        }
+    }
+
+    /// <summary>Freezes supervision deadlines across Windows sleep and hibernation.</summary>
+    private void SystemPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (_exiting)
+            return;
+
+        if (e.Mode == PowerModes.Suspend)
+        {
+            _systemSuspended = true;
+            SupervisorTime.Suspend();
+            _monitorTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _lifecycleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _ensureClosedTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            return;
+        }
+
+        if (e.Mode != PowerModes.Resume)
+            return;
+
+        _resumeResetPending = true;
+        SupervisorTime.Resume();
+        _systemSuspended = false;
+        QueueSupervisionWork(ResumeAfterSystemSuspend, static () => { });
+    }
+
+    /// <summary>Restarts only the timers allowed by the current pause and configuration state.</summary>
+    private void ResumeAfterSystemSuspend()
+    {
+        if (_exiting || _systemSuspended)
+            return;
+
+        try
+        {
+            _applicationUsageRegistry.SuspendCleanup();
+            _steamVrMonitor.ResetAfterSystemSuspend();
+
+            foreach (SupervisorProfile profile in _profiles)
+                profile.SuspendMonitoring();
+        }
+        catch (Exception ex)
+        {
+            SupervisorLog.WriteError("Could not fully reset monitoring after system resume.", ex);
+        }
+        finally
+        {
+            _resumeResetPending = false;
+        }
+
+        if (!_paused && !_pausing && !_systemSuspended)
+            _monitorTimer.Change(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
+        ResetEnsureClosedTimer();
+        ResetLifecycleTimer();
     }
 
     /// <summary>
@@ -345,8 +516,17 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <param name="e">The menu-click event data.</param>
     private async void TogglePause(object? sender, EventArgs e)
     {
-        if (_exiting || (_configurationError && !_hasValidConfiguration))
+        if (_exiting || _pausing || (_configurationError && !_hasValidConfiguration))
             return;
+
+        if (!_paused)
+        {
+            _pausing = true;
+            _pausedManually = true;
+            _monitorTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _ensureClosedTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            UpdateTrayState();
+        }
 
         try
         {
@@ -355,16 +535,21 @@ public partial class TrayApplicationContext : ApplicationContext
                 if (_exiting)
                     return;
 
-                _paused = !_paused;
-                _pausedManually = _paused;
-
                 if (_paused)
                 {
-                    _applicationUsageRegistry.SuspendCleanup();
-                    _steamVrMonitor.Suspend();
+                    _paused = false;
+                    _pausedManually = false;
 
+                    if (!_systemSuspended && !_resumeResetPending)
+                        _monitorTimer.Change(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+                }
+                else
+                {
                     foreach (SupervisorProfile profile in _profiles)
-                        profile.SuspendMonitoring();
+                        profile.BeginPauseDrain();
+
+                    _pauseDrainStarted = true;
+                    ResetLifecycleTimer();
                 }
             });
         }
@@ -373,10 +558,9 @@ public partial class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        if (!_paused)
-        {
-            ResetEnsureClosedTimer();
-        }
+        ResetEnsureClosedTimer();
+        ResetLifecycleTimer();
+        Volatile.Write(ref _pauseVisualPending, 0);
         UpdateTrayState();
     }
 
@@ -472,7 +656,12 @@ public partial class TrayApplicationContext : ApplicationContext
                 _hasValidConfiguration = true;
                 _configurationError = false;
                 if (_paused && !_pausedManually)
+                {
                     _paused = false;
+
+                    if (!_systemSuspended && !_resumeResetPending)
+                        _monitorTimer.Change(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+                }
 
                 lock (_runtimeStateLock)
                 {
@@ -480,7 +669,7 @@ public partial class TrayApplicationContext : ApplicationContext
                     _inactiveCleanupError = false;
                     _activeHealthErrors.Clear();
                     _reportedProfileTickErrors.Clear();
-                    _reportedStartupTickErrors.Clear();
+                    _reportedLifecycleTickErrors.Clear();
                 }
                 _steamVrMonitoringEnabled = newConfig.Integrations.SteamVr.Enabled;
                 _steamVrMonitor.ApplyConfiguration(newConfig.Integrations.SteamVr);
@@ -512,6 +701,7 @@ public partial class TrayApplicationContext : ApplicationContext
         }
 
         ResetEnsureClosedTimer();
+        ResetLifecycleTimer();
 
         if (showNotification)
         {
@@ -549,6 +739,9 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             _paused = true;
             _pausedManually = false;
+            _monitorTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _lifecycleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _ensureClosedTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
 
         UpdateTrayState();
@@ -746,6 +939,9 @@ public partial class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void UpdateTrayState()
     {
+        if (Volatile.Read(ref _pauseVisualPending) != 0)
+            return;
+
         bool hasRuntimeError;
 
         lock (_runtimeStateLock)
@@ -755,10 +951,10 @@ public partial class TrayApplicationContext : ApplicationContext
                 _activeRuntimeErrors.Count > 0 ||
                 _activeHealthErrors.Count > 0 ||
                 _reportedProfileTickErrors.Count > 0 ||
-                _reportedStartupTickErrors.Count > 0;
+                _reportedLifecycleTickErrors.Count > 0;
         }
 
-        bool pauseEnabled = !(_configurationError && !_hasValidConfiguration);
+        bool pauseEnabled = !_pausing && !(_configurationError && !_hasValidConfiguration);
         bool startupPending = !_paused && _profiles.Any(profile => profile.StartupPending);
         bool waitingForCloseTimeout = !_paused &&
             _profiles.Any(profile => profile.WaitingForCloseTimeout);
@@ -769,13 +965,20 @@ public partial class TrayApplicationContext : ApplicationContext
         string shutdownText = resourceDeactivationPending
             ? "closing helpers"
             : "waiting to close helpers";
-        string pauseText = _paused
-            ? "Resume"
-            : "Pause";
+        string pauseText = _pausing
+            ? "Pausing..."
+            : _paused
+                ? "Resume"
+                : "Pause";
         Icon icon;
         string text;
 
-        if (_pausedManually)
+        if (_pausing)
+        {
+            icon = _errorIcon;
+            text = "AppSupervisor - Pausing; finishing lifecycle tasks";
+        }
+        else if (_pausedManually)
         {
             icon = _pausedIcon;
             text = "AppSupervisor - Paused";
@@ -925,9 +1128,12 @@ public partial class TrayApplicationContext : ApplicationContext
         CloseAllWindows();
         SaveVerifiedConfigurationBackup();
         Application.ApplicationExit -= ApplicationExiting;
+        SystemEvents.PowerModeChanged -= SystemPowerModeChanged;
         _paused = true;
+        _pausing = false;
+        _pauseDrainStarted = false;
         _monitorTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-        _startupTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _lifecycleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         _ensureClosedTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
         await ExecuteSupervisionAsync(() =>
@@ -947,7 +1153,7 @@ public partial class TrayApplicationContext : ApplicationContext
         await Task.Run(_notificationService.Dispose);
 
         _ensureClosedTimer.Dispose();
-        _startupTimer.Dispose();
+        _lifecycleTimer.Dispose();
         _monitorTimer.Dispose();
 
         _trayIcon.Visible = false;

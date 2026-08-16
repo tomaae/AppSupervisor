@@ -29,6 +29,26 @@ public sealed class ManagedServiceTests
         Assert.Equal(1, controller.StartCalls);
     }
 
+    [Fact]
+    public void Readiness_ReusesStateObservedOrPredictedByLifecyclePass()
+    {
+        var controller = new FakeServiceController
+        {
+            State = ServiceRuntimeState.Stopped
+        };
+        using var service = CreateService(controller, TimeSpan.FromSeconds(20));
+        service.Initialize();
+
+        service.Activate();
+
+        Assert.False(service.IsStarted());
+        Assert.Equal(1, controller.StateQueries);
+        controller.State = ServiceRuntimeState.Running;
+        service.Supervise();
+        Assert.True(service.IsStarted());
+        Assert.Equal(2, controller.StateQueries);
+    }
+
     /// <summary>
     /// Confirms an unexpectedly stopped service restarts only after its restart timeout has elapsed.
     /// </summary>
@@ -83,6 +103,8 @@ public sealed class ManagedServiceTests
 
         public int StartCalls { get; private set; }
 
+        public int StateQueries { get; private set; }
+
         /// <summary>
         /// Records Manual-start enforcement and permission verification.
         /// </summary>
@@ -92,7 +114,11 @@ public sealed class ManagedServiceTests
         /// Returns the state selected by the test.
         /// </summary>
         /// <returns>The current fake service state.</returns>
-        public ServiceRuntimeState GetState() => State;
+        public ServiceRuntimeState GetState()
+        {
+            StateQueries++;
+            return State;
+        }
 
         /// <summary>
         /// Records a start request.

@@ -86,6 +86,7 @@ public sealed class ApplicationUsageRegistryTests
         );
         registry.CompleteRegistration();
 
+        Assert.True(registry.HasCleanupTargets);
         Assert.NotNull(cleanup);
         Assert.NotNull(cleanupConfiguration);
         Assert.False(cleanupConfiguration.Restart);
@@ -104,16 +105,16 @@ public sealed class ApplicationUsageRegistryTests
         ensuringActive = true;
         registry.AdvanceCleanup();
 
-        Assert.False(cleanup.CloseOperationPending);
-        Assert.True(cleanup.CancelPendingRecoveryCalls > 0);
-        Assert.Equal(0, cleanup.SuperviseDeactivationCalls);
+        Assert.True(cleanup.CloseOperationPending);
+        Assert.Equal(0, cleanup.CancelPendingRecoveryCalls);
+        Assert.Equal(1, cleanup.SuperviseDeactivationCalls);
 
         ensuringActive = false;
         registry.Sweep();
         registry.AdvanceCleanup();
 
-        Assert.Equal(2, cleanup.DeactivateCalls);
-        Assert.Equal(1, cleanup.SuperviseDeactivationCalls);
+        Assert.Equal(1, cleanup.DeactivateCalls);
+        Assert.Equal(2, cleanup.SuperviseDeactivationCalls);
         Assert.True(cleanup.CloseOperationPending);
 
         registry.SuspendCleanup();
@@ -146,6 +147,7 @@ public sealed class ApplicationUsageRegistryTests
         registry.CompleteRegistration();
         registry.Sweep();
 
+        Assert.False(registry.HasCleanupTargets);
         Assert.Equal(0, cleanupFactoryCalls);
     }
 
@@ -176,6 +178,7 @@ public sealed class ApplicationUsageRegistryTests
         registry.CompleteRegistration();
         registry.Sweep();
 
+        Assert.False(registry.HasCleanupTargets);
         Assert.Equal(0, cleanupFactoryCalls);
     }
 

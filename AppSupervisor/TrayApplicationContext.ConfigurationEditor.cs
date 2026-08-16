@@ -1,5 +1,6 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
+using Microsoft.Win32;
 
 namespace AppSupervisor;
 
@@ -54,6 +55,7 @@ public partial class TrayApplicationContext
     private void ApplicationExiting(object? sender, EventArgs e)
     {
         _exiting = true;
+        SystemEvents.PowerModeChanged -= SystemPowerModeChanged;
         Application.Idle -= ApplicationBecameIdle;
         _configurationLoadGeneration++;
         CloseAllWindows();

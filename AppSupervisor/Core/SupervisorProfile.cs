@@ -133,6 +133,29 @@ public sealed class SupervisorProfile : IDisposable
     internal bool ResourceDeactivationPending =>
         !TriggerActive && _deactivationStarted;
 
+    /// <summary>Gets whether a resource transition needs an immediate lifecycle pass.</summary>
+    internal bool ImmediateLifecycleWorkPending =>
+        _resources.Any(resource =>
+            resource is IManagedResourceLifecycleWork lifecycle &&
+            lifecycle.LifecycleWorkPending);
+
+    /// <summary>Gets the next delayed startup deadline, if startup is only waiting for time.</summary>
+    internal DateTime? NextStartupDueUtc =>
+        StartupPending &&
+        _nextStartupIndex < _startupResources.Count &&
+        SupervisorTime.UtcNow < _nextStartupUtc
+            ? _nextStartupUtc
+            : null;
+
+    /// <summary>Gets whether startup sequencing or a resource transition needs the lifecycle timer.</summary>
+    internal bool LifecycleWorkPending =>
+        ImmediateLifecycleWorkPending || NextStartupDueUtc is not null;
+
+    /// <summary>Gets whether cancelled profile background work is still unwinding for pause.</summary>
+    internal bool PauseDrainPending =>
+        _resources.Any(resource =>
+            resource is IPauseDrainWork drain && drain.PauseDrainPending);
+
     /// <summary>
     /// Checks whether this profile currently requires its resources to remain available.
     /// </summary>
@@ -217,6 +240,7 @@ public sealed class SupervisorProfile : IDisposable
                 }
             }
 
+            AdvanceStartup(SupervisorTime.UtcNow);
             return false;
         }
 
@@ -226,7 +250,7 @@ public sealed class SupervisorProfile : IDisposable
                 $"TRACE Profile '{Name}': trigger disappeared; entering close timeout."
             );
             TriggerActive = false;
-            _triggerMissingSince = DateTime.UtcNow;
+            _triggerMissingSince = SupervisorTime.UtcNow;
             CancelStartupSequence();
             _deactivationStarted = false;
 
@@ -255,6 +279,9 @@ public sealed class SupervisorProfile : IDisposable
         {
             foreach (IManagedResource resource in _activatedResources)
             {
+                if (resource is IManagedResourceLifecycleWork)
+                    continue;
+
                 RunResourceOperation(
                     resource,
                     resource.SuperviseDeactivation,
@@ -274,7 +301,7 @@ public sealed class SupervisorProfile : IDisposable
         if (_triggerMissingSince is null)
             return false;
 
-        if (DateTime.UtcNow - _triggerMissingSince >= _closeTimeout)
+        if (SupervisorTime.UtcNow - _triggerMissingSince >= _closeTimeout)
         {
             SupervisorLog.WriteInformation(
                 $"TRACE Profile '{Name}': close timeout elapsed; beginning resource deactivation."
@@ -289,6 +316,55 @@ public sealed class SupervisorProfile : IDisposable
         }
 
         return false;
+    }
+
+    /// <summary>Advances resource transitions first, then dependency and delay-gated startup.</summary>
+    /// <param name="nowUtc">The timestamp shared by the serialized lifecycle pass.</param>
+    internal void AdvanceLifecycle(DateTime nowUtc)
+    {
+        if (_disposed)
+            return;
+
+        foreach (IManagedResource resource in _resources)
+        {
+            if (resource is not IManagedResourceLifecycleWork lifecycle ||
+                !lifecycle.LifecycleWorkPending)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (lifecycle.AdvanceLifecycle(nowUtc) == ManagedResourceUpdate.Restarted)
+                    ResourceRestarted?.Invoke(this, resource);
+            }
+            catch (Exception ex)
+            {
+                OnResourceError(resource, $"Unexpected lifecycle failure: {ex.Message}");
+            }
+        }
+
+        AdvanceStartup(nowUtc);
+
+        if (_deactivationStarted && !HasPendingResourceDeactivation())
+        {
+            _deactivationStarted = false;
+            _activatedResources.Clear();
+        }
+    }
+
+    /// <summary>Requests cancellation of background probes after the current monitor pass finishes.</summary>
+    internal void BeginPauseDrain()
+    {
+        foreach (IPauseDrainWork drain in _resources.OfType<IPauseDrainWork>())
+            drain.BeginPauseDrain();
+    }
+
+    /// <summary>Reaps background probe cancellation from the lifecycle timer.</summary>
+    internal void AdvancePauseDrain()
+    {
+        foreach (IPauseDrainWork drain in _resources.OfType<IPauseDrainWork>())
+            drain.AdvancePauseDrain();
     }
 
     /// <summary>Cancels asynchronous resource monitoring while leaving all external resources untouched.</summary>
@@ -337,7 +413,7 @@ public sealed class SupervisorProfile : IDisposable
     {
         _activatedResources.Clear();
         _nextStartupIndex = 0;
-        DateTime nowUtc = DateTime.UtcNow;
+        DateTime nowUtc = SupervisorTime.UtcNow;
         _nextStartupUtc = nowUtc;
         _startupPending = _startupResources.Count > 0;
         AdvanceStartup(nowUtc);

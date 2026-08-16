@@ -39,7 +39,9 @@ public static partial class ConfigValidator
     private static void ValidateHomeAssistantResources(
         SupervisorProfileConfig profile,
         string profileLabel,
-        ICollection<string> errors)
+        ICollection<string> errors,
+        IDictionary<string, string> activeEntities,
+        bool profileEnabled)
     {
         if (profile.HomeAssistantResources is null)
         {
@@ -96,6 +98,23 @@ public static partial class ConfigValidator
                 errors.Add(
                     $"{label} cannot verify or persist button.press because Home Assistant buttons are stateless."
                 );
+            }
+
+            if (!profileEnabled)
+                continue;
+
+            string entityId = resource.EntityId!.Trim();
+
+            if (activeEntities.TryGetValue(entityId, out string? existingOwner))
+            {
+                errors.Add(
+                    $"{label} duplicates the Home Assistant entity already used by " +
+                    $"{existingOwner}: {entityId}"
+                );
+            }
+            else
+            {
+                activeEntities.Add(entityId, label);
             }
         }
     }

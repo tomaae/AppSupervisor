@@ -11,7 +11,9 @@ internal static class ProcessPathDiscovery
     /// <summary>Finds every inspectable process whose executable path matches the supplied path.</summary>
     /// <param name="executablePath">The fully qualified executable identity.</param>
     /// <returns>A stable set of matching process identifiers.</returns>
-    public static IReadOnlySet<int> FindRunningProcessIds(string executablePath)
+    public static IReadOnlySet<int> FindRunningProcessIds(
+        string executablePath,
+        bool useSharedCache = true)
     {
         var processIds = new HashSet<int>();
 
@@ -30,7 +32,30 @@ internal static class ProcessPathDiscovery
             return processIds;
         }
 
-        foreach (int processId in ProcessPathSnapshot.FindCandidateProcessIds(expectedPath))
+        IReadOnlySet<int> candidateIds;
+
+        if (useSharedCache)
+        {
+            candidateIds = ProcessPathSnapshot.FindExactPathProcessIds(expectedPath);
+        }
+        else
+        {
+            Process[] candidates = Process.GetProcessesByName(
+                Path.GetFileNameWithoutExtension(expectedPath)
+            );
+
+            try
+            {
+                candidateIds = candidates.Select(process => process.Id).ToHashSet();
+            }
+            finally
+            {
+                foreach (Process candidate in candidates)
+                    candidate.Dispose();
+            }
+        }
+
+        foreach (int processId in candidateIds)
         {
             Process? process = null;
             try

@@ -6,6 +6,32 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies ordered, nonblocking helper application and service startup.</summary>
 public sealed class StartupSequencingTests
 {
+    /// <summary>Confirms the lifecycle pass settles an accepted asynchronous start before startup completes.</summary>
+    [Fact]
+    public void AdvanceLifecycle_PendingStart_DrainsBeforeProfileBecomesIdle()
+    {
+        var resource = new LifecycleResource();
+        using var profile = CreateProfile(
+            new FakeTrigger { Active = true },
+            new ManagedResourceStartup(resource, "resource", 0, "")
+        );
+
+        profile.Update();
+
+        Assert.True(profile.LifecycleWorkPending);
+        Assert.True(profile.StartupPending);
+
+        profile.AdvanceLifecycle(DateTime.UtcNow);
+
+        Assert.True(profile.LifecycleWorkPending);
+
+        profile.AdvanceLifecycle(DateTime.UtcNow.AddMilliseconds(100));
+
+        Assert.False(profile.LifecycleWorkPending);
+        Assert.False(profile.StartupPending);
+        Assert.Equal(2, resource.AdvanceCalls);
+    }
+
     /// <summary>Confirms a wait delays only later resources in the same profile.</summary>
     [Fact]
     public void AdvanceStartup_WaitAfterStartup_DelaysFollowingResources()
@@ -26,6 +52,8 @@ public sealed class StartupSequencingTests
 
         Assert.Equal(1, first.ActivateCalls);
         Assert.Equal(0, second.ActivateCalls);
+        Assert.False(profile.ImmediateLifecycleWorkPending);
+        Assert.NotNull(profile.NextStartupDueUtc);
         profile.AdvanceStartup(afterActivationUtc.AddSeconds(59));
         Assert.Equal(0, second.ActivateCalls);
 
@@ -33,6 +61,25 @@ public sealed class StartupSequencingTests
 
         Assert.Equal(1, second.ActivateCalls);
         Assert.Equal(1, third.ActivateCalls);
+        Assert.False(profile.StartupPending);
+    }
+
+    [Fact]
+    public void Update_NotReadyWithoutImmediateWork_RechecksOnMonitorPass()
+    {
+        var resource = new FakeResource { Started = false };
+        using var profile = CreateProfile(
+            new FakeTrigger { Active = true },
+            new ManagedResourceStartup(resource, "resource", 0, "")
+        );
+        profile.Update();
+
+        Assert.True(profile.StartupPending);
+        Assert.False(profile.LifecycleWorkPending);
+
+        resource.Started = true;
+        profile.Update();
+
         Assert.False(profile.StartupPending);
     }
 
@@ -210,6 +257,59 @@ public sealed class StartupSequencingTests
         public void SuperviseDeactivation() { }
 
         /// <summary>Releases no external test resources.</summary>
+        public void Dispose() { }
+    }
+
+    /// <summary>Models a helper that becomes ready on its second 100ms lifecycle pass.</summary>
+    private sealed class LifecycleResource :
+        IManagedResource,
+        IManagedResourceReadiness,
+        IManagedResourceLifecycleWork
+    {
+        private bool _pending;
+        private bool _started;
+
+        public event Action<IManagedResource, string>? ErrorOccurred
+        {
+            add { }
+            remove { }
+        }
+
+        public string DisplayName => "Lifecycle resource";
+
+        public IReadOnlyList<NotificationTarget> NotificationTargets => [];
+
+        public bool LifecycleWorkPending => _pending;
+
+        public int AdvanceCalls { get; private set; }
+
+        public void Activate() => _pending = true;
+
+        public bool IsStarted() => _started;
+
+        public ManagedResourceUpdate AdvanceLifecycle(DateTime nowUtc)
+        {
+            AdvanceCalls++;
+
+            if (AdvanceCalls >= 2)
+            {
+                _pending = false;
+                _started = true;
+            }
+
+            return ManagedResourceUpdate.None;
+        }
+
+        public ManagedResourceUpdate Supervise() => ManagedResourceUpdate.None;
+
+        public void CancelPendingRecovery() { }
+
+        public void SuspendMonitoring() { }
+
+        public void Deactivate() { }
+
+        public void SuperviseDeactivation() { }
+
         public void Dispose() { }
     }
 }

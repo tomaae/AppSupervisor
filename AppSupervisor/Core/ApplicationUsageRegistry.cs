@@ -15,6 +15,13 @@ internal sealed class ApplicationUsageRegistry : IDisposable
     private bool _registrationCompleted;
     private bool _disposed;
 
+    /// <summary>Gets whether registration produced at least one inactive-helper cleanup lifecycle.</summary>
+    public bool HasCleanupTargets { get; private set; }
+
+    /// <summary>Gets whether an inactive cleanup owns lifecycle work that must be drained.</summary>
+    public bool LifecycleWorkPending =>
+        !_disposed && _usages.Values.Any(usage => usage.LifecycleWorkPending);
+
     /// <summary>Occurs when an inactive helper remains open after all configured close attempts.</summary>
     public event Action<string, string, IReadOnlyList<NotificationTarget>>? CleanupFailed;
 
@@ -89,6 +96,7 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         foreach (ApplicationUsage usage in _usages.Values)
             usage.CompleteRegistration(_cleanupFactory);
 
+        HasCleanupTargets = _usages.Values.Any(usage => usage.CleanupEnabled);
         _registrationCompleted = true;
     }
 
@@ -122,15 +130,21 @@ internal sealed class ApplicationUsageRegistry : IDisposable
     }
 
     /// <summary>
-    /// Advances already-started graceful close operations and cancels them if any profile needs the helper again.
+    /// Advances already-started graceful close operations to a terminal state.
     /// </summary>
     public void AdvanceCleanup()
+    {
+        AdvanceLifecycle(SupervisorTime.UtcNow);
+    }
+
+    /// <summary>Advances pending cleanup transitions from the shared lifecycle timer.</summary>
+    public void AdvanceLifecycle(DateTime nowUtc)
     {
         if (_disposed || !_registrationCompleted)
             return;
 
         foreach (ApplicationUsage usage in _usages.Values)
-            usage.AdvanceCleanup();
+            usage.AdvanceCleanup(nowUtc);
     }
 
     /// <summary>Cancels every pending cleanup close so paused time cannot advance a fallback timeout.</summary>
@@ -154,6 +168,7 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         foreach (ApplicationUsage usage in _usages.Values)
             usage.Dispose();
 
+        HasCleanupTargets = false;
         _usages.Clear();
         CleanupFailed = null;
         CleanupRecovered = null;
@@ -192,6 +207,14 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         private readonly Action _reportRecovery;
         private IManagedApplicationLifecycle? _cleanupApplication;
         private IReadOnlyList<NotificationTarget> _cleanupTargets = [];
+
+        /// <summary>Gets whether this executable owns an effective inactive-cleanup lifecycle.</summary>
+        public bool CleanupEnabled => _cleanupApplication is not null;
+
+        /// <summary>Gets whether this cleanup application owns transition work.</summary>
+        public bool LifecycleWorkPending =>
+            _cleanupApplication is IManagedResourceLifecycleWork lifecycle &&
+            lifecycle.LifecycleWorkPending;
 
         /// <summary>Creates an empty executable usage group.</summary>
         /// <param name="path">The canonical executable path.</param>
@@ -279,31 +302,23 @@ internal sealed class ApplicationUsageRegistry : IDisposable
                 return;
 
             if (IsRequiredByAnyOwner())
-            {
-                _cleanupApplication.CancelPendingRecovery();
                 return;
-            }
 
             if (!_cleanupApplication.CloseOperationPending)
                 _cleanupApplication.Deactivate();
         }
 
-        /// <summary>Advances one pending cleanup close while continuously rechecking active profile usage.</summary>
-        public void AdvanceCleanup()
+        /// <summary>Advances one accepted cleanup close without interrupting it midway.</summary>
+        public void AdvanceCleanup(DateTime nowUtc)
         {
             if (_cleanupApplication is null ||
-                !_cleanupApplication.CloseOperationPending)
+                _cleanupApplication is not IManagedResourceLifecycleWork lifecycle ||
+                !lifecycle.LifecycleWorkPending)
             {
                 return;
             }
 
-            if (IsRequiredByAnyOwner())
-            {
-                _cleanupApplication.CancelPendingRecovery();
-                return;
-            }
-
-            _cleanupApplication.SuperviseDeactivation();
+            lifecycle.AdvanceLifecycle(nowUtc);
         }
 
         /// <summary>Cancels this executable's pending cleanup close without touching the process again.</summary>

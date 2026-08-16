@@ -12,6 +12,8 @@ public sealed class HealthCheckedApplication :
     IResourceNotificationSource,
     IManagedResourceReadiness,
     IManagedResourceDeactivationState,
+    IManagedResourceLifecycleWork,
+    IPauseDrainWork,
     IRecoverableResourceErrorSource
 {
     private readonly IManagedApplicationLifecycle _application;
@@ -31,7 +33,7 @@ public sealed class HealthCheckedApplication :
         : this(
             application,
             healthChecks,
-            () => ProcessPathDiscovery.FindRunningProcessIds(application.Config.Path)
+            application.GetRunningProcessIds
         )
     {
     }
@@ -79,9 +81,32 @@ public sealed class HealthCheckedApplication :
     /// <summary>Gets whether the wrapped application is still completing a close request.</summary>
     public bool DeactivationPending => _application.CloseOperationPending;
 
+    /// <summary>Gets whether application lifecycle or health-restart reconciliation remains pending.</summary>
+    bool IManagedResourceLifecycleWork.LifecycleWorkPending =>
+        ((IManagedResourceLifecycleWork)_application).LifecycleWorkPending ||
+        _restartCheck is not null;
+
+    /// <summary>Gets whether a cancelled health probe is still unwinding.</summary>
+    bool IPauseDrainWork.PauseDrainPending =>
+        _healthChecks.Any(healthCheck => healthCheck.PauseDrainPending);
+
+    /// <summary>Cancels health probes without interrupting application lifecycle transitions.</summary>
+    void IPauseDrainWork.BeginPauseDrain()
+    {
+        ResetHealthChecks(clearErrors: true);
+    }
+
+    /// <summary>Reaps completed cancelled probes without starting replacements.</summary>
+    void IPauseDrainWork.AdvancePauseDrain()
+    {
+        foreach (ManagedHealthCheck healthCheck in _healthChecks)
+            healthCheck.AdvancePauseDrain();
+    }
+
     /// <summary>Checks whether the wrapped helper process is started for dependency sequencing.</summary>
     /// <returns><see langword="true"/> when at least one matching helper process is running.</returns>
-    public bool IsStarted() => _application.IsRunning();
+    public bool IsStarted() =>
+        ((IManagedResourceReadiness)_application).IsStarted();
 
     /// <summary>Delegates one-time application initialization.</summary>
     public void Initialize() => ((IManagedResource)_application).Initialize();
@@ -106,12 +131,14 @@ public sealed class HealthCheckedApplication :
             return ManagedResourceUpdate.None;
 
         if (_restartCheck is not null)
-            return AdvanceHealthRestart();
+            return ManagedResourceUpdate.None;
 
         ManagedResourceUpdate applicationUpdate = _application.Supervise();
         IReadOnlySet<int> processIds = _processIdProvider();
 
-        if (processIds.Count != 1)
+        if (processIds.Count == 0 ||
+            (processIds.Count > 1 &&
+                ProcessPathSnapshot.FindIndependentRootProcessIds(processIds).Count != 1))
         {
             ResetHealthChecks(clearErrors: true);
             return applicationUpdate;
@@ -120,7 +147,7 @@ public sealed class HealthCheckedApplication :
         if (applicationUpdate == ManagedResourceUpdate.Restarted)
             ResetHealthChecks(clearErrors: false);
 
-        DateTime nowUtc = DateTime.UtcNow;
+        DateTime nowUtc = SupervisorTime.UtcNow;
 
         foreach (ManagedHealthCheck healthCheck in _healthChecks)
             healthCheck.Poll(processIds, nowUtc);
@@ -154,6 +181,21 @@ public sealed class HealthCheckedApplication :
 
     /// <summary>Advances the application's normal graceful profile-deactivation close operation.</summary>
     public void SuperviseDeactivation() => _application.SuperviseDeactivation();
+
+    /// <summary>Advances the wrapped transition and completes health recovery after exact-path confirmation.</summary>
+    ManagedResourceUpdate IManagedResourceLifecycleWork.AdvanceLifecycle(DateTime nowUtc)
+    {
+        ManagedResourceUpdate update =
+            ((IManagedResourceLifecycleWork)_application).AdvanceLifecycle(nowUtc);
+
+        if (update == ManagedResourceUpdate.Restarted)
+            ResetHealthChecks(clearErrors: false);
+
+        if (_restartCheck is not null)
+            AdvanceHealthRestart(nowUtc);
+
+        return update;
+    }
 
     /// <summary>Cancels probes and health recovery while leaving the external helper untouched.</summary>
     public void SuspendMonitoring()
@@ -196,35 +238,30 @@ public sealed class HealthCheckedApplication :
 
     /// <summary>Continues closing all helper instances, then starts exactly one replacement after confirming they are gone.</summary>
     /// <returns>No generic restart result because the wrapper publishes the check-specific warning itself.</returns>
-    private ManagedResourceUpdate AdvanceHealthRestart()
+    private void AdvanceHealthRestart(DateTime nowUtc)
     {
         ManagedHealthCheck recoveryCheck = _restartCheck!;
 
         if (!_replacementStartRequested)
         {
-            if (_application.CloseOperationPending)
-                _application.SuperviseDeactivation();
-
             if (_restartCheck is null || _application.CloseOperationPending)
-                return ManagedResourceUpdate.None;
+                return;
 
             _replacementStartRequested = true;
             _application.Activate();
 
             if (_restartCheck is null)
-                return ManagedResourceUpdate.None;
+                return;
         }
 
-        if (_application.CloseOperationPending)
-        {
-            _application.Supervise();
+        ((IManagedResourceLifecycleWork)_application).AdvanceLifecycle(nowUtc);
 
-            if (_restartCheck is null || _application.CloseOperationPending)
-                return ManagedResourceUpdate.None;
-        }
+        if (_restartCheck is null ||
+            ((IManagedResourceLifecycleWork)_application).LifecycleWorkPending)
+            return;
 
         if (!_application.IsRunning())
-            return ManagedResourceUpdate.None;
+            return;
 
         _restartCheck = null;
         _replacementStartRequested = false;
@@ -236,7 +273,6 @@ public sealed class HealthCheckedApplication :
             $"{DisplayName} was restarted because health check '{recoveryCheck.Name}' failed.",
             ResourceErrorState.None
         );
-        return ManagedResourceUpdate.None;
     }
 
     /// <summary>Publishes a debounced health failure and requests one graceful restart when configured.</summary>

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using AppSupervisor.Core;
 
 namespace AppSupervisor.Health;
 
@@ -20,16 +20,6 @@ public sealed class ProcessRunningCondition : IHealthCheckActivationCondition
     /// <returns><see langword="true"/> when one or more matching processes exist.</returns>
     public bool IsActive()
     {
-        Process[] processes = Process.GetProcessesByName(_processName);
-
-        try
-        {
-            return processes.Length > 0;
-        }
-        finally
-        {
-            foreach (Process process in processes)
-                process.Dispose();
-        }
+        return ProcessPathSnapshot.IsProcessNameRunning(_processName);
     }
 }

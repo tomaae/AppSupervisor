@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using AppSupervisor.Core;
 using VRC.OSCQuery;
 
 namespace AppSupervisor.Health;
@@ -206,7 +207,7 @@ public sealed class VrcOscQueryProbe : IHealthProbe
             );
         }
 
-        DateTime nowUtc = DateTime.UtcNow;
+        DateTime nowUtc = SupervisorTime.UtcNow;
         int staleCount = 0;
 
         foreach (string parameter in requestedValues)

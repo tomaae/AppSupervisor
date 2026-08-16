@@ -5,12 +5,15 @@ using AppSupervisor.Notifications;
 namespace AppSupervisor.Resources;
 
 /// <summary>
-/// Applies one deterministic Home Assistant action asynchronously and optionally keeps its state persistent.
+/// Queues deterministic Home Assistant actions for the serialized lifecycle timer and optionally
+/// keeps the requested state persistent.
 /// </summary>
 internal sealed class HomeAssistantResource :
     IManagedResource,
     IManagedResourceReadiness,
     IManagedResourceDeactivationState,
+    IManagedResourceLifecycleWork,
+    IPauseDrainWork,
     IRecoverableResourceErrorSource
 {
     private static readonly TimeSpan PersistenceInterval = TimeSpan.FromMinutes(1);
@@ -22,8 +25,9 @@ internal sealed class HomeAssistantResource :
     private readonly IHomeAssistantClient _client;
     private readonly TimeProvider _timeProvider;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly Queue<HomeAssistantOperation> _operations = new();
     private CancellationTokenSource? _operationCancellation;
-    private int _operationGeneration;
+    private HomeAssistantOperation? _currentOperation;
     private bool _operationPending;
     private bool _profileActive;
     private bool _activationComplete;
@@ -36,7 +40,7 @@ internal sealed class HomeAssistantResource :
     internal HomeAssistantResource(
         HomeAssistantResourceConfig configuration,
         HomeAssistantIntegrationConfig integration)
-        : this(configuration, new HomeAssistantClient(integration), TimeProvider.System)
+        : this(configuration, new HomeAssistantClient(integration), SupervisorTime.Provider)
     {
     }
 
@@ -47,7 +51,7 @@ internal sealed class HomeAssistantResource :
     {
         _configuration = configuration;
         _client = client;
-        _timeProvider = timeProvider ?? TimeProvider.System;
+        _timeProvider = timeProvider ?? SupervisorTime.Provider;
     }
 
     public event Action<IManagedResource, string>? ErrorOccurred;
@@ -61,17 +65,34 @@ internal sealed class HomeAssistantResource :
     public IReadOnlyList<NotificationTarget> NotificationTargets =>
         _configuration.Notifications.Target;
 
-    /// <summary>Gets whether the profile's inverse Home Assistant action is still running.</summary>
+    public bool LifecycleWorkPending
+    {
+        get
+        {
+            lock (_stateLock)
+                return !_disposed && (_operationPending || _operations.Count > 0);
+        }
+    }
+
     public bool DeactivationPending
     {
         get
         {
             lock (_stateLock)
-                return !_profileActive && _operationPending;
+                return !_profileActive && (_operationPending || _operations.Count > 0);
         }
     }
 
-    /// <summary>Issues the configured service call without blocking the startup scheduler.</summary>
+    public bool PauseDrainPending
+    {
+        get
+        {
+            lock (_stateLock)
+                return !_disposed && (_operationPending || _operations.Count > 0);
+        }
+    }
+
+    /// <summary>Queues the configured action; the lifecycle timer starts it in order.</summary>
     public void Activate()
     {
         lock (_stateLock)
@@ -82,27 +103,17 @@ internal sealed class HomeAssistantResource :
             _profileActive = true;
             _persistenceSuspended = false;
             _activationComplete = false;
-            StartOperationNoLock(
-                cancellationToken => ApplyServiceAsync(
-                    _configuration.Service,
-                    DesiredState,
-                    _configuration.VerifyStateChange,
-                    cancellationToken
-                ),
-                completesActivation: true,
-                reportsRestoration: false
-            );
+            EnqueueNoLock(HomeAssistantOperation.Activation);
         }
     }
 
-    /// <summary>Reports readiness only after the initial service call and optional verification complete.</summary>
     public bool IsStarted()
     {
         lock (_stateLock)
-            return !_disposed && _activationComplete;
+            return !_disposed && _profileActive && _activationComplete;
     }
 
-    /// <summary>Schedules retry or one-minute persistence work and reports completed corrections.</summary>
+    /// <summary>Produces due retries and persistence checks; it never starts network work.</summary>
     public ManagedResourceUpdate Supervise()
     {
         lock (_stateLock)
@@ -114,29 +125,12 @@ internal sealed class HomeAssistantResource :
             bool restored = _stateRestored;
             _stateRestored = false;
 
-            if (!_operationPending && UtcNow >= _nextOperationUtc)
+            if (!_operationPending && _operations.Count == 0 && UtcNow >= _nextOperationUtc)
             {
                 if (!_activationComplete)
-                {
-                    StartOperationNoLock(
-                        cancellationToken => ApplyServiceAsync(
-                            _configuration.Service,
-                            DesiredState,
-                            _configuration.VerifyStateChange,
-                            cancellationToken
-                        ),
-                        completesActivation: true,
-                        reportsRestoration: false
-                    );
-                }
+                    EnqueueNoLock(HomeAssistantOperation.Activation);
                 else if (_configuration.Persistent && !_persistenceSuspended && IsStateful)
-                {
-                    StartOperationNoLock(
-                        CheckAndRestoreAsync,
-                        completesActivation: false,
-                        reportsRestoration: true
-                    );
-                }
+                    EnqueueNoLock(HomeAssistantOperation.Persistence);
             }
 
             return restored
@@ -145,29 +139,17 @@ internal sealed class HomeAssistantResource :
         }
     }
 
-    /// <summary>Stops persistence while the profile waits through its close timeout.</summary>
+    /// <summary>Stops producing persistence checks while preserving already accepted work.</summary>
     public void CancelPendingRecovery()
     {
         lock (_stateLock)
         {
             _persistenceSuspended = true;
-
-            if (_activationComplete)
-                CancelOperationNoLock();
+            RemoveQueuedPersistenceNoLock();
         }
     }
 
-    /// <summary>Cancels network work without changing the external entity while AppSupervisor is paused.</summary>
-    public void SuspendMonitoring()
-    {
-        lock (_stateLock)
-        {
-            _persistenceSuspended = true;
-            CancelOperationNoLock();
-        }
-    }
-
-    /// <summary>Applies the deterministic inverse service after the profile close timeout.</summary>
+    /// <summary>Applies the deterministic inverse after all earlier HA work finishes.</summary>
     public void Deactivate()
     {
         lock (_stateLock)
@@ -178,28 +160,50 @@ internal sealed class HomeAssistantResource :
             _profileActive = false;
             _activationComplete = false;
             _persistenceSuspended = true;
-            CancelOperationNoLock();
-            string? reverseService = ReverseService;
+            RemoveQueuedPersistenceNoLock();
 
-            if (reverseService is null)
-                return;
-
-            StartOperationNoLock(
-                cancellationToken => ApplyServiceAsync(
-                    reverseService,
-                    ReverseDesiredState,
-                    _configuration.VerifyStateChange,
-                    cancellationToken
-                ),
-                completesActivation: false,
-                reportsRestoration: false
-            );
+            if (ReverseService is not null)
+                EnqueueNoLock(HomeAssistantOperation.Deactivation);
         }
     }
 
     public void SuperviseDeactivation() { }
 
-    /// <summary>Cancels outstanding calls and releases the private HTTP client without changing HA state.</summary>
+    /// <summary>Starts at most one queued HA action from the serialized lifecycle pass.</summary>
+    public ManagedResourceUpdate AdvanceLifecycle(DateTime nowUtc)
+    {
+        lock (_stateLock)
+        {
+            if (_disposed || _operationPending || _operations.Count == 0)
+                return ManagedResourceUpdate.None;
+
+            StartOperationNoLock(_operations.Dequeue());
+            return ManagedResourceUpdate.None;
+        }
+    }
+
+    public void BeginPauseDrain()
+    {
+        lock (_stateLock)
+        {
+            _persistenceSuspended = true;
+            RemoveQueuedPersistenceNoLock();
+        }
+    }
+
+    public void AdvancePauseDrain() { }
+
+    /// <summary>Stops future persistence monitoring after the accepted action queue has drained.</summary>
+    public void SuspendMonitoring()
+    {
+        lock (_stateLock)
+        {
+            _persistenceSuspended = true;
+            RemoveQueuedPersistenceNoLock();
+        }
+    }
+
+    /// <summary>Cancels outstanding calls on supervisor exit and releases the client.</summary>
     public void Dispose()
     {
         lock (_stateLock)
@@ -208,8 +212,12 @@ internal sealed class HomeAssistantResource :
                 return;
 
             _disposed = true;
+            _operations.Clear();
             _lifetimeCancellation.Cancel();
-            CancelOperationNoLock();
+            _operationCancellation?.Cancel();
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+            _operationPending = false;
             _client.Dispose();
             ErrorOccurred = null;
             ErrorCleared = null;
@@ -231,6 +239,135 @@ internal sealed class HomeAssistantResource :
 
     private string? ReverseService =>
         HomeAssistantServiceSemantics.GetReverseService(_configuration.Service);
+
+    private void EnqueueNoLock(HomeAssistantOperation operation)
+    {
+        if (_operationPending && _operations.Count == 0 && _currentOperation == operation)
+            return;
+
+        if (_operations.Count > 0 && _operations.Last() == operation)
+            return;
+
+        _operations.Enqueue(operation);
+    }
+
+    private void RemoveQueuedPersistenceNoLock()
+    {
+        if (_operations.Count == 0 || !_operations.Contains(HomeAssistantOperation.Persistence))
+            return;
+
+        HomeAssistantOperation[] retained = _operations
+            .Where(operation => operation != HomeAssistantOperation.Persistence)
+            .ToArray();
+        _operations.Clear();
+
+        foreach (HomeAssistantOperation operation in retained)
+            _operations.Enqueue(operation);
+    }
+
+    private void StartOperationNoLock(HomeAssistantOperation operation)
+    {
+        _operationCancellation?.Dispose();
+        _operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetimeCancellation.Token
+        );
+        _currentOperation = operation;
+        _operationPending = true;
+        _ = CompleteOperationAsync(operation, _operationCancellation.Token);
+    }
+
+    private async Task CompleteOperationAsync(
+        HomeAssistantOperation operation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            bool restored = operation switch
+            {
+                HomeAssistantOperation.Activation => await ApplyServiceAsync(
+                    _configuration.Service,
+                    DesiredState,
+                    _configuration.VerifyStateChange,
+                    cancellationToken
+                ).ConfigureAwait(false),
+                HomeAssistantOperation.Deactivation => await ApplyServiceAsync(
+                    ReverseService!,
+                    ReverseDesiredState,
+                    _configuration.VerifyStateChange,
+                    cancellationToken
+                ).ConfigureAwait(false),
+                HomeAssistantOperation.Persistence => await CheckAndRestoreAsync(
+                    cancellationToken
+                ).ConfigureAwait(false),
+                _ => false
+            };
+            bool clearError = false;
+
+            lock (_stateLock)
+            {
+                if (_disposed || _currentOperation != operation)
+                    return;
+
+                CompleteCurrentOperationNoLock();
+                _nextOperationUtc = UtcNow + PersistenceInterval;
+
+                if (operation == HomeAssistantOperation.Activation)
+                    _activationComplete = true;
+                if (operation == HomeAssistantOperation.Persistence && restored)
+                    _stateRestored = true;
+
+                if (_errorActive)
+                {
+                    _errorActive = false;
+                    clearError = true;
+                }
+            }
+
+            if (clearError)
+                ErrorCleared?.Invoke(this);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            lock (_stateLock)
+            {
+                if (_currentOperation == operation)
+                    CompleteCurrentOperationNoLock();
+            }
+        }
+        catch (Exception ex)
+        {
+            lock (_stateLock)
+            {
+                if (_disposed || _currentOperation != operation)
+                    return;
+
+                CompleteCurrentOperationNoLock();
+                _nextOperationUtc = UtcNow + PersistenceInterval;
+                _errorActive = true;
+            }
+
+            ErrorOccurred?.Invoke(
+                this,
+                $"Home Assistant action '{GetServiceName(operation)}' failed for " +
+                $"'{_configuration.EntityId}'. {ex.Message}"
+            );
+        }
+    }
+
+    private void CompleteCurrentOperationNoLock()
+    {
+        _operationPending = false;
+        _currentOperation = null;
+        _operationCancellation?.Dispose();
+        _operationCancellation = null;
+    }
+
+    private string GetServiceName(HomeAssistantOperation operation) => operation switch
+    {
+        HomeAssistantOperation.Deactivation => ReverseService ?? _configuration.Service,
+        HomeAssistantOperation.Persistence => $"verify {_configuration.Service}",
+        _ => _configuration.Service
+    };
 
     private async Task<bool> ApplyServiceAsync(
         string service,
@@ -296,96 +433,10 @@ internal sealed class HomeAssistantResource :
         );
     }
 
-    private void StartOperationNoLock(
-        Func<CancellationToken, Task<bool>> operation,
-        bool completesActivation,
-        bool reportsRestoration)
+    private enum HomeAssistantOperation
     {
-        CancelOperationNoLock();
-        _operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            _lifetimeCancellation.Token
-        );
-        int generation = ++_operationGeneration;
-        _operationPending = true;
-        _ = CompleteOperationAsync(
-            generation,
-            operation,
-            completesActivation,
-            reportsRestoration,
-            _operationCancellation.Token
-        );
+        Activation,
+        Deactivation,
+        Persistence
     }
-
-    private async Task CompleteOperationAsync(
-        int generation,
-        Func<CancellationToken, Task<bool>> operation,
-        bool completesActivation,
-        bool reportsRestoration,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            bool restored = await operation(cancellationToken).ConfigureAwait(false);
-            bool clearError = false;
-
-            lock (_stateLock)
-            {
-                if (_disposed || generation != _operationGeneration)
-                    return;
-
-                _operationPending = false;
-                _nextOperationUtc = UtcNow + PersistenceInterval;
-
-                if (completesActivation)
-                    _activationComplete = true;
-                if (reportsRestoration && restored)
-                    _stateRestored = true;
-
-                if (_errorActive)
-                {
-                    _errorActive = false;
-                    clearError = true;
-                }
-            }
-
-            if (clearError)
-                ErrorCleared?.Invoke(this);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            lock (_stateLock)
-            {
-                if (generation == _operationGeneration)
-                    _operationPending = false;
-            }
-        }
-        catch (Exception ex)
-        {
-            lock (_stateLock)
-            {
-                if (_disposed || generation != _operationGeneration)
-                    return;
-
-                _operationPending = false;
-                _nextOperationUtc = UtcNow + PersistenceInterval;
-                _errorActive = true;
-            }
-
-            ErrorOccurred?.Invoke(
-                this,
-                $"Home Assistant action '{_configuration.Service}' failed for " +
-                $"'{_configuration.EntityId}'. {ex.Message}"
-            );
-        }
-    }
-
-    private void CancelOperationNoLock()
-    {
-        _operationGeneration++;
-        _operationPending = false;
-        _operationCancellation?.Cancel();
-        _operationCancellation?.Dispose();
-        _operationCancellation = null;
-    }
-
 }

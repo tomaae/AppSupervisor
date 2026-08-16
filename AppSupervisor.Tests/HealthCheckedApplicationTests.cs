@@ -42,7 +42,7 @@ public sealed class HealthCheckedApplicationTests
         Assert.True(application.CloseOperationPending);
 
         application.Running = false;
-        wrapper.Supervise();
+        ((IManagedResourceLifecycleWork)wrapper).AdvanceLifecycle(DateTime.UtcNow);
 
         Assert.Equal(1, application.SuperviseDeactivationCalls);
         Assert.False(application.CloseOperationPending);
@@ -73,8 +73,8 @@ public sealed class HealthCheckedApplicationTests
         ConfirmHealthFailure(wrapper);
         application.Running = false;
 
-        wrapper.Supervise();
-        wrapper.Supervise();
+        ((IManagedResourceLifecycleWork)wrapper).AdvanceLifecycle(DateTime.UtcNow);
+        ((IManagedResourceLifecycleWork)wrapper).AdvanceLifecycle(DateTime.UtcNow);
 
         Assert.Equal(1, application.ActivateCalls);
         Assert.DoesNotContain(
@@ -83,7 +83,7 @@ public sealed class HealthCheckedApplicationTests
         );
 
         application.Running = true;
-        wrapper.Supervise();
+        ((IManagedResourceLifecycleWork)wrapper).AdvanceLifecycle(DateTime.UtcNow);
 
         Assert.Equal(1, application.ActivateCalls);
         Assert.Contains(

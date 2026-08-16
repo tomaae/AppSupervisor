@@ -168,6 +168,34 @@ public sealed class IntegrationConfigTests
         Assert.Contains("stateless", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Validate_EnabledProfilesTargetSameHomeAssistantEntity_ThrowsValidationError()
+    {
+        SupervisorProfileConfig CreateProfile(string name, string service) => new()
+        {
+            Name = name,
+            MonitorProcess = $"{name}.exe",
+            HomeAssistantResources =
+            [
+                new HomeAssistantResourceConfig
+                {
+                    Service = service,
+                    EntityId = "switch.shared"
+                }
+            ]
+        };
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigValidator.Validate(
+            [
+                CreateProfile("First", "switch.turn_on"),
+                CreateProfile("Second", "switch.turn_off")
+            ])
+        );
+
+        Assert.Contains("duplicates the Home Assistant entity", exception.Message);
+    }
+
     private static SteamVrDeviceConfig CreateDevice(string serial, string name) => new()
     {
         SerialNumber = serial,

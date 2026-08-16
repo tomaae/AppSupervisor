@@ -14,10 +14,12 @@ public sealed class HomeAssistantResourceTests
         using var resource = CreateResource(client, service: "switch.turn_on");
 
         resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
 
         Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
         Assert.Equal(["switch.turn_on:switch.test"], client.Calls);
         resource.Deactivate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
         Assert.True(SpinWait.SpinUntil(
             () => client.Calls.Count == 2,
             TimeSpan.FromSeconds(2)
@@ -36,6 +38,7 @@ public sealed class HomeAssistantResourceTests
         );
 
         resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
 
         Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
         Assert.True(client.StateQueries > 0);
@@ -53,6 +56,7 @@ public sealed class HomeAssistantResourceTests
         );
 
         resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
         Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
         resource.Deactivate();
 
@@ -71,11 +75,13 @@ public sealed class HomeAssistantResourceTests
             timeProvider: time
         );
         resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
         Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
         client.State = "off";
         time.Advance(TimeSpan.FromMinutes(1).Add(TimeSpan.FromSeconds(1)));
 
         Assert.Equal(ManagedResourceUpdate.None, resource.Supervise());
+        resource.AdvanceLifecycle(DateTime.UtcNow);
         Assert.True(SpinWait.SpinUntil(
             () => client.Calls.Count == 2,
             TimeSpan.FromSeconds(2)
@@ -83,6 +89,58 @@ public sealed class HomeAssistantResourceTests
 
         Assert.Equal(ManagedResourceUpdate.Restarted, resource.Supervise());
         Assert.Equal("on", client.State);
+    }
+
+    [Fact]
+    public void ActivateDeactivateActivate_LifecyclePreservesAcceptedOrder()
+    {
+        var client = new FakeHomeAssistantClient();
+        using var resource = CreateResource(client, service: "switch.turn_on");
+
+        resource.Activate();
+        resource.Deactivate();
+        resource.Activate();
+
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+
+        Assert.Equal(
+            [
+                "switch.turn_on:switch.test",
+                "switch.turn_off:switch.test",
+                "switch.turn_on:switch.test"
+            ],
+            client.Calls
+        );
+        Assert.True(resource.IsStarted());
+    }
+
+    [Fact]
+    public void BeginPauseDrain_AcceptedActivationRemainsPendingUntilItFinishes()
+    {
+        var client = new BlockingHomeAssistantClient();
+        using var resource = new HomeAssistantResource(
+            new HomeAssistantResourceConfig
+            {
+                Service = "switch.turn_on",
+                EntityId = "switch.test"
+            },
+            client
+        );
+
+        resource.Activate();
+        resource.BeginPauseDrain();
+
+        Assert.True(resource.PauseDrainPending);
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        Assert.True(resource.PauseDrainPending);
+        client.Complete();
+        Assert.True(SpinWait.SpinUntil(
+            () => !resource.PauseDrainPending,
+            TimeSpan.FromSeconds(2)
+        ));
+        Assert.True(resource.IsStarted());
     }
 
     private static HomeAssistantResource CreateResource(
@@ -139,6 +197,27 @@ public sealed class HomeAssistantResourceTests
         }
 
         public void Dispose() { }
+    }
+
+    private sealed class BlockingHomeAssistantClient : IHomeAssistantClient
+    {
+        private readonly TaskCompletionSource _completion = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public Task CallServiceAsync(
+            string service,
+            string entityId,
+            CancellationToken cancellationToken) =>
+            _completion.Task.WaitAsync(cancellationToken);
+
+        public Task<string> GetEntityStateAsync(
+            string entityId,
+            CancellationToken cancellationToken) => Task.FromResult("on");
+
+        public void Complete() => _completion.TrySetResult();
+
+        public void Dispose() => _completion.TrySetCanceled();
     }
 
     private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider

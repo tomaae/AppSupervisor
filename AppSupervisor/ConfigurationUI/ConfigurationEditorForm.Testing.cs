@@ -223,7 +223,10 @@ public sealed partial class ConfigurationEditorForm
             }
 
             IReadOnlySet<int> ownerProcessIds =
-                ProcessPathDiscovery.FindRunningProcessIds(application.Path);
+                ProcessPathDiscovery.FindRunningProcessIds(
+                    application.Path,
+                    useSharedCache: false
+                );
             using IHealthProbe probe = HealthCheckFactory.CreateProbe(healthCheck);
             using var timeout = new CancellationTokenSource(
                 TimeSpan.FromSeconds(healthCheck.TimeoutSeconds)

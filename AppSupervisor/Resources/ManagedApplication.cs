@@ -15,14 +15,19 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private const int GracefulCloseTimeoutSeconds = 10;
     private const int GracefulCloseRetrySeconds = 2;
     private const int ForceKillConfirmationTimeoutSeconds = 5;
+    private const int StartConfirmationTimeoutSeconds = 30;
 
     private readonly TimeSpan _restartTimeout;
     private readonly Func<bool>? _shouldRemainRunning;
 
-    private CancellationTokenSource? _minimizeCancellation;
     private CloseOperation? _closeOperation;
+    private MinimizeOperation? _minimizeOperation;
     private HashSet<int>? _failedMultipleProcessIds;
     private DateTime? _missingSince;
+    private DateTime? _closeObservationStartedUtc;
+    private DateTime? _startRequestedUtc;
+    private bool _launchIssued;
+    private bool _reportPendingStartAsRestart;
     private bool _disposed;
     private bool _errorActive;
 
@@ -64,7 +69,13 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     public ManagedApplicationConfig Config { get; }
 
     /// <summary>Gets whether a requested helper close is still awaiting completion or fallback handling.</summary>
-    bool IManagedApplicationLifecycle.CloseOperationPending => _closeOperation is not null;
+    bool IManagedApplicationLifecycle.CloseOperationPending =>
+        ProcessPathSnapshot.IsClosePending(Config.Path);
+
+    /// <summary>Gets whether this instance owns process mutation or post-launch window work.</summary>
+    bool IManagedResourceLifecycleWork.LifecycleWorkPending =>
+        ProcessPathSnapshot.GetOwnedTransition(Config.Path, this) is not null ||
+        _minimizeOperation is not null;
 
     /// <summary>Gets the helper executable filename used in notifications.</summary>
     public string DisplayName => Path.GetFileName(Config.Path);
@@ -80,21 +91,17 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <returns><see langword="true"/> when at least one matching process is currently running.</returns>
     public bool IsRunning()
     {
-        var processes = FindRunningProcesses();
-
-        try
-        {
-            return processes.Count > 0;
-        }
-        finally
-        {
-            DisposeProcesses(processes);
-        }
+        return GetRunningProcessIds().Count > 0;
     }
+
+    /// <summary>Returns exact-path identifiers from the current central supervision snapshot.</summary>
+    internal IReadOnlySet<int> GetRunningProcessIds() =>
+        ProcessPathSnapshot.FindExactPathProcessIds(Config.Path);
 
     /// <summary>Checks whether the helper process is started for dependency sequencing.</summary>
     /// <returns><see langword="true"/> when at least one matching helper process is running.</returns>
-    public bool IsStarted() => IsRunning();
+    public bool IsStarted() =>
+        !ProcessPathSnapshot.HasTransition(Config.Path) && IsRunning();
 
     /// <summary>
     /// Ensures one helper instance is available, normalizing multiple instances before starting a fresh one.
@@ -107,28 +114,21 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         _missingSince = null;
         _failedMultipleProcessIds = null;
 
-        if (_closeOperation is not null)
+        if (ProcessPathSnapshot.IsClosePending(Config.Path))
         {
-            _closeOperation.RestartAfterClose = true;
+            RequestStart(reportAsRestart: false);
             return;
         }
 
-        var processes = FindRunningProcesses();
+        IReadOnlySet<int> processIds = GetRunningProcessIds();
 
-        try
+        if (processIds.Count == 0)
         {
-            if (processes.Count == 0)
-            {
-                TryStart();
-            }
-            else if (CountIndependentInstances(processes) > 1)
-            {
-                BeginCloseOperation(processes, restartAfterClose: true);
-            }
+            RequestStart(reportAsRestart: false);
         }
-        finally
+        else if (CountIndependentInstances(processIds) > 1)
         {
-            DisposeProcesses(processes);
+            RequestCloseThenStart(reportAsRestart: false);
         }
     }
 
@@ -141,35 +141,28 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (_disposed)
             return ManagedResourceUpdate.None;
 
-        if (_closeOperation is not null)
-            return AdvanceCloseOperation(profileActive: true);
+        if (ProcessPathSnapshot.HasTransition(Config.Path))
+            return ManagedResourceUpdate.None;
 
-        var processes = FindRunningProcesses();
+        IReadOnlySet<int> processIds = GetRunningProcessIds();
 
-        try
+        if (CountIndependentInstances(processIds) > 1)
         {
-            if (CountIndependentInstances(processes) > 1)
-            {
-                if (MatchesFailedProcessSet(processes))
-                    return ManagedResourceUpdate.None;
-
-                _failedMultipleProcessIds = null;
-                BeginCloseOperation(processes, restartAfterClose: true);
+            if (MatchesFailedProcessSet(processIds))
                 return ManagedResourceUpdate.None;
-            }
 
             _failedMultipleProcessIds = null;
-
-            if (processes.Count > 0)
-            {
-                _missingSince = null;
-                ClearError();
-                return ManagedResourceUpdate.None;
-            }
+            RequestCloseThenStart(reportAsRestart: true);
+            return ManagedResourceUpdate.None;
         }
-        finally
+
+        _failedMultipleProcessIds = null;
+
+        if (processIds.Count > 0)
         {
-            DisposeProcesses(processes);
+            _missingSince = null;
+            ClearError();
+            return ManagedResourceUpdate.None;
         }
 
         if (!Config.Restart)
@@ -177,44 +170,56 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         if (_missingSince is null)
         {
-            _missingSince = DateTime.UtcNow;
+            _missingSince = SupervisorTime.UtcNow;
             return ManagedResourceUpdate.None;
         }
 
-        if (DateTime.UtcNow - _missingSince < _restartTimeout)
+        if (SupervisorTime.UtcNow - _missingSince < _restartTimeout)
             return ManagedResourceUpdate.None;
 
-        _missingSince = DateTime.UtcNow;
-
-        return TryStart()
-            ? ManagedResourceUpdate.Restarted
-            : ManagedResourceUpdate.None;
+        _missingSince = SupervisorTime.UtcNow;
+        RequestStart(reportAsRestart: true);
+        return ManagedResourceUpdate.None;
     }
 
     /// <summary>
-    /// Cancels restart, duplicate-normalization, and minimization work as soon as the monitoring trigger disappears.
+    /// Cancels unissued recovery demand while allowing an accepted close mutation to finish safely.
     /// </summary>
     public void CancelPendingRecovery()
     {
         SupervisorLog.WriteInformation(
-            $"TRACE Application '{DisplayName}': cancelling close, restart, and minimize state."
+            $"TRACE Application '{DisplayName}': cancelling queued restart and minimize state."
         );
         _missingSince = null;
-        CancelCloseOperation();
+        ProcessLifecycleTransitionKind? transition =
+            ProcessPathSnapshot.GetOwnedTransition(Config.Path, this);
+
+        if (transition == ProcessLifecycleTransitionKind.Start && !_launchIssued)
+        {
+            CompleteOwnedTransition(succeeded: true);
+        }
+        else
+        {
+            ProcessPathSnapshot.CancelQueuedTransitions(
+                Config.Path,
+                this,
+                ProcessLifecycleTransitionKind.Start
+            );
+        }
+
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
         SupervisorLog.WriteInformation(
-            $"TRACE Application '{DisplayName}': close, restart, and minimize state cancelled."
+            $"TRACE Application '{DisplayName}': queued restart and minimize state cancelled."
         );
     }
 
     /// <summary>
-    /// Cancels minimization and resets restart timing while preserving any close request already sent before supervision paused.
+    /// Resets restart timing after all accepted lifecycle and minimization work has drained for pause.
     /// </summary>
     public void SuspendMonitoring()
     {
         _missingSince = null;
-        CancelMinimizeAfterStart();
     }
 
     /// <summary>
@@ -231,27 +236,53 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         if (ShouldRemainRunning())
         {
-            CancelCloseOperation();
+            if (ProcessPathSnapshot.IsClosePending(Config.Path))
+                RequestStart(reportAsRestart: false);
+            else
+                CancelCloseOperation();
+
             return;
         }
 
-        var processes = FindRunningProcesses();
-
-        try
+        if (ProcessPathSnapshot.HasTransition(Config.Path))
         {
-            if (processes.Count == 0)
+            ProcessPathSnapshot.RequestTransition(
+                Config.Path,
+                this,
+                ProcessLifecycleTransitionKind.Close
+            );
+            return;
+        }
+
+        ExactPathObservation observation = ProcessPathSnapshot.ObserveExactPath(Config.Path);
+
+        if (observation.ProcessIds.Length == 0 && observation.IsAuthoritative)
+        {
+            CancelCloseOperation();
+            if (ProcessPathSnapshot.GetOwnedTransition(Config.Path, this) ==
+                ProcessLifecycleTransitionKind.Close)
             {
-                CancelCloseOperation();
-                ClearError();
-                return;
+                CompleteOwnedTransition(succeeded: true);
             }
+            ClearError();
+            return;
+        }
 
-            BeginCloseOperation(processes, restartAfterClose: false);
-        }
-        finally
+        if (observation.ProcessIds.Length == 0)
         {
-            DisposeProcesses(processes);
+            ProcessPathSnapshot.RequestTransition(
+                Config.Path,
+                this,
+                ProcessLifecycleTransitionKind.Close
+            );
+            return;
         }
+
+        ProcessPathSnapshot.RequestTransition(
+            Config.Path,
+            this,
+            ProcessLifecycleTransitionKind.Close
+        );
     }
 
     /// <summary>
@@ -259,16 +290,10 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     public void SuperviseDeactivation()
     {
-        if (_disposed || _closeOperation is null)
+        if (_disposed)
             return;
 
-        if (ShouldRemainRunning())
-        {
-            CancelCloseOperation();
-            return;
-        }
-
-        AdvanceCloseOperation(profileActive: false);
+        ((IManagedResourceLifecycleWork)this).AdvanceLifecycle(SupervisorTime.UtcNow);
     }
 
     /// <summary>
@@ -282,6 +307,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         _disposed = true;
         CancelCloseOperation();
         CancelMinimizeAfterStart();
+        ProcessPathSnapshot.ReleaseOwner(this);
         ErrorOccurred = null;
         ErrorCleared = null;
     }
@@ -303,66 +329,195 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         }
     }
 
-    /// <summary>
-    /// Starts the configured executable and reports launch failures without allowing them to escape the supervisor tick.
-    /// </summary>
-    /// <returns><see langword="true"/> when a new process was started successfully.</returns>
-    private bool TryStart()
+    /// <summary>Advances the path-scoped start or close transition and post-launch minimization.</summary>
+    ManagedResourceUpdate IManagedResourceLifecycleWork.AdvanceLifecycle(DateTime nowUtc)
     {
-        var existingProcesses = FindRunningProcesses();
+        if (_disposed)
+            return ManagedResourceUpdate.None;
+
+        ManagedResourceUpdate update = ManagedResourceUpdate.None;
+        ProcessLifecycleTransitionKind? transition =
+            ProcessPathSnapshot.GetOwnedTransition(Config.Path, this);
+
+        if (transition == ProcessLifecycleTransitionKind.Start)
+            update = AdvanceStartOperation(nowUtc);
+        else if (transition == ProcessLifecycleTransitionKind.Close)
+            AdvanceOwnedCloseOperation(nowUtc);
+
+        AdvanceMinimizeAfterStart(nowUtc);
+        return update;
+    }
+
+    /// <summary>Queues one start; a pending close is completed before this request becomes active.</summary>
+    private void RequestStart(bool reportAsRestart)
+    {
+        ProcessPathSnapshot.RequestTransition(
+            Config.Path,
+            this,
+            ProcessLifecycleTransitionKind.Start
+        );
+
+        if (ProcessPathSnapshot.GetOwnedTransition(Config.Path, this) ==
+            ProcessLifecycleTransitionKind.Start)
+        {
+            _reportPendingStartAsRestart |= reportAsRestart;
+        }
+    }
+
+    /// <summary>Queues duplicate normalization followed by one replacement start.</summary>
+    private void RequestCloseThenStart(bool reportAsRestart)
+    {
+        ProcessPathSnapshot.RequestTransition(
+            Config.Path,
+            this,
+            ProcessLifecycleTransitionKind.Close
+        );
+        ProcessPathSnapshot.RequestTransition(
+            Config.Path,
+            this,
+            ProcessLifecycleTransitionKind.Start
+        );
+        _reportPendingStartAsRestart |= reportAsRestart;
+    }
+
+    /// <summary>Freshly verifies absence, issues one launch, and confirms exact-path appearance.</summary>
+    private ManagedResourceUpdate AdvanceStartOperation(DateTime nowUtc)
+    {
+        var processes = FindRunningProcesses(fresh: true, out bool authoritative);
 
         try
         {
-            if (existingProcesses.Count > 0)
-                return false;
+            if (processes.Count > 0)
+            {
+                bool reportRestart = _reportPendingStartAsRestart;
+                ResetStartOperation();
+                CompleteOwnedTransition(succeeded: true);
+                _missingSince = null;
+                ClearError();
+
+                if (Config.MinimizeAfterStart)
+                    StartMinimizeAfterStart(nowUtc);
+
+                return reportRestart
+                    ? ManagedResourceUpdate.Restarted
+                    : ManagedResourceUpdate.None;
+            }
         }
         finally
         {
-            DisposeProcesses(existingProcesses);
+            DisposeProcesses(processes);
         }
 
-        try
+        _startRequestedUtc ??= nowUtc;
+
+        if (!authoritative)
         {
-            ProcessStartInfo startInfo = ApplicationUri.CreateStartInfo(Config);
+            if (nowUtc - _startRequestedUtc >=
+                TimeSpan.FromSeconds(StartConfirmationTimeoutSeconds))
+            {
+                ReportError(
+                    $"Could not safely verify whether {DisplayName} was already running. No launch was attempted."
+                );
+                ResetStartOperation();
+                CompleteOwnedTransition(succeeded: false);
+            }
 
-            using Process? startedProcess = Process.Start(startInfo);
-
-            if (startedProcess is null && string.IsNullOrWhiteSpace(Config.AppUri))
-                throw new InvalidOperationException("Windows did not return a process for the start request.");
-
-            _missingSince = null;
-            ClearError();
-
-            if (Config.MinimizeAfterStart)
-                StartMinimizeAfterStart();
-
-            return true;
+            return ManagedResourceUpdate.None;
         }
-        catch (Exception ex)
+
+        if (!_launchIssued)
         {
-            ReportError($"Could not start {DisplayName}: {ex.Message}");
-            return false;
+            try
+            {
+                ProcessStartInfo startInfo = ApplicationUri.CreateStartInfo(Config);
+                using Process? startedProcess = Process.Start(startInfo);
+
+                if (startedProcess is null && string.IsNullOrWhiteSpace(Config.AppUri))
+                    throw new InvalidOperationException("Windows did not return a process for the start request.");
+
+                _launchIssued = true;
+                return ManagedResourceUpdate.None;
+            }
+            catch (Exception ex)
+            {
+                ReportError($"Could not start {DisplayName}: {ex.Message}");
+                ResetStartOperation();
+                CompleteOwnedTransition(succeeded: false);
+                return ManagedResourceUpdate.None;
+            }
         }
+
+        if (_startRequestedUtc is DateTime requestedUtc &&
+            nowUtc - requestedUtc >= TimeSpan.FromSeconds(StartConfirmationTimeoutSeconds))
+        {
+            ReportError(
+                $"Could not confirm that {DisplayName} started within {StartConfirmationTimeoutSeconds} seconds."
+            );
+            ResetStartOperation();
+            CompleteOwnedTransition(succeeded: false);
+        }
+
+        return ManagedResourceUpdate.None;
+    }
+
+    /// <summary>Initializes a claimed close transition and then advances it.</summary>
+    private void AdvanceOwnedCloseOperation(DateTime nowUtc)
+    {
+        _closeObservationStartedUtc ??= nowUtc;
+
+        if (_closeOperation is null)
+        {
+            var processes = FindRunningProcesses(fresh: true, out bool authoritative);
+
+            try
+            {
+                if (processes.Count == 0 && authoritative)
+                {
+                    CompleteOwnedTransition(succeeded: true);
+                    ClearError();
+                    return;
+                }
+
+                if (processes.Count == 0)
+                {
+                    if (nowUtc - _closeObservationStartedUtc >=
+                        TimeSpan.FromSeconds(GracefulCloseTimeoutSeconds +
+                            ForceKillConfirmationTimeoutSeconds))
+                    {
+                        FailUnverifiableClose();
+                    }
+
+                    return;
+                }
+
+                BeginCloseOperation(processes, nowUtc);
+            }
+            finally
+            {
+                DisposeProcesses(processes);
+            }
+
+            return;
+        }
+
+        AdvanceCloseOperation(nowUtc);
     }
 
     /// <summary>
     /// Initializes a close operation and sends the first graceful WM_CLOSE request to every matching process.
     /// </summary>
     /// <param name="processes">Every currently matching helper process.</param>
-    /// <param name="restartAfterClose">Whether one fresh instance should start after all matches are confirmed gone.</param>
     private void BeginCloseOperation(
         IReadOnlyCollection<Process> processes,
-        bool restartAfterClose)
+        DateTime nowUtc)
     {
         CancelMinimizeAfterStart();
         CancelCloseOperation();
 
-        var now = DateTime.UtcNow;
         _closeOperation = new CloseOperation
         {
-            RestartAfterClose = restartAfterClose,
-            StartedUtc = now,
-            LastGracefulAttemptUtc = now,
+            StartedUtc = nowUtc,
+            LastGracefulAttemptUtc = nowUtc,
             GracefulAttemptCount = 1
         };
 
@@ -372,61 +527,68 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <summary>
     /// Confirms close progress, retries graceful methods, optionally force-kills, and starts one replacement only after all matches are gone.
     /// </summary>
-    /// <param name="profileActive">Whether starting a replacement remains allowed.</param>
-    /// <returns><see cref="ManagedResourceUpdate.Restarted"/> when a fresh replacement was started.</returns>
-    private ManagedResourceUpdate AdvanceCloseOperation(bool profileActive)
+    /// <param name="nowUtc">The timestamp shared by this lifecycle pass.</param>
+    private void AdvanceCloseOperation(DateTime nowUtc)
     {
         var operation = _closeOperation;
 
         if (operation is null)
-            return ManagedResourceUpdate.None;
+            return;
 
-        var processes = FindRunningProcesses();
+        var processes = FindRunningProcesses(fresh: true, out bool authoritative);
 
         try
         {
-            if (processes.Count == 0)
+            if (processes.Count == 0 && authoritative)
             {
-                bool restart = profileActive && operation.RestartAfterClose;
                 CancelCloseOperation();
                 _failedMultipleProcessIds = null;
-
-                return restart && TryStart()
-                    ? ManagedResourceUpdate.Restarted
-                    : ManagedResourceUpdate.None;
+                CompleteOwnedTransition(succeeded: true);
+                ClearError();
+                return;
             }
 
-            DateTime now = DateTime.UtcNow;
+            if (processes.Count == 0)
+            {
+                if (nowUtc - operation.StartedUtc >=
+                    TimeSpan.FromSeconds(GracefulCloseTimeoutSeconds +
+                        ForceKillConfirmationTimeoutSeconds))
+                {
+                    FailUnverifiableClose();
+                }
+
+                return;
+            }
 
             if (operation.ForceKillAttempted)
             {
-                if (now - operation.ForceKillAttemptedUtc >=
+                if (nowUtc - operation.ForceKillAttemptedUtc >=
                     TimeSpan.FromSeconds(ForceKillConfirmationTimeoutSeconds))
                 {
                     FailCloseOperation(processes, forceKillAttempted: true);
                 }
 
-                return ManagedResourceUpdate.None;
+                return;
             }
 
-            if (now - operation.StartedUtc >=
+            if (nowUtc - operation.StartedUtc >=
                 TimeSpan.FromSeconds(GracefulCloseTimeoutSeconds))
             {
                 if (Config.ForceKillAfterCloseFailure)
                 {
                     ForceKill(processes);
                     operation.ForceKillAttempted = true;
-                    operation.ForceKillAttemptedUtc = now;
+                    operation.ForceKillAttemptedUtc = nowUtc;
                 }
                 else
                 {
                     FailCloseOperation(processes, forceKillAttempted: false);
                 }
 
-                return ManagedResourceUpdate.None;
+                return;
             }
 
-            if (now - operation.LastGracefulAttemptUtc >=
+            if (nowUtc - operation.LastGracefulAttemptUtc >=
                 TimeSpan.FromSeconds(GracefulCloseRetrySeconds))
             {
                 if (operation.GracefulAttemptCount >= 2 &&
@@ -437,10 +599,8 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
                 RequestGracefulClose(processes, operation.GracefulAttemptCount);
                 operation.GracefulAttemptCount++;
-                operation.LastGracefulAttemptUtc = now;
+                operation.LastGracefulAttemptUtc = nowUtc;
             }
-
-            return ManagedResourceUpdate.None;
         }
         finally
         {
@@ -553,6 +713,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     {
         CloseOperation? operation = _closeOperation;
         _closeOperation = null;
+        _closeObservationStartedUtc = null;
 
         if (operation is null)
             return;
@@ -589,10 +750,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         IReadOnlyCollection<Process> processes,
         bool forceKillAttempted)
     {
-        var operation = _closeOperation;
-
-        if (operation?.RestartAfterClose == true)
-            _failedMultipleProcessIds = processes.Select(process => process.Id).ToHashSet();
+        _failedMultipleProcessIds = processes.Select(process => process.Id).ToHashSet();
 
         string finalAction = forceKillAttempted
             ? "An explicitly enabled force-kill attempt also failed."
@@ -603,6 +761,17 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         );
 
         CancelCloseOperation();
+        CompleteOwnedTransition(succeeded: false);
+    }
+
+    /// <summary>Terminates a close safely when same-name candidates cannot be inspected authoritatively.</summary>
+    private void FailUnverifiableClose()
+    {
+        ReportError(
+            $"Could not safely verify whether {DisplayName} finished closing. No additional process action was attempted."
+        );
+        CancelCloseOperation();
+        CompleteOwnedTransition(succeeded: false);
     }
 
     /// <summary>
@@ -610,20 +779,22 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     /// <param name="processes">The currently matching helper processes.</param>
     /// <returns><see langword="true"/> when the process identifiers exactly match the remembered failed set.</returns>
-    private bool MatchesFailedProcessSet(IReadOnlyCollection<Process> processes)
+    private bool MatchesFailedProcessSet(IEnumerable<int> processIds)
     {
         return _failedMultipleProcessIds is not null &&
-               _failedMultipleProcessIds.SetEquals(processes.Select(process => process.Id));
+               _failedMultipleProcessIds.SetEquals(processIds);
     }
 
     /// <summary>
-    /// Cancels any previous minimization routine and starts a new cancellable routine for the launched helper.
+    /// Starts post-launch minimization work owned by the shared lifecycle timer.
     /// </summary>
-    private void StartMinimizeAfterStart()
+    private void StartMinimizeAfterStart(DateTime nowUtc)
     {
-        CancelMinimizeAfterStart();
-        _minimizeCancellation = new CancellationTokenSource();
-        _ = MinimizeAfterStartAsync(_minimizeCancellation.Token);
+        _minimizeOperation = new MinimizeOperation
+        {
+            StartedUtc = nowUtc,
+            NextCheckUtc = nowUtc + TimeSpan.FromMilliseconds(250)
+        };
     }
 
     /// <summary>
@@ -631,12 +802,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     private void CancelMinimizeAfterStart()
     {
-        if (_minimizeCancellation is null)
-            return;
-
-        _minimizeCancellation.Cancel();
-        _minimizeCancellation.Dispose();
-        _minimizeCancellation = null;
+        _minimizeOperation = null;
     }
 
     /// <summary>
@@ -679,67 +845,67 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     }
 
     /// <summary>
-    /// Repeatedly minimizes a newly started application until stable, timed out, or cancelled by profile inactivity or disposal.
+    /// Advances one nonblocking post-launch minimization check.
     /// </summary>
-    /// <param name="cancellationToken">Stops window manipulation when the profile or configuration becomes inactive.</param>
-    private async Task MinimizeAfterStartAsync(CancellationToken cancellationToken)
+    private void AdvanceMinimizeAfterStart(DateTime nowUtc)
     {
         const int timeoutMilliseconds = 10000;
         const int checkIntervalMilliseconds = 250;
         const int stableMillisecondsRequired = 1000;
 
-        int elapsed = 0;
-        int minimizedStableFor = 0;
+        MinimizeOperation? operation = _minimizeOperation;
+        if (operation is null || nowUtc < operation.NextCheckUtc)
+            return;
 
         try
         {
-            while (elapsed < timeoutMilliseconds)
+            if (nowUtc - operation.StartedUtc >= TimeSpan.FromMilliseconds(timeoutMilliseconds))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var processes = FindRunningProcesses();
+                _minimizeOperation = null;
+                ReportError(
+                    $"Could not keep {DisplayName} minimized within {timeoutMilliseconds / 1000} seconds."
+                );
+                return;
+            }
 
-                try
+            var processes = FindRunningProcesses(fresh: true);
+
+            try
+            {
+                if (CountIndependentInstances(processes) == 1)
                 {
-                    if (CountIndependentInstances(processes) == 1)
+                    bool minimized = processes.Any(MinimizeProcessWindows);
+
+                    if (minimized)
                     {
-                        bool minimized = processes.Any(MinimizeProcessWindows);
+                        operation.MinimizedStableMilliseconds += checkIntervalMilliseconds;
 
-                        if (minimized)
+                        if (operation.MinimizedStableMilliseconds >= stableMillisecondsRequired)
                         {
-                            minimizedStableFor += checkIntervalMilliseconds;
-
-                            if (minimizedStableFor >= stableMillisecondsRequired)
-                                return;
-                        }
-                        else
-                        {
-                            minimizedStableFor = 0;
+                            _minimizeOperation = null;
+                            return;
                         }
                     }
                     else
                     {
-                        minimizedStableFor = 0;
+                        operation.MinimizedStableMilliseconds = 0;
                     }
                 }
-                finally
+                else
                 {
-                    DisposeProcesses(processes);
+                    operation.MinimizedStableMilliseconds = 0;
                 }
-
-                await Task.Delay(checkIntervalMilliseconds, cancellationToken);
-                elapsed += checkIntervalMilliseconds;
+            }
+            finally
+            {
+                DisposeProcesses(processes);
             }
 
-            ReportError(
-                $"Could not keep {DisplayName} minimized within {timeoutMilliseconds / 1000} seconds."
-            );
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Cancellation is expected when the profile becomes inactive, reloads, or exits.
+            operation.NextCheckUtc = nowUtc + TimeSpan.FromMilliseconds(checkIntervalMilliseconds);
         }
         catch (Exception ex)
         {
+            _minimizeOperation = null;
             ReportError($"Could not minimize {DisplayName}: {ex.Message}");
         }
     }
@@ -748,12 +914,23 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// Opens and revalidates process wrappers from the shared full-path candidate snapshot.
     /// </summary>
     /// <returns>All inspectable matching processes; the caller must dispose each returned object.</returns>
-    private List<Process> FindRunningProcesses()
+    private List<Process> FindRunningProcesses(bool fresh)
+    {
+        return FindRunningProcesses(fresh, out _);
+    }
+
+    /// <summary>Opens exact matches and reports whether absence was safely observable.</summary>
+    private List<Process> FindRunningProcesses(bool fresh, out bool authoritative)
     {
         string targetPath = Path.GetFullPath(Config.Path);
         var matches = new List<Process>();
 
-        foreach (int processId in ProcessPathSnapshot.FindCandidateProcessIds(targetPath))
+        ExactPathObservation observation = fresh
+            ? ProcessPathSnapshot.ObserveExactPathFresh(targetPath)
+            : ProcessPathSnapshot.ObserveExactPath(targetPath);
+        authoritative = observation.IsAuthoritative;
+
+        foreach (int processId in observation.ProcessIds)
         {
             bool keepProcess = false;
             Process? process = null;
@@ -775,7 +952,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             }
             catch
             {
-                // Some processes cannot be inspected due to permissions.
+                authoritative = false;
             }
             finally
             {
@@ -792,7 +969,19 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <returns>The number of independent process trees represented by the matches.</returns>
     private static int CountIndependentInstances(IReadOnlyCollection<Process> processes)
     {
+        if (processes.Count <= 1)
+            return processes.Count;
+
         int[] processIds = processes.Select(process => process.Id).ToArray();
+        return ProcessPathSnapshot.FindIndependentRootProcessIds(processIds).Count;
+    }
+
+    /// <summary>Counts independent application roots directly from cached exact-path identifiers.</summary>
+    private static int CountIndependentInstances(IReadOnlyCollection<int> processIds)
+    {
+        if (processIds.Count <= 1)
+            return processIds.Count;
+
         return ProcessPathSnapshot.FindIndependentRootProcessIds(processIds).Count;
     }
 
@@ -804,6 +993,20 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     {
         foreach (var process in processes)
             process.Dispose();
+    }
+
+    /// <summary>Clears per-owner start confirmation state without altering a promoted transition.</summary>
+    private void ResetStartOperation()
+    {
+        _launchIssued = false;
+        _startRequestedUtc = null;
+        _reportPendingStartAsRestart = false;
+    }
+
+    /// <summary>Completes this instance's current central transition.</summary>
+    private void CompleteOwnedTransition(bool succeeded)
+    {
+        ProcessPathSnapshot.CompleteTransition(Config.Path, this, succeeded);
     }
 
     /// <summary>
@@ -831,9 +1034,6 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     private sealed class CloseOperation
     {
-        /// <summary>Gets or sets whether one replacement should start after every matching process exits.</summary>
-        public bool RestartAfterClose { get; set; }
-
         /// <summary>Gets or sets when graceful close supervision began.</summary>
         public DateTime StartedUtc { get; set; }
 
@@ -854,5 +1054,15 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         /// <summary>Gets or sets the one background tray Exit request batch started for this operation.</summary>
         public Task? TrayExitTask { get; set; }
+    }
+
+    /// <summary>Stores timer-owned post-launch minimization progress.</summary>
+    private sealed class MinimizeOperation
+    {
+        public DateTime StartedUtc { get; set; }
+
+        public DateTime NextCheckUtc { get; set; }
+
+        public int MinimizedStableMilliseconds { get; set; }
     }
 }

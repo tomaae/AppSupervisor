@@ -17,6 +17,7 @@ public static partial class ConfigValidator
         var errors = new List<string>();
         var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var activeServiceNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var activeHomeAssistantEntities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         for (int profileIndex = 0; profileIndex < profiles.Count; profileIndex++)
         {
@@ -70,7 +71,13 @@ public static partial class ConfigValidator
             }
 
             ValidateDelayResources(profile, profileLabel, errors);
-            ValidateHomeAssistantResources(profile, profileLabel, errors);
+            ValidateHomeAssistantResources(
+                profile,
+                profileLabel,
+                errors,
+                activeHomeAssistantEntities,
+                profile.Enabled
+            );
 
             ValidateResourceStartup(profile, profileLabel, errors);
         }

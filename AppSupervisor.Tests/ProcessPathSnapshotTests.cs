@@ -1,10 +1,201 @@
 using AppSupervisor.Core;
+using AppSupervisor.Resources;
 
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies grouping of same-executable process trees into logical application instances.</summary>
 public sealed class ProcessPathSnapshotTests
 {
+    [Fact]
+    public void ManagedApplication_ActivateDuringClose_QueuesStartAfterConfirmedClose()
+    {
+        string path = Environment.ProcessPath!;
+        var closer = new object();
+        using var application = new ManagedApplication(
+            new ManagedApplicationConfig { Path = path },
+            TimeSpan.Zero
+        );
+
+        try
+        {
+            ProcessPathSnapshot.RequestTransition(
+                path,
+                closer,
+                ProcessLifecycleTransitionKind.Close
+            );
+
+            application.Activate();
+            ProcessPathSnapshot.CompleteTransition(path, closer, succeeded: true);
+
+            Assert.Equal(
+                ProcessLifecycleTransitionKind.Start,
+                ProcessPathSnapshot.GetOwnedTransition(path, application)
+            );
+        }
+        finally
+        {
+            ProcessPathSnapshot.ReleaseOwner(closer);
+        }
+    }
+
+    [Fact]
+    public void RequestedProcessNames_ChooseSharedSnapshotOnlyAfterThreeDistinctLookups()
+    {
+        ProcessPathSnapshot.BeginCycle(preferSharedSnapshot: false);
+        ProcessPathSnapshot.IsProcessNameRunning($"missing-{Guid.NewGuid():N}-1");
+        ProcessPathSnapshot.IsProcessNameRunning($"missing-{Guid.NewGuid():N}-2");
+        Assert.False(ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle);
+
+        ProcessPathSnapshot.IsProcessNameRunning($"missing-{Guid.NewGuid():N}-3");
+
+        Assert.True(ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle);
+    }
+    /// <summary>Confirms only the first requester owns a start transition for a shared executable.</summary>
+    [Fact]
+    public void RequestTransition_SharedStart_HasSingleOwner()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"shared-{Guid.NewGuid():N}.exe");
+        var first = new object();
+        var second = new object();
+
+        try
+        {
+            ProcessPathSnapshot.RequestTransition(
+                path,
+                first,
+                ProcessLifecycleTransitionKind.Start
+            );
+            ProcessPathSnapshot.RequestTransition(
+                path,
+                second,
+                ProcessLifecycleTransitionKind.Start
+            );
+
+            Assert.Equal(
+                ProcessLifecycleTransitionKind.Start,
+                ProcessPathSnapshot.GetOwnedTransition(path, first)
+            );
+            Assert.Null(ProcessPathSnapshot.GetOwnedTransition(path, second));
+
+            ProcessPathSnapshot.CompleteTransition(path, first, succeeded: true);
+
+            Assert.Equal(
+                ProcessLifecycleTransitionKind.Start,
+                ProcessPathSnapshot.GetOwnedTransition(path, second)
+            );
+        }
+        finally
+        {
+            ProcessPathSnapshot.ReleaseOwner(first);
+            ProcessPathSnapshot.ReleaseOwner(second);
+        }
+    }
+
+    /// <summary>Confirms renewed demand waits behind close confirmation and is promoted afterward.</summary>
+    [Fact]
+    public void CompleteTransition_CloseThenStart_PromotesWaitingStarter()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"restart-{Guid.NewGuid():N}.exe");
+        var closer = new object();
+        var starter = new object();
+
+        try
+        {
+            ProcessPathSnapshot.RequestTransition(
+                path,
+                closer,
+                ProcessLifecycleTransitionKind.Close
+            );
+            ProcessPathSnapshot.RequestTransition(
+                path,
+                starter,
+                ProcessLifecycleTransitionKind.Start
+            );
+
+            Assert.True(ProcessPathSnapshot.IsClosePending(path));
+            Assert.Null(ProcessPathSnapshot.GetOwnedTransition(path, starter));
+
+            ProcessPathSnapshot.CompleteTransition(path, closer, succeeded: true);
+
+            Assert.Equal(
+                ProcessLifecycleTransitionKind.Start,
+                ProcessPathSnapshot.GetOwnedTransition(path, starter)
+            );
+        }
+        finally
+        {
+            ProcessPathSnapshot.ReleaseOwner(closer);
+            ProcessPathSnapshot.ReleaseOwner(starter);
+        }
+    }
+
+    /// <summary>Confirms renewed demand behind a queued close is retained until close confirmation.</summary>
+    [Fact]
+    public void RequestTransition_StartCloseStart_PreservesFinalDemand()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"renewed-{Guid.NewGuid():N}.exe");
+        var starter = new object();
+        var closer = new object();
+
+        try
+        {
+            ProcessPathSnapshot.RequestTransition(path, starter, ProcessLifecycleTransitionKind.Start);
+            ProcessPathSnapshot.RequestTransition(path, closer, ProcessLifecycleTransitionKind.Close);
+            ProcessPathSnapshot.RequestTransition(path, starter, ProcessLifecycleTransitionKind.Start);
+
+            ProcessPathSnapshot.CompleteTransition(path, starter, succeeded: true);
+
+            Assert.Equal(
+                ProcessLifecycleTransitionKind.Close,
+                ProcessPathSnapshot.GetOwnedTransition(path, closer)
+            );
+
+            ProcessPathSnapshot.CompleteTransition(path, closer, succeeded: true);
+
+            Assert.Equal(
+                ProcessLifecycleTransitionKind.Start,
+                ProcessPathSnapshot.GetOwnedTransition(path, starter)
+            );
+        }
+        finally
+        {
+            ProcessPathSnapshot.ReleaseOwner(starter);
+            ProcessPathSnapshot.ReleaseOwner(closer);
+        }
+    }
+
+    /// <summary>Confirms a failed close never promotes a duplicate replacement launch.</summary>
+    [Fact]
+    public void CompleteTransition_FailedClose_DropsWaitingStart()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"failed-{Guid.NewGuid():N}.exe");
+        var closer = new object();
+        var starter = new object();
+
+        try
+        {
+            ProcessPathSnapshot.RequestTransition(
+                path,
+                closer,
+                ProcessLifecycleTransitionKind.Close
+            );
+            ProcessPathSnapshot.RequestTransition(
+                path,
+                starter,
+                ProcessLifecycleTransitionKind.Start
+            );
+
+            ProcessPathSnapshot.CompleteTransition(path, closer, succeeded: false);
+
+            Assert.False(ProcessPathSnapshot.HasTransition(path));
+        }
+        finally
+        {
+            ProcessPathSnapshot.ReleaseOwner(closer);
+            ProcessPathSnapshot.ReleaseOwner(starter);
+        }
+    }
+
     /// <summary>Confirms one Electron root and its subprocesses represent one application instance.</summary>
     [Fact]
     public void FindIndependentRootProcessIds_ElectronProcessTree_ReturnsOneRoot()

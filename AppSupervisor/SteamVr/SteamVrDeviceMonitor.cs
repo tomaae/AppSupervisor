@@ -15,6 +15,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         new(StringComparer.OrdinalIgnoreCase);
     private SteamVrIntegrationConfig _config = new();
     private Task<SteamVrSnapshot>? _pendingCapture;
+    private bool _discardPendingCapture;
     private DateTime _nextCheckUtc;
     private DateTime? _sessionStartedUtc;
     private string? _lastSourceError;
@@ -43,6 +44,29 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
     /// <summary>Gets whether monitoring is enabled by the current global configuration.</summary>
     public bool Enabled => _config.Enabled;
 
+    /// <summary>Gets whether an already-started isolated capture must settle before pause is confirmed.</summary>
+    internal bool PauseDrainPending => _pendingCapture is not null;
+
+    /// <summary>Reaps a completed capture during pause without starting or publishing another monitoring cycle.</summary>
+    internal void AdvancePauseDrain()
+    {
+        if (_pendingCapture is null || !_pendingCapture.IsCompleted)
+            return;
+
+        Task<SteamVrSnapshot> completed = _pendingCapture;
+        _pendingCapture = null;
+        _discardPendingCapture = false;
+
+        try
+        {
+            completed.GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Pause intentionally discards capture results, including contained source failures.
+        }
+    }
+
     /// <summary>Replaces global settings while preserving active incidents when monitoring remains enabled.</summary>
     public void ApplyConfiguration(SteamVrIntegrationConfig configuration)
     {
@@ -55,6 +79,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
             ResetSession(clearIncidents: true);
             _states.Clear();
             _pendingCapture = null;
+            _discardPendingCapture = false;
             _nextCheckUtc = DateTime.MinValue;
             return;
         }
@@ -66,6 +91,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
             ResetSession(clearIncidents: true);
             _states.Clear();
             _pendingCapture = null;
+            _discardPendingCapture = false;
             _nextCheckUtc = DateTime.MinValue;
             return;
         }
@@ -131,6 +157,15 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         ResetSession(clearIncidents: true);
         _nextCheckUtc = DateTime.MinValue;
         _pendingCapture = null;
+        _discardPendingCapture = false;
+    }
+
+    /// <summary>Discards a scan spanning sleep while retaining it until the isolated source finishes.</summary>
+    internal void ResetAfterSystemSuspend()
+    {
+        ResetSession(clearIncidents: true);
+        _nextCheckUtc = DateTime.MinValue;
+        _discardPendingCapture = _pendingCapture is not null;
     }
 
     public void Dispose()
@@ -141,6 +176,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         _disposed = true;
         ResetSession(clearIncidents: true);
         _pendingCapture = null;
+        _discardPendingCapture = false;
         _source.Dispose();
         OfflineDevicesChanged = null;
         NotificationRequested = null;
@@ -153,7 +189,24 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
             return;
 
         Task<SteamVrSnapshot> completed = _pendingCapture;
+        bool discard = _discardPendingCapture;
         _pendingCapture = null;
+        _discardPendingCapture = false;
+
+        if (discard)
+        {
+            try
+            {
+                completed.GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // A capture spanning system sleep is not a reliable device-health observation.
+            }
+
+            return;
+        }
+
         SteamVrSnapshot snapshot;
 
         try

@@ -8,6 +8,11 @@ namespace AppSupervisor.HomeAssistant;
 internal sealed class HomeAssistantClient : IHomeAssistantClient
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+    private static readonly SocketsHttpHandler SharedHandler = new()
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2)
+    };
     private readonly HttpClient _httpClient;
     private bool _disposed;
 
@@ -130,7 +135,7 @@ internal sealed class HomeAssistantClient : IHomeAssistantClient
         if (!url.EndsWith('/'))
             url += "/";
 
-        var client = new HttpClient
+        var client = new HttpClient(SharedHandler, disposeHandler: false)
         {
             BaseAddress = new Uri(url, UriKind.Absolute),
             Timeout = RequestTimeout

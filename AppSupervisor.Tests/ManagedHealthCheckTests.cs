@@ -77,6 +77,26 @@ public sealed class ManagedHealthCheckTests
         ));
     }
 
+    /// <summary>Confirms pause drain remains pending until a cancellation-ignoring probe actually exits.</summary>
+    [Fact]
+    public async Task AdvancePauseDrain_StubbornProbe_ClearsOnlyAfterCompletion()
+    {
+        var condition = new FakeCondition { Active = true };
+        var probe = new StubbornProbe();
+        using ManagedHealthCheck check = CreateCheck(probe, condition);
+
+        check.Poll(new HashSet<int> { 1 }, DateTime.UtcNow);
+        check.Suspend(clearError: true);
+
+        Assert.True(check.PauseDrainPending);
+
+        probe.Release.TrySetResult(HealthProbeResult.Success());
+        await probe.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        check.AdvancePauseDrain();
+
+        Assert.False(check.PauseDrainPending);
+    }
+
     /// <summary>Starts and completes one immediately resolved probe on two supervision ticks.</summary>
     /// <param name="check">The check to advance.</param>
     /// <param name="nowUtc">The probe start time.</param>

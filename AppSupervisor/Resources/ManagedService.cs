@@ -11,6 +11,7 @@ public sealed class ManagedService :
     IManagedResource,
     IManagedResourceReadiness,
     IManagedResourceDeactivationState,
+    IManagedResourceLifecycleWork,
     IRecoverableResourceErrorSource
 {
     private const int OperationTimeoutSeconds = 30;
@@ -23,12 +24,15 @@ public sealed class ManagedService :
     private DateTime? _pendingOperationSince;
     private DateTime? _stopStartedUtc;
     private bool _available;
+    private bool _activeDemand;
     private bool _disposed;
     private bool _startAfterStop;
     private bool _stopCommandSent;
     private bool _stopPending;
     private bool _statusErrorReported;
     private bool _errorActive;
+    private bool _hasObservedState;
+    private ServiceRuntimeState? _lastObservedState;
     private ServiceErrorRecovery _errorRecovery;
 
     /// <summary>
@@ -82,6 +86,10 @@ public sealed class ManagedService :
     /// <summary>Gets whether Windows is still processing the requested service stop.</summary>
     public bool DeactivationPending => _stopPending;
 
+    /// <summary>Gets whether Windows is still processing an accepted start, continue, or stop command.</summary>
+    bool IManagedResourceLifecycleWork.LifecycleWorkPending =>
+        _stopPending || _pendingOperationSince is not null;
+
     /// <summary>Checks whether the service has reached the running state for dependency sequencing.</summary>
     /// <returns><see langword="true"/> when Windows reports the service as running.</returns>
     public bool IsStarted()
@@ -89,7 +97,9 @@ public sealed class ManagedService :
         if (!_available || _disposed)
             return false;
 
-        return TryGetState() == ServiceRuntimeState.Running;
+        return _hasObservedState
+            ? _lastObservedState == ServiceRuntimeState.Running
+            : TryGetState() == ServiceRuntimeState.Running;
     }
 
     /// <summary>
@@ -103,6 +113,8 @@ public sealed class ManagedService :
         _controller?.Dispose();
         _controller = null;
         _available = false;
+        _hasObservedState = false;
+        _lastObservedState = null;
 
         try
         {
@@ -132,6 +144,7 @@ public sealed class ManagedService :
         if (!_available || _disposed)
             return;
 
+        _activeDemand = true;
         _missingSince = null;
 
         if (_stopPending)
@@ -224,9 +237,9 @@ public sealed class ManagedService :
     /// </summary>
     public void CancelPendingRecovery()
     {
+        _activeDemand = false;
         _missingSince = null;
         _startAfterStop = false;
-        ClearPendingOperation();
     }
 
     /// <summary>
@@ -246,6 +259,7 @@ public sealed class ManagedService :
         if (!_available || _disposed)
             return;
 
+        _activeDemand = false;
         _missingSince = null;
         _startAfterStop = false;
 
@@ -261,7 +275,7 @@ public sealed class ManagedService :
         }
 
         _stopPending = true;
-        _stopStartedUtc = DateTime.UtcNow;
+        _stopStartedUtc = SupervisorTime.UtcNow;
         _stopCommandSent = state == ServiceRuntimeState.StopPending;
 
         if (state is ServiceRuntimeState.Running or ServiceRuntimeState.Paused)
@@ -277,6 +291,21 @@ public sealed class ManagedService :
             return;
 
         AdvanceStop(profileActive: false);
+    }
+
+    /// <summary>Advances accepted service-control operations from the shared lifecycle timer.</summary>
+    ManagedResourceUpdate IManagedResourceLifecycleWork.AdvanceLifecycle(DateTime nowUtc)
+    {
+        if (!_available || _disposed)
+            return ManagedResourceUpdate.None;
+
+        if (_stopPending)
+            return AdvanceStop(profileActive: _activeDemand);
+
+        if (_pendingOperationSince is null)
+            return ManagedResourceUpdate.None;
+
+        return Supervise();
     }
 
     /// <summary>
@@ -305,14 +334,14 @@ public sealed class ManagedService :
 
         if (_missingSince is null)
         {
-            _missingSince = DateTime.UtcNow;
+            _missingSince = SupervisorTime.UtcNow;
             return ManagedResourceUpdate.None;
         }
 
-        if (DateTime.UtcNow - _missingSince < _restartTimeout)
+        if (SupervisorTime.UtcNow - _missingSince < _restartTimeout)
             return ManagedResourceUpdate.None;
 
-        _missingSince = DateTime.UtcNow;
+        _missingSince = SupervisorTime.UtcNow;
 
         return TryStart()
             ? ManagedResourceUpdate.Restarted
@@ -348,7 +377,7 @@ public sealed class ManagedService :
         }
 
         if (_stopStartedUtc is not null &&
-            DateTime.UtcNow - _stopStartedUtc >= TimeSpan.FromSeconds(OperationTimeoutSeconds))
+            SupervisorTime.UtcNow - _stopStartedUtc >= TimeSpan.FromSeconds(OperationTimeoutSeconds))
         {
             ReportError(
                 ServiceErrorRecovery.Stopped,
@@ -370,7 +399,7 @@ public sealed class ManagedService :
         _stopPending = true;
         _stopCommandSent = true;
         _startAfterStop = restartAfterStop;
-        _stopStartedUtc ??= DateTime.UtcNow;
+        _stopStartedUtc ??= SupervisorTime.UtcNow;
     }
 
     /// <summary>
@@ -383,7 +412,8 @@ public sealed class ManagedService :
         {
             _controller!.Start();
             _missingSince = null;
-            _pendingOperationSince = DateTime.UtcNow;
+            _pendingOperationSince = SupervisorTime.UtcNow;
+            RememberState(ServiceRuntimeState.StartPending);
             return true;
         }
         catch (Exception ex)
@@ -402,6 +432,7 @@ public sealed class ManagedService :
         {
             _controller!.Stop();
             _stopCommandSent = true;
+            RememberState(ServiceRuntimeState.StopPending);
         }
         catch (Exception ex)
         {
@@ -418,7 +449,8 @@ public sealed class ManagedService :
         try
         {
             _controller!.Continue();
-            _pendingOperationSince = DateTime.UtcNow;
+            _pendingOperationSince = SupervisorTime.UtcNow;
+            RememberState(ServiceRuntimeState.ContinuePending);
         }
         catch (Exception ex)
         {
@@ -435,12 +467,15 @@ public sealed class ManagedService :
         try
         {
             ServiceRuntimeState state = _controller!.GetState();
+            RememberState(state);
             _statusErrorReported = false;
             ClearErrorIfRecovered(state);
             return state;
         }
         catch (Exception ex)
         {
+            _hasObservedState = true;
+            _lastObservedState = null;
             if (!_statusErrorReported)
             {
                 _statusErrorReported = true;
@@ -451,12 +486,19 @@ public sealed class ManagedService :
         }
     }
 
+    /// <summary>Shares one observed or predicted service state with readiness checks in this pass.</summary>
+    private void RememberState(ServiceRuntimeState state)
+    {
+        _hasObservedState = true;
+        _lastObservedState = state;
+    }
+
     /// <summary>
     /// Starts tracking how long Windows remains in a transitional service state.
     /// </summary>
     private void TrackPendingOperation()
     {
-        _pendingOperationSince ??= DateTime.UtcNow;
+        _pendingOperationSince ??= SupervisorTime.UtcNow;
     }
 
     /// <summary>
@@ -467,14 +509,14 @@ public sealed class ManagedService :
     {
         TrackPendingOperation();
 
-        if (DateTime.UtcNow - _pendingOperationSince < TimeSpan.FromSeconds(OperationTimeoutSeconds))
+        if (SupervisorTime.UtcNow - _pendingOperationSince < TimeSpan.FromSeconds(OperationTimeoutSeconds))
             return;
 
         ReportError(
             state == ServiceRuntimeState.StopPending ? ServiceErrorRecovery.Stopped : ServiceErrorRecovery.Running,
             $"Service '{Config.ServiceName}' remained in {state} for more than {OperationTimeoutSeconds} seconds."
         );
-        _pendingOperationSince = DateTime.UtcNow;
+        _pendingOperationSince = SupervisorTime.UtcNow;
     }
 
     /// <summary>

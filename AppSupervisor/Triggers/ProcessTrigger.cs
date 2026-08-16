@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using AppSupervisor.Core;
 
 namespace AppSupervisor.Triggers;
@@ -25,16 +24,6 @@ public sealed class ProcessTrigger : ITrigger
     /// <returns><see langword="true"/> when a matching process exists.</returns>
     public bool IsActive()
     {
-        Process[] processes = Process.GetProcessesByName(_processName);
-
-        try
-        {
-            return processes.Length > 0;
-        }
-        finally
-        {
-            foreach (Process process in processes)
-                process.Dispose();
-        }
+        return ProcessPathSnapshot.IsProcessNameRunning(_processName);
     }
 }

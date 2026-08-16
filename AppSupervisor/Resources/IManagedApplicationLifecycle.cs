@@ -8,7 +8,8 @@ namespace AppSupervisor.Resources;
 internal interface IManagedApplicationLifecycle :
     IManagedResource,
     IManagedResourceReadiness,
-    IManagedResourceDeactivationState
+    IManagedResourceDeactivationState,
+    IManagedResourceLifecycleWork
 {
     /// <summary>Gets the helper configuration used for identity and process discovery.</summary>
     ManagedApplicationConfig Config { get; }
@@ -18,6 +19,18 @@ internal interface IManagedApplicationLifecycle :
 
     /// <summary>Uses the application close operation as its profile-deactivation state.</summary>
     bool IManagedResourceDeactivationState.DeactivationPending => CloseOperationPending;
+
+    /// <summary>Uses a pending close as the compatibility lifecycle signal.</summary>
+    bool IManagedResourceLifecycleWork.LifecycleWorkPending => CloseOperationPending;
+
+    /// <summary>Advances compatibility implementations through their existing deactivation method.</summary>
+    ManagedResourceUpdate IManagedResourceLifecycleWork.AdvanceLifecycle(DateTime nowUtc)
+    {
+        if (CloseOperationPending)
+            SuperviseDeactivation();
+
+        return ManagedResourceUpdate.None;
+    }
 
     /// <summary>Checks whether at least one matching helper process is currently running.</summary>
     /// <returns><see langword="true"/> when a matching process exists.</returns>

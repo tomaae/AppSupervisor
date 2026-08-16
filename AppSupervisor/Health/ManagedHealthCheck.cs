@@ -50,6 +50,15 @@ public sealed class ManagedHealthCheck : IDisposable
     /// <summary>Gets the presentation targets configured specifically for this check.</summary>
     public IReadOnlyList<NotificationTarget> NotificationTargets => _config.Notifications.Target;
 
+    /// <summary>Gets whether a cancelled probe task still needs to relinquish its resources.</summary>
+    internal bool PauseDrainPending => _probeTask is not null;
+
+    /// <summary>Reaps a cancelled probe once it has actually stopped using probe state.</summary>
+    internal void AdvancePauseDrain()
+    {
+        FinalizeDiscardedProbeIfCompleted();
+    }
+
     /// <summary>Advances completion processing and starts a new probe only when its interval has elapsed.</summary>
     /// <param name="ownerProcessIds">The identifiers of all currently matching helper processes.</param>
     /// <param name="nowUtc">The current UTC time supplied by the supervision tick.</param>
