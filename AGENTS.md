@@ -14,6 +14,7 @@
 - Correctness, clarity, conflict prevention, and complete verification take priority over speed. This is a personal project with no delivery-pressure justification for rushing or skipping checks.
 - Assume existing repository modifications were made by Codex and preserve them unless the user says otherwise.
 - If the user makes a manual change, they will explicitly disclose it. Treat disclosed manual changes as user-owned and preserve them.
+- Review and verify disclosed user-owned manual changes with the same technical care as Codex changes, including relevant diff inspection and tests. Report any concern clearly, and do not rewrite or fix the user-owned change unless the user authorizes that correction.
 - After pushing changes to GitHub, wait for all associated GitHub Actions workflows and required checks to finish.
 - Do not consider pushed work complete until those GitHub workflows and checks succeed. If any fail, inspect the GitHub failure, fix it when it is within scope, push the correction, and monitor the new run through successful completion.
 
