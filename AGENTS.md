@@ -13,6 +13,7 @@
 ## Manual verification handoff
 
 - Codex is the implementation worker for this project and owns code changes, automated verification, diagnosis, commits, pushes, and GitHub workflow monitoring.
+- If Codex is not clear about what the user means or what outcome the user wants, stop and ask for clarification before acting. Do not guess at unclear user intent. Continue to handle ordinary implementation details autonomously when the requested intent and outcome are clear.
 - Ask the user only for manual verification that genuinely requires their environment, hardware, external applications or accounts, live integrations, or human visual/interactive judgment.
 - Maintain the Codex task titled `Manual tests` as the canonical owner-facing checklist for every outstanding manual verification.
 - Every manual test must include a stable test number, clear category, complete setup and actions, expected result, and an explicit `PASS`, `FAIL`, `BLOCKED`, or `UNTESTED` status.
