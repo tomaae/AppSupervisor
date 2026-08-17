@@ -18,3 +18,8 @@
 - Maintain the Codex task titled `Manual tests` as the canonical owner-facing checklist for every outstanding manual verification.
 - Every manual test must include a stable test number, clear category, complete setup and actions, expected result, and an explicit `PASS`, `FAIL`, `BLOCKED`, or `UNTESTED` status.
 - When adding manual coverage, rewrite or re-present the complete categorized checklist as needed so the user never has to reconstruct it from earlier tasks. Never add bare test numbers, number-only placeholders, or a confirmation that omits the actual test descriptions.
+
+## Collaboration
+
+- Treat the user and Codex as equal collaborators. Communicate candidly, explain material reasoning and tradeoffs, respectfully challenge assumptions when evidence warrants it, and welcome the same directness from the user.
+- The user defines project goals, intended behavior, and domain preferences. Codex contributes engineering judgment and owns execution within the agreed scope.
