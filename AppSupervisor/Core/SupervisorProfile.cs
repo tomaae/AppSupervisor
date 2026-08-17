@@ -256,8 +256,8 @@ public sealed class SupervisorProfile : IDisposable
 
         if (TriggerActive)
         {
-            SupervisorLog.WriteInformation(
-                $"TRACE Profile '{Name}': trigger disappeared; entering close timeout."
+            SupervisorLog.WriteTrace(
+                $"Profile '{Name}': trigger disappeared; entering close timeout."
             );
             TriggerActive = false;
             _triggerMissingSince = SupervisorTime.UtcNow;
@@ -266,21 +266,21 @@ public sealed class SupervisorProfile : IDisposable
 
             foreach (IManagedResource resource in _resources)
             {
-                SupervisorLog.WriteInformation(
-                    $"TRACE Profile '{Name}': cancelling pending recovery for '{resource.DisplayName}'."
+                SupervisorLog.WriteTrace(
+                    $"Profile '{Name}': cancelling pending recovery for '{resource.DisplayName}'."
                 );
                 RunResourceOperation(
                     resource,
                     resource.CancelPendingRecovery,
                     "recovery cancellation"
                 );
-                SupervisorLog.WriteInformation(
-                    $"TRACE Profile '{Name}': pending recovery cancelled for '{resource.DisplayName}'."
+                SupervisorLog.WriteTrace(
+                    $"Profile '{Name}': pending recovery cancelled for '{resource.DisplayName}'."
                 );
             }
 
-            SupervisorLog.WriteInformation(
-                $"TRACE Profile '{Name}': trigger-loss transition completed."
+            SupervisorLog.WriteTrace(
+                $"Profile '{Name}': trigger-loss transition completed."
             );
             return true;
         }
@@ -313,14 +313,14 @@ public sealed class SupervisorProfile : IDisposable
 
         if (SupervisorTime.UtcNow - _triggerMissingSince >= _closeTimeout)
         {
-            SupervisorLog.WriteInformation(
-                $"TRACE Profile '{Name}': close timeout elapsed; beginning resource deactivation."
+            SupervisorLog.WriteTrace(
+                $"Profile '{Name}': close timeout elapsed; beginning resource deactivation."
             );
             DeactivateResources();
             _triggerMissingSince = null;
             _deactivationStarted = _activatedResources.Count > 0;
-            SupervisorLog.WriteInformation(
-                $"TRACE Profile '{Name}': resource deactivation requests completed; " +
+            SupervisorLog.WriteTrace(
+                $"Profile '{Name}': resource deactivation requests completed; " +
                 $"pending={_deactivationStarted}."
             );
         }

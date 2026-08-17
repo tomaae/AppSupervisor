@@ -15,6 +15,7 @@ public sealed class RunningProcessPickerDialog : Form
     private readonly TextBox _filterTextBox;
     private readonly CheckBox _showMicrosoftProcesses;
     private readonly ListView _processList;
+    private readonly PickerLoadingOverlay _loadingOverlay;
     private readonly Label _statusLabel;
     private readonly Button _refreshButton;
     private readonly Button _selectButton;
@@ -88,6 +89,9 @@ public sealed class RunningProcessPickerDialog : Form
         _processList.Columns.Add("Executable path", 650);
         _processList.SelectedIndexChanged += ProcessSelectionChanged;
         _processList.DoubleClick += ProcessDoubleClicked;
+        var resultPanel = new Panel { Dock = DockStyle.Fill };
+        resultPanel.Controls.Add(_processList);
+        _loadingOverlay = new PickerLoadingOverlay(resultPanel);
 
         _statusLabel = new Label
         {
@@ -121,7 +125,7 @@ public sealed class RunningProcessPickerDialog : Form
         buttons.Controls.Add(cancelButton);
         buttons.Controls.Add(_selectButton);
 
-        Controls.Add(_processList);
+        Controls.Add(resultPanel);
         Controls.Add(topPanel);
         Controls.Add(_statusLabel);
         Controls.Add(buttons);
@@ -255,6 +259,8 @@ public sealed class RunningProcessPickerDialog : Form
         _refreshButton.Enabled = false;
         _refreshButton.Text = "Refreshing...";
         _statusLabel.Text = "Discovering running applications...";
+        _processList.Enabled = false;
+        _loadingOverlay.ShowLoading();
 
         try
         {
@@ -270,7 +276,6 @@ public sealed class RunningProcessPickerDialog : Form
             _filterTextBox.Enabled = true;
             _showMicrosoftProcesses.Enabled = true;
             PopulateList();
-            _statusLabel.Text = $"{_allRows.Count} unique running application(s) discovered.";
         }
         catch (OperationCanceledException)
         {
@@ -286,6 +291,8 @@ public sealed class RunningProcessPickerDialog : Form
 
             if (!IsDisposed)
             {
+                _loadingOverlay.HideLoading();
+                _processList.Enabled = true;
                 _refreshButton.Enabled = true;
                 _refreshButton.Text = "Refresh";
             }
@@ -377,6 +384,8 @@ public sealed class RunningProcessPickerDialog : Form
     private void PopulateList()
     {
         string filter = _filterTextBox.Text.Trim();
+        int microsoftHiddenCount = 0;
+        int textFilterHiddenCount = 0;
         _processList.BeginUpdate();
 
         try
@@ -386,12 +395,16 @@ public sealed class RunningProcessPickerDialog : Form
             foreach (ProcessRow row in _allRows)
             {
                 if (row.IsStandardMicrosoftProcess && !_showMicrosoftProcesses.Checked)
+                {
+                    microsoftHiddenCount++;
                     continue;
+                }
 
                 if (filter.Length > 0 &&
                     !row.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) &&
                     !(row.Path?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false))
                 {
+                    textFilterHiddenCount++;
                     continue;
                 }
 
@@ -410,6 +423,26 @@ public sealed class RunningProcessPickerDialog : Form
         }
 
         _selectButton.Enabled = false;
+        int visibleCount = _processList.Items.Count;
+        string status = visibleCount == 1
+            ? "1 unique running application shown."
+            : $"{visibleCount} unique running applications shown.";
+
+        if (microsoftHiddenCount > 0)
+        {
+            status += microsoftHiddenCount == 1
+                ? " 1 Microsoft/Windows application filtered out."
+                : $" {microsoftHiddenCount} Microsoft/Windows applications filtered out.";
+        }
+
+        if (textFilterHiddenCount > 0)
+        {
+            status += textFilterHiddenCount == 1
+                ? " 1 application does not match the text filter."
+                : $" {textFilterHiddenCount} applications do not match the text filter.";
+        }
+
+        _statusLabel.Text = status;
     }
 
     /// <summary>Stores the selected process name and closes the dialog with an OK result.</summary>

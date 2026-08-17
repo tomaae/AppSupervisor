@@ -8,6 +8,7 @@ namespace AppSupervisor.Tests;
 /// <summary>
 /// Verifies the configuration editor exposes the requested process-selection and diagnostic actions.
 /// </summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorFeatureSmokeTests
 {
     /// <summary>Confirms process, notification, health, and Startup macro controls are constructed.</summary>

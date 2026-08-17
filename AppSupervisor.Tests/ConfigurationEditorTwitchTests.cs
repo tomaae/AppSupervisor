@@ -8,6 +8,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Protects Twitch action-specific editor visibility and selector layout.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorTwitchTests
 {
     [Fact]

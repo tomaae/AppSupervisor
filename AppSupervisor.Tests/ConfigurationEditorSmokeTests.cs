@@ -7,6 +7,7 @@ namespace AppSupervisor.Tests;
 /// <summary>
 /// Verifies the code-only WinForms configuration editor can be constructed on a proper STA thread.
 /// </summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorSmokeTests
 {
     /// <summary>Confirms a valid document builds every editor page without designer files or runtime exceptions.</summary>

@@ -156,6 +156,7 @@ public sealed partial class HealthCheckEditorDialog : Form
         };
         processPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         processPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _activeWhenProcessTextBox.Margin = Padding.Empty;
         var pickButton = new Button
         {
             Text = "Pick running...",

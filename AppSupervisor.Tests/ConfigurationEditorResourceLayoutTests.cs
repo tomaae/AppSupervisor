@@ -7,6 +7,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies resource section separation and application/service option alignment.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorResourceLayoutTests
 {
     /// <summary>Confirms the fixed divider and notification/input left edges after real WinForms layout.</summary>

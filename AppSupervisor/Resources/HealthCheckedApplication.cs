@@ -164,15 +164,15 @@ public sealed class HealthCheckedApplication :
     /// <summary>Cancels application recovery and all health work as soon as the monitoring trigger disappears.</summary>
     public void CancelPendingRecovery()
     {
-        SupervisorLog.WriteInformation(
-            $"TRACE Helper '{DisplayName}': cancelling health and application recovery."
+        SupervisorLog.WriteTrace(
+            $"Helper '{DisplayName}': cancelling health and application recovery."
         );
         _restartCheck = null;
         _replacementStartRequested = false;
         ResetHealthChecks(clearErrors: true);
         _application.CancelPendingRecovery();
-        SupervisorLog.WriteInformation(
-            $"TRACE Helper '{DisplayName}': health and application recovery cancelled."
+        SupervisorLog.WriteTrace(
+            $"Helper '{DisplayName}': health and application recovery cancelled."
         );
     }
 

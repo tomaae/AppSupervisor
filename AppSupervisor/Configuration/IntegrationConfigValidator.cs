@@ -11,6 +11,8 @@ public static class IntegrationConfigValidator
         IReadOnlyList<SupervisorProfileConfig?>? profiles = null)
     {
         var errors = new List<string>();
+        if (!Enum.IsDefined(integrations.LogLevel))
+            errors.Add("The integrations logLevel is unsupported.");
         if (integrations.SupervisorApi is null)
             errors.Add("The integrations object must contain a supervisorApi object.");
         ValidateHomeAssistant(integrations.HomeAssistant, profiles, errors);

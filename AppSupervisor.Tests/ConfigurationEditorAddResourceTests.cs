@@ -10,6 +10,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies every command exposed by the configuration editor's Add resource menu.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorAddResourceTests
 {
     /// <summary>Confirms each menu choice creates and selects the corresponding resource type.</summary>

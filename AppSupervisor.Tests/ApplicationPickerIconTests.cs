@@ -5,6 +5,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies compact executable icons are configured across every application picker.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ApplicationPickerIconTests
 {
     /// <summary>Confirms each picker uses the same DPI-aware small-image presentation.</summary>

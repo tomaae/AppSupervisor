@@ -7,6 +7,49 @@ namespace AppSupervisor.Tests;
 public sealed class IntegrationConfigTests
 {
     [Fact]
+    public void SerializeAndLoad_LogLevel_DefaultsToInfoAndRoundTripsTrace()
+    {
+        Assert.Equal(SupervisorLogLevel.Info, new IntegrationsConfig().LogLevel);
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "config.json");
+
+        try
+        {
+            ConfigFileWriter.SaveAtomic(path, new AppSupervisorConfig
+            {
+                Integrations = new IntegrationsConfig
+                {
+                    LogLevel = SupervisorLogLevel.Trace
+                }
+            });
+
+            Assert.Equal(
+                SupervisorLogLevel.Trace,
+                ConfigLoader.Load(path).Integrations.LogLevel
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Validate_UnsupportedLogLevel_ThrowsValidationError()
+    {
+        var configuration = new IntegrationsConfig
+        {
+            LogLevel = (SupervisorLogLevel)99
+        };
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => IntegrationConfigValidator.Validate(configuration)
+        );
+
+        Assert.Contains("logLevel", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SerializeAndLoad_SupervisorApi_RoundTripsGlobalToggle()
     {
         string directory = CreateTemporaryDirectory();

@@ -114,10 +114,10 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
 
         _pendingCapture = Task.Run(() =>
         {
-            SupervisorLog.WriteInformation("TRACE SteamVR isolated capture started.");
+            SupervisorLog.WriteTrace("SteamVR isolated capture started.");
             SteamVrSnapshot snapshot = _source.Capture();
-            SupervisorLog.WriteInformation(
-                $"TRACE SteamVR isolated capture returned; active={snapshot.SteamVrActive}; " +
+            SupervisorLog.WriteTrace(
+                $"SteamVR isolated capture returned; active={snapshot.SteamVrActive}; " +
                 $"devices={snapshot.Devices.Count}; error={snapshot.Error is not null}."
             );
             return snapshot;

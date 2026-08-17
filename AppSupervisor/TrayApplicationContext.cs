@@ -53,7 +53,8 @@ public partial class TrayApplicationContext : ApplicationContext
     private volatile bool _pausing;
     private bool _pauseDrainStarted;
     private volatile bool _pausedManually;
-    private volatile bool _configurationError;
+    private volatile bool _configurationLoadError;
+    private string _configurationLoadErrorTrayStatus = "Configuration error";
     private readonly HashSet<RuntimeErrorIdentity> _activeRuntimeErrors = [];
     private bool _inactiveCleanupError;
     private readonly record struct RuntimeErrorIdentity(SupervisorProfile Profile, IManagedResource Resource);
@@ -185,8 +186,8 @@ public partial class TrayApplicationContext : ApplicationContext
                 if (!stateChanged)
                     continue;
 
-                SupervisorLog.WriteInformation(
-                    $"TRACE Profile '{profile.Name}': Update returned a trigger transition; " +
+                SupervisorLog.WriteTrace(
+                    $"Profile '{profile.Name}': Update returned a trigger transition; " +
                     $"active={profile.TriggerActive}."
                 );
 
@@ -197,8 +198,8 @@ public partial class TrayApplicationContext : ApplicationContext
                     (profile.TriggerActive ? "running." : "stopped."),
                     profile.NotificationTargets
                 );
-                SupervisorLog.WriteInformation(
-                    $"TRACE Profile '{profile.Name}': trigger-transition notification submitted."
+                SupervisorLog.WriteTrace(
+                    $"Profile '{profile.Name}': trigger-transition notification submitted."
                 );
             }
             catch (Exception ex)
@@ -572,7 +573,7 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <param name="e">The menu-click event data.</param>
     private async void TogglePause(object? sender, EventArgs e)
     {
-        if (_exiting || _pausing || (_configurationError && !_hasValidConfiguration))
+        if (_exiting || _pausing || (_configurationLoadError && !_hasValidConfiguration))
             return;
 
         if (!_paused)
@@ -710,10 +711,12 @@ public partial class TrayApplicationContext : ApplicationContext
                 ApplicationUsageRegistry oldApplicationUsageRegistry = _applicationUsageRegistry;
 
                 _configuration = newConfig;
+                SupervisorLog.SetMinimumLevel(newConfig.Integrations.LogLevel);
                 _profiles = newProfiles;
                 _applicationUsageRegistry = newApplicationUsageRegistry;
                 _hasValidConfiguration = true;
-                _configurationError = false;
+                _configurationLoadError = false;
+                _configurationLoadErrorTrayStatus = "Configuration error";
                 if (_paused && !_pausedManually)
                 {
                     _paused = false;
@@ -812,7 +815,11 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <param name="exception">The validation or profile-construction failure.</param>
     private void HandleConfigurationLoadFailure(Exception exception)
     {
-        _configurationError = true;
+        ConfigurationLoadFailurePresentation presentation =
+            ConfigurationLoadFailureClassifier.Classify(exception, _hasValidConfiguration);
+        _configurationLoadError = true;
+        _configurationLoadErrorTrayStatus = presentation.TrayStatus;
+        SupervisorLog.WriteError(presentation.LogMessage, exception);
 
         if (!_hasValidConfiguration)
         {
@@ -825,14 +832,10 @@ public partial class TrayApplicationContext : ApplicationContext
 
         UpdateTrayState();
 
-        string prefix = _hasValidConfiguration
-            ? "Reload failed. Existing configuration remains active."
-            : "Configuration is invalid. Supervision is paused.";
-
         PublishNotification(
             NotificationSeverity.Error,
-            "Configuration error",
-            $"{prefix}\n{exception.Message}",
+            presentation.NotificationTitle,
+            $"{presentation.MessagePrefix}\n{exception.Message}",
             GetOperationalNotificationTargets()
         );
     }
@@ -1033,7 +1036,7 @@ public partial class TrayApplicationContext : ApplicationContext
                 _reportedLifecycleTickErrors.Count > 0;
         }
 
-        bool pauseEnabled = !_pausing && !(_configurationError && !_hasValidConfiguration);
+        bool pauseEnabled = !_pausing && !(_configurationLoadError && !_hasValidConfiguration);
         bool startupPending = !_paused && _profiles.Any(profile => profile.StartupPending);
         bool waitingForCloseTimeout = !_paused &&
             _profiles.Any(profile => profile.WaitingForCloseTimeout);
@@ -1062,10 +1065,10 @@ public partial class TrayApplicationContext : ApplicationContext
             icon = _pausedIcon;
             text = "AppSupervisor - Paused";
         }
-        else if (_configurationError)
+        else if (_configurationLoadError)
         {
             icon = _errorIcon;
-            text = "AppSupervisor - Configuration error";
+            text = $"AppSupervisor - {_configurationLoadErrorTrayStatus}";
         }
         else if (hasRuntimeError || _hasSteamVrOfflineDevices)
         {
@@ -1140,8 +1143,8 @@ public partial class TrayApplicationContext : ApplicationContext
 
         if (transition)
         {
-            SupervisorLog.WriteInformation(
-                $"TRACE Tray transition applying: '{_trayIcon.Text}' -> '{state.Text}'."
+            SupervisorLog.WriteTrace(
+                $"Tray transition applying: '{_trayIcon.Text}' -> '{state.Text}'."
             );
         }
 
@@ -1151,7 +1154,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _trayIcon.Text = state.Text;
 
         if (transition)
-            SupervisorLog.WriteInformation($"TRACE Tray transition applied: '{state.Text}'.");
+            SupervisorLog.WriteTrace($"Tray transition applied: '{state.Text}'.");
     }
 
     /// <summary>Describes every user-visible tray value that must change as one UI update.</summary>

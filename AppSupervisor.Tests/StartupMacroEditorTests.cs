@@ -7,6 +7,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies Startup macro controls preserve existing helper options and clear button labels.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class StartupMacroEditorTests
 {
     [Fact]

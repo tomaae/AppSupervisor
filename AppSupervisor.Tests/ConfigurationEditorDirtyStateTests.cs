@@ -6,6 +6,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies configuration editor change detection and action availability.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorDirtyStateTests
 {
     /// <summary>Confirms change actions follow edits and become disabled again after an exact revert.</summary>

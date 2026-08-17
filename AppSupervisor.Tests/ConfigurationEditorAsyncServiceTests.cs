@@ -7,6 +7,7 @@ namespace AppSupervisor.Tests;
 /// <summary>
 /// Verifies installed-service discovery does not block editor creation and is cancelled during disposal.
 /// </summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorAsyncServiceTests
 {
     /// <summary>Confirms a pending catalog task is cancelled when an unshown editor is disposed.</summary>

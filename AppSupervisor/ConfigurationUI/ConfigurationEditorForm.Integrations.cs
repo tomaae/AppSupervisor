@@ -57,6 +57,12 @@ public sealed partial class ConfigurationEditorForm
     private Button _disconnectTwitchButton = null!;
     private bool _twitchAuthorizationPending;
     private readonly Func<CancellationToken, Task<SteamVrSnapshot>> _steamVrDeviceLoader;
+    private readonly ComboBox _logLevel = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        FormattingEnabled = true,
+        Width = 180
+    };
     private readonly CheckBox _steamVrEnabled = new()
     {
         Text = "Monitor expected SteamVR devices",
@@ -98,9 +104,10 @@ public sealed partial class ConfigurationEditorForm
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 5
+            RowCount = 6
         };
         integrationsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -157,6 +164,7 @@ public sealed partial class ConfigurationEditorForm
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
         integrationsLayout.Controls.Add(group, 0, 4);
+        integrationsLayout.Controls.Add(BuildLoggingIntegrationGroup(), 0, 5);
         scrolling.Controls.Add(integrationsLayout);
         page.Controls.Add(scrolling);
 
@@ -165,6 +173,7 @@ public sealed partial class ConfigurationEditorForm
         LoadObsIntegration();
         LoadTwitchIntegration();
         LoadSteamVrIntegration();
+        LoadLoggingIntegration();
         _steamVrEnabled.CheckedChanged += SteamVrSettingsChanged;
         _steamVrReminderMinutes.ValueChanged += SteamVrSettingsChanged;
         _steamVrReminderMinutes.TextChanged += SteamVrSettingsChanged;
@@ -172,6 +181,55 @@ public sealed partial class ConfigurationEditorForm
         _steamVrDevices.CellValueChanged += SteamVrDeviceCellValueChanged;
         _steamVrDevices.CurrentCellDirtyStateChanged += SteamVrDeviceCellDirtyStateChanged;
         return page;
+    }
+
+    /// <summary>Builds the global diagnostic log severity selector at the bottom of Integrations.</summary>
+    private Control BuildLoggingIntegrationGroup()
+    {
+        var group = new GroupBox
+        {
+            Text = "Global — Diagnostic logging",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(12),
+            Margin = new Padding(0, 10, 0, 0)
+        };
+        TableLayoutPanel layout = CreateEditorTable();
+        _logLevel.Items.AddRange(
+            Enum.GetValues<SupervisorLogLevel>().Cast<object>().ToArray()
+        );
+        _logLevel.Format += (_, args) =>
+        {
+            if (args.ListItem is SupervisorLogLevel level)
+                args.Value = level.ToString();
+        };
+        AddEditorRow(layout, "Log level", _logLevel);
+        AddEditorRow(layout, "", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(720, 0),
+            ForeColor = SystemColors.GrayText,
+            Text = "Info is the default. Trace includes detailed diagnostic flow; Warning and Error reduce routine log output."
+        });
+        group.Controls.Add(layout);
+        return group;
+    }
+
+    /// <summary>Loads and observes the configured diagnostic log severity.</summary>
+    private void LoadLoggingIntegration()
+    {
+        _logLevel.SelectedItem = _configuration.Integrations.LogLevel;
+        _logLevel.SelectedValueChanged += LogLevelChanged;
+    }
+
+    /// <summary>Updates the editable log severity when its selection changes.</summary>
+    private void LogLevelChanged(object? sender, EventArgs e)
+    {
+        if (_loadingControls || _logLevel.SelectedItem is not SupervisorLogLevel level)
+            return;
+
+        _configuration.Integrations.LogLevel = level;
+        UpdateStatus();
     }
 
     /// <summary>Builds the global loopback-only Supervisor API toggle.</summary>

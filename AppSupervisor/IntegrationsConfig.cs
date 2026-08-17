@@ -3,6 +3,9 @@ namespace AppSupervisor;
 /// <summary>Contains application-wide integrations that are not owned by an individual supervisor profile.</summary>
 public sealed class IntegrationsConfig
 {
+    /// <summary>Gets or sets the minimum severity written to the diagnostic session log.</summary>
+    public SupervisorLogLevel LogLevel { get; set; } = SupervisorLogLevel.Info;
+
     /// <summary>Gets or sets the global read-only Supervisor API.</summary>
     public SupervisorApiConfig SupervisorApi { get; set; } = new();
 

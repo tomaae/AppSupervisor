@@ -5,8 +5,63 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies monitor presentation and current-window readback controls in the macro action editor.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class StartupMacroActionEditorTests
 {
+    /// <summary>Confirms every action-specific editor begins at the Action selector's left edge.</summary>
+    [Theory]
+    [InlineData(StartupMacroActionType.Delay)]
+    [InlineData(StartupMacroActionType.Hotkey)]
+    [InlineData(StartupMacroActionType.MoveWindow)]
+    [InlineData(StartupMacroActionType.ResizeWindow)]
+    public void Constructor_ActionType_AlignsVisibleEditors(StartupMacroActionType type)
+    {
+        Exception? threadException = null;
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var dialog = new StartupMacroActionEditorDialog(
+                    new StartupMacroActionConfig { Type = type },
+                    Environment.ProcessPath!
+                )
+                {
+                    ShowInTaskbar = false,
+                    Opacity = 0
+                };
+                dialog.Show();
+                Application.DoEvents();
+                Control[] controls = EnumerateControls(dialog).ToArray();
+                ComboBox action = Assert.Single(
+                    controls.OfType<ComboBox>(),
+                    combo => combo.Items.Cast<object>().OfType<StartupMacroActionType>().Any()
+                );
+                IEnumerable<Control> visibleEditors = controls.Where(control =>
+                    control.Visible && control != action &&
+                    (control is NumericUpDown ||
+                        control is HotkeyCaptureTextBox ||
+                        control is ComboBox combo &&
+                            combo.Items.Cast<object>()
+                                .OfType<DisplayMonitorCatalog.MonitorChoice>().Any() ||
+                        control is Button button &&
+                            button.Text.StartsWith("Read current", StringComparison.Ordinal))
+                );
+
+                foreach (Control editor in visibleEditors)
+                    Assert.Equal(OuterLeft(action), OuterLeft(editor));
+            }
+            catch (Exception exception)
+            {
+                threadException = exception;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "Macro editor alignment test timed out.");
+        Assert.Null(threadException);
+    }
+
     [Fact]
     public void Constructor_MoveAction_ShowsNamedMonitorsAndPositionReadback()
     {
@@ -92,4 +147,7 @@ public sealed class StartupMacroActionEditorTests
             foreach (Control descendant in EnumerateControls(child))
                 yield return descendant;
     }
+
+    private static int OuterLeft(Control control) =>
+        control.Parent!.PointToScreen(control.Location).X;
 }

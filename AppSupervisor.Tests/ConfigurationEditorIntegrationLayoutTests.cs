@@ -7,6 +7,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies that global integration settings use the editor's shared label and input grid.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorIntegrationLayoutTests
 {
     /// <summary>Confirms compact editor windows can scroll to integrations below the fold.</summary>
@@ -81,6 +82,16 @@ public sealed class ConfigurationEditorIntegrationLayoutTests
                         devices.ClientSize.Height >= 200,
                         $"The SteamVR device table must retain at least 200 pixels of visible height; actual height was {devices.ClientSize.Height}."
                     );
+
+                    GroupBox logging = Assert.Single(
+                        EnumerateControls(scrolling).OfType<GroupBox>(),
+                        group => group.Text == "Global — Diagnostic logging"
+                    );
+                    Assert.True(logging.Top > steamVr.Top);
+                    ComboBox logLevel = Assert.Single(
+                        EnumerateControls(logging).OfType<ComboBox>()
+                    );
+                    Assert.Equal(SupervisorLogLevel.Info, logLevel.SelectedItem);
                 }
                 catch (Exception exception)
                 {

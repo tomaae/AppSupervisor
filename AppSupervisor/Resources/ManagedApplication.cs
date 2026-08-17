@@ -206,8 +206,8 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     public void CancelPendingRecovery()
     {
-        SupervisorLog.WriteInformation(
-            $"TRACE Application '{DisplayName}': cancelling queued restart and minimize state."
+        SupervisorLog.WriteTrace(
+            $"Application '{DisplayName}': cancelling queued restart and minimize state."
         );
         _missingSince = null;
         ProcessLifecycleTransitionKind? transition =
@@ -229,8 +229,8 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
         _startupMacro.Cancel();
-        SupervisorLog.WriteInformation(
-            $"TRACE Application '{DisplayName}': queued restart and minimize state cancelled."
+        SupervisorLog.WriteTrace(
+            $"Application '{DisplayName}': queued restart and minimize state cancelled."
         );
     }
 

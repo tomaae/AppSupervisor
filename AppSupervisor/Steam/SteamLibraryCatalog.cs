@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using AppSupervisor.Discovery;
 using Microsoft.Win32;
 
 namespace AppSupervisor.Steam;
@@ -21,6 +22,16 @@ internal static partial class SteamLibraryCatalog
     /// <summary>Loads installed items from every library registered with the current Steam installation.</summary>
     /// <returns>Installed items ordered by display name and App ID.</returns>
     public static IReadOnlyList<InstalledSteamItem> LoadInstalledItems()
+    {
+        return ApplicationDiscoveryRetry.Execute(
+            "Steam",
+            LoadInstalledItemsCore
+        );
+    }
+
+    /// <summary>Performs one complete Steam library discovery attempt.</summary>
+    /// <returns>Installed items ordered by display name and App ID.</returns>
+    private static IReadOnlyList<InstalledSteamItem> LoadInstalledItemsCore()
     {
         return DiscoverLibraryDirectories()
             .SelectMany(LoadLibraryItems)

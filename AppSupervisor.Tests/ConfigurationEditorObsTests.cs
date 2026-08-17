@@ -11,6 +11,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies the OBS action editor exposes only scene-relevant controls and sources.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorObsTests
 {
     [Fact]

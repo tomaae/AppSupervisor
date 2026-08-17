@@ -119,8 +119,8 @@ public sealed class ManagedHealthCheck : IDisposable
     /// <param name="clearError">Whether a previously reported unhealthy state should emit recovery-state clearing.</param>
     public void Suspend(bool clearError)
     {
-        SupervisorLog.WriteInformation(
-            $"TRACE Health check '{Name}': suspend requested; probePending={_probeTask is not null}."
+        SupervisorLog.WriteTrace(
+            $"Health check '{Name}': suspend requested; probePending={_probeTask is not null}."
         );
         CancelAndDiscardProbe();
 
@@ -141,8 +141,8 @@ public sealed class ManagedHealthCheck : IDisposable
         if (clearError)
             _unhealthy = false;
 
-        SupervisorLog.WriteInformation(
-            $"TRACE Health check '{Name}': suspend completed; probePending={_probeTask is not null}."
+        SupervisorLog.WriteTrace(
+            $"Health check '{Name}': suspend completed; probePending={_probeTask is not null}."
         );
     }
 

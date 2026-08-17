@@ -4,6 +4,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies the health-check editor keeps its groups, field columns, and notification content aligned.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class HealthCheckEditorLayoutTests
 {
     /// <summary>Confirms VRCOSC guidance describes root structure and strict-majority freshness accurately.</summary>
@@ -103,6 +104,25 @@ public sealed class HealthCheckEditorLayoutTests
                     .ToArray();
                 Assert.Single(editorLeftEdges);
 
+                if (type == HealthCheckType.Listener)
+                {
+                    GroupBox listener = groups.Single(group => group.Text == "Listener");
+                    Control[] listenerControls = EnumerateControls(listener).ToArray();
+                    ComboBox protocol = Assert.Single(
+                        listenerControls.OfType<ComboBox>(),
+                        combo => combo.SelectedItem is ListenerProtocol
+                    );
+                    NumericUpDown port = Assert.Single(
+                        listenerControls.OfType<NumericUpDown>()
+                    );
+                    TextBox process = Assert.Single(
+                        listenerControls.OfType<TextBox>(),
+                        textBox => !textBox.Multiline && textBox.Parent is not NumericUpDown
+                    );
+                    Assert.Equal(OuterLeft(protocol), OuterLeft(port));
+                    Assert.Equal(OuterLeft(protocol), OuterLeft(process));
+                }
+
                 GroupBox notifications = groups.Single(group => group.Text == "Notifications");
                 Control notificationContent = Assert.Single(
                     notifications.Controls.Cast<Control>()
@@ -145,4 +165,7 @@ public sealed class HealthCheckEditorLayoutTests
                 yield return descendant;
         }
     }
+
+    private static int OuterLeft(Control control) =>
+        control.Parent!.PointToScreen(control.Location).X;
 }

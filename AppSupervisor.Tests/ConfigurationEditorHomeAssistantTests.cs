@@ -8,6 +8,7 @@ using System.Windows.Forms;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies Home Assistant editor discovery, service filtering, and stateless-button options.</summary>
+[Collection(WinFormsTestCollection.Name)]
 public sealed class ConfigurationEditorHomeAssistantTests
 {
     [Fact]

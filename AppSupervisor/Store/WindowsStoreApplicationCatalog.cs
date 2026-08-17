@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Xml.Linq;
+using AppSupervisor.Discovery;
 
 namespace AppSupervisor.Store;
 
@@ -12,6 +13,16 @@ internal static class WindowsStoreApplicationCatalog
     /// <summary>Runs the Windows package query and parses every launchable application manifest.</summary>
     /// <returns>Installed applications ordered by display name and package family.</returns>
     public static IReadOnlyList<InstalledStoreApplication> LoadInstalledApplications()
+    {
+        return ApplicationDiscoveryRetry.Execute(
+            "Windows Store",
+            LoadInstalledApplicationsCore
+        );
+    }
+
+    /// <summary>Performs one complete Windows package query and manifest parsing attempt.</summary>
+    /// <returns>Installed applications ordered by display name and package family.</returns>
+    private static IReadOnlyList<InstalledStoreApplication> LoadInstalledApplicationsCore()
     {
         string json = QueryInstalledPackages();
 

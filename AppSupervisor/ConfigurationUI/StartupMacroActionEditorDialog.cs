@@ -68,6 +68,8 @@ public sealed class StartupMacroActionEditorDialog : Form
         AddRow("Height", _height);
         _readCurrentPanel.Controls.Add(_readPosition);
         _readCurrentPanel.Controls.Add(_readSize);
+        _readPosition.Margin = Padding.Empty;
+        _readSize.Margin = Padding.Empty;
         AddRow("Current window", _readCurrentPanel);
 
         var hint = new Label
@@ -129,7 +131,13 @@ public sealed class StartupMacroActionEditorDialog : Form
         };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var clear = new Button { Text = "Clear", AutoSize = true };
+        _hotkey.Margin = Padding.Empty;
+        var clear = new Button
+        {
+            Text = "Clear",
+            AutoSize = true,
+            Margin = new Padding(8, 0, 0, 0)
+        };
         clear.Click += (_, _) => _hotkey.CapturedKeys = [];
         panel.Controls.Add(_hotkey, 0, 0);
         panel.Controls.Add(clear, 1, 0);

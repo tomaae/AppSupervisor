@@ -8,6 +8,7 @@ internal sealed class StoreApplicationPickerDialog : Form
     private readonly TextBox _filterTextBox;
     private readonly CheckBox _showSystemApplications;
     private readonly ListView _applicationList;
+    private readonly PickerLoadingOverlay _loadingOverlay;
     private readonly Label _statusLabel;
     private readonly Button _selectButton;
     private readonly CancellationTokenSource _loadCancellation = new();
@@ -60,6 +61,7 @@ internal sealed class StoreApplicationPickerDialog : Form
             FullRowSelect = true,
             HideSelection = false,
             MultiSelect = false,
+            Enabled = false,
             SmallImageList = _icons.Images
         };
         _applicationList.Columns.Add("Application", 280);
@@ -67,6 +69,9 @@ internal sealed class StoreApplicationPickerDialog : Form
         _applicationList.Columns.Add("Executable path", 390);
         _applicationList.SelectedIndexChanged += ApplicationSelectionChanged;
         _applicationList.DoubleClick += ApplicationDoubleClicked;
+        var resultPanel = new Panel { Dock = DockStyle.Fill };
+        resultPanel.Controls.Add(_applicationList);
+        _loadingOverlay = new PickerLoadingOverlay(resultPanel);
 
         _statusLabel = new Label
         {
@@ -95,7 +100,7 @@ internal sealed class StoreApplicationPickerDialog : Form
         buttons.Controls.Add(cancelButton);
         buttons.Controls.Add(_selectButton);
 
-        Controls.Add(_applicationList);
+        Controls.Add(resultPanel);
         Controls.Add(topPanel);
         Controls.Add(_statusLabel);
         Controls.Add(buttons);
@@ -152,6 +157,7 @@ internal sealed class StoreApplicationPickerDialog : Form
 
             _filterTextBox.Enabled = true;
             _showSystemApplications.Enabled = true;
+            _applicationList.Enabled = true;
             PopulateApplications();
         }
         catch (OperationCanceledException)
@@ -159,7 +165,13 @@ internal sealed class StoreApplicationPickerDialog : Form
         }
         catch (Exception exception)
         {
-            _statusLabel.Text = $"Windows Store discovery failed: {exception.Message}";
+            if (!IsDisposed)
+                _statusLabel.Text = $"Windows Store discovery failed: {exception.Message}";
+        }
+        finally
+        {
+            if (!IsDisposed)
+                _loadingOverlay.HideLoading();
         }
     }
 
@@ -194,6 +206,8 @@ internal sealed class StoreApplicationPickerDialog : Form
     private void PopulateApplications()
     {
         string filter = _filterTextBox.Text.Trim();
+        int systemHiddenCount = 0;
+        int textFilterHiddenCount = 0;
         _applicationList.BeginUpdate();
 
         try
@@ -203,12 +217,16 @@ internal sealed class StoreApplicationPickerDialog : Form
             foreach (InstalledStoreApplication application in _applications)
             {
                 if (application.IsMicrosoftOrSystem && !_showSystemApplications.Checked)
+                {
+                    systemHiddenCount++;
                     continue;
+                }
 
                 if (filter.Length > 0 &&
                     !application.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase) &&
                     !application.PackageName.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 {
+                    textFilterHiddenCount++;
                     continue;
                 }
 
@@ -228,9 +246,26 @@ internal sealed class StoreApplicationPickerDialog : Form
         }
 
         _selectButton.Enabled = false;
-        _statusLabel.Text = _applications.Count == 0
-            ? "No launchable Windows Store applications were found."
-            : $"{_applications.Count} launchable package application(s) discovered.";
+        int visibleCount = _applicationList.Items.Count;
+        string status = visibleCount == 1
+            ? "1 application shown."
+            : $"{visibleCount} applications shown.";
+
+        if (systemHiddenCount > 0)
+        {
+            status += systemHiddenCount == 1
+                ? " 1 Microsoft/system application filtered out."
+                : $" {systemHiddenCount} Microsoft/system applications filtered out.";
+        }
+
+        if (textFilterHiddenCount > 0)
+        {
+            status += textFilterHiddenCount == 1
+                ? " 1 application does not match the text filter."
+                : $" {textFilterHiddenCount} applications do not match the text filter.";
+        }
+
+        _statusLabel.Text = status;
     }
 
     /// <summary>Stores the selected application's launch and update-safe package identity fields.</summary>

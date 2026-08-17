@@ -39,8 +39,8 @@ internal sealed class NotificationService : IDisposable
         if (Volatile.Read(ref _disposed) != 0 || notification.Targets.Count == 0)
             return;
 
-        SupervisorLog.WriteInformation(
-            $"TRACE Notification queued: '{notification.Title}' to " +
+        SupervisorLog.WriteTrace(
+            $"Notification queued: '{notification.Title}' to " +
             $"[{string.Join(", ", notification.Targets)}]."
         );
 
@@ -120,8 +120,8 @@ internal sealed class NotificationService : IDisposable
         SupervisorNotification notification,
         CancellationToken cancellationToken)
     {
-        SupervisorLog.WriteInformation(
-            $"TRACE Notification delivery started: '{notification.Title}'."
+        SupervisorLog.WriteTrace(
+            $"Notification delivery started: '{notification.Title}'."
         );
         bool windowsRequested = notification.Targets.Contains(NotificationTarget.Windows);
 
@@ -135,8 +135,8 @@ internal sealed class NotificationService : IDisposable
 
         if (!notification.Targets.Contains(NotificationTarget.XsOverlay))
         {
-            SupervisorLog.WriteInformation(
-                $"TRACE Notification delivery completed: '{notification.Title}'."
+            SupervisorLog.WriteTrace(
+                $"Notification delivery completed: '{notification.Title}'."
             );
             return;
         }
@@ -156,8 +156,8 @@ internal sealed class NotificationService : IDisposable
             ).ConfigureAwait(false);
         }
 
-        SupervisorLog.WriteInformation(
-            $"TRACE Notification delivery completed: '{notification.Title}'; " +
+        SupervisorLog.WriteTrace(
+            $"Notification delivery completed: '{notification.Title}'; " +
             $"xsOverlayDelivered={xsOverlayDelivered}."
         );
     }

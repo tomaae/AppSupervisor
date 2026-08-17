@@ -8,6 +8,7 @@ internal sealed class SteamApplicationPickerDialog : Form
     private IReadOnlyList<InstalledSteamItem> _items = [];
     private readonly TextBox _filterTextBox;
     private readonly ListView _itemList;
+    private readonly PickerLoadingOverlay _loadingOverlay;
     private readonly ComboBox _executableSelector;
     private readonly Label _statusLabel;
     private readonly Button _selectButton;
@@ -58,6 +59,9 @@ internal sealed class SteamApplicationPickerDialog : Form
         _itemList.Columns.Add("App ID", 100);
         _itemList.Columns.Add("Installation directory", 480);
         _itemList.SelectedIndexChanged += ItemSelectionChanged;
+        var resultPanel = new Panel { Dock = DockStyle.Fill };
+        resultPanel.Controls.Add(_itemList);
+        _loadingOverlay = new PickerLoadingOverlay(resultPanel);
 
         var executablePanel = new TableLayoutPanel
         {
@@ -112,7 +116,7 @@ internal sealed class SteamApplicationPickerDialog : Form
         buttons.Controls.Add(cancelButton);
         buttons.Controls.Add(_selectButton);
 
-        Controls.Add(_itemList);
+        Controls.Add(resultPanel);
         Controls.Add(filterPanel);
         Controls.Add(executablePanel);
         Controls.Add(buttons);
@@ -171,6 +175,11 @@ internal sealed class SteamApplicationPickerDialog : Form
         {
             if (!IsDisposed)
                 _statusLabel.Text = $"Steam library discovery failed: {exception.Message}";
+        }
+        finally
+        {
+            if (!IsDisposed)
+                _loadingOverlay.HideLoading();
         }
     }
 
