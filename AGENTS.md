@@ -9,3 +9,11 @@
 - If the user makes a manual change, they will explicitly disclose it. Treat disclosed manual changes as user-owned and preserve them.
 - After pushing changes to GitHub, wait for all associated GitHub Actions workflows and required checks to finish.
 - Do not consider pushed work complete until those GitHub workflows and checks succeed. If any fail, inspect the GitHub failure, fix it when it is within scope, push the correction, and monitor the new run through successful completion.
+
+## Manual verification handoff
+
+- Codex is the implementation worker for this project and owns code changes, automated verification, diagnosis, commits, pushes, and GitHub workflow monitoring.
+- Ask the user only for manual verification that genuinely requires their environment, hardware, external applications or accounts, live integrations, or human visual/interactive judgment.
+- Maintain the Codex task titled `Manual tests` as the canonical owner-facing checklist for every outstanding manual verification.
+- Every manual test must include a stable test number, clear category, complete setup and actions, expected result, and an explicit `PASS`, `FAIL`, `BLOCKED`, or `UNTESTED` status.
+- When adding manual coverage, rewrite or re-present the complete categorized checklist as needed so the user never has to reconstruct it from earlier tasks. Never add bare test numbers, number-only placeholders, or a confirmation that omits the actual test descriptions.
