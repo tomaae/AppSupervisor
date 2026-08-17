@@ -5,6 +5,9 @@
 - This repository is developed and modified exclusively by Codex in the Codex app on the user's behalf.
 - Pull requests are disabled for this project. Do not create, open, propose, recommend, or prepare a pull request.
 - Work directly in the local repository and use the workflow explicitly requested by the user.
+- Commit each feature or fix separately with a focused commit message. Keep the implementation together with its corresponding tests and documentation, but do not combine unrelated features or fixes in one commit.
+- When work contains multiple features or fixes, define the commit boundaries before implementation and stage each logical change independently. Do not accumulate the work into a catch-all commit at the end, including when the user asks to commit everything.
+- Every changed line in a commit must serve the same feature or fix, and each commit should remain coherent and buildable whenever practical.
 - Assume existing repository modifications were made by Codex and preserve them unless the user says otherwise.
 - If the user makes a manual change, they will explicitly disclose it. Treat disclosed manual changes as user-owned and preserve them.
 - After pushing changes to GitHub, wait for all associated GitHub Actions workflows and required checks to finish.
