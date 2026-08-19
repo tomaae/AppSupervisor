@@ -2,6 +2,7 @@ using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
+using AppSupervisor.SteamVr;
 using AppSupervisor.SupervisorApi;
 using AppSupervisor.Twitch;
 using Microsoft.Win32;
@@ -47,17 +48,20 @@ public partial class TrayApplicationContext : ApplicationContext
     private ApplicationUsageRegistry _applicationUsageRegistry = new();
     private readonly object _runtimeStateLock = new();
     private readonly object _trayStateLock = new();
-    private readonly HashSet<SupervisorProfile> _reportedProfileTickErrors = [];
-    private readonly HashSet<SupervisorProfile> _reportedLifecycleTickErrors = [];
+    private readonly Dictionary<SupervisorProfile, ActiveTrayError> _reportedProfileTickErrors = [];
+    private readonly Dictionary<SupervisorProfile, ActiveTrayError> _reportedLifecycleTickErrors = [];
     private volatile bool _paused = true;
     private volatile bool _pausing;
     private bool _pauseDrainStarted;
     private volatile bool _pausedManually;
     private volatile bool _configurationLoadError;
     private string _configurationLoadErrorTrayStatus = "Configuration error";
-    private readonly HashSet<RuntimeErrorIdentity> _activeRuntimeErrors = [];
-    private bool _inactiveCleanupError;
+    private readonly Dictionary<RuntimeErrorIdentity, ActiveTrayError> _activeRuntimeErrors = [];
+    private ActiveTrayError? _inactiveCleanupError;
+    private long _trayErrorSequence;
     private readonly record struct RuntimeErrorIdentity(SupervisorProfile Profile, IManagedResource Resource);
+    private readonly record struct ActiveTrayError(long Sequence, string Summary);
+    private readonly record struct ActiveTrayErrorSnapshot(int Count, string? LatestSummary);
     private TrayStateSnapshot? _lastScheduledTrayState;
     private volatile bool _hasValidConfiguration;
     private bool _configurationEditorOpen;
@@ -206,7 +210,15 @@ public partial class TrayApplicationContext : ApplicationContext
             {
                 bool firstFailure;
                 lock (_runtimeStateLock)
-                    firstFailure = _reportedProfileTickErrors.Add(profile);
+                {
+                    firstFailure = !_reportedProfileTickErrors.ContainsKey(profile);
+                    _reportedProfileTickErrors[profile] = CreateActiveTrayError(
+                        TrayTooltipText.CreateErrorSummary(
+                            $"{profile.Name} profile update failed",
+                            ex.Message
+                        )
+                    );
+                }
                 UpdateTrayState();
 
                 if (!firstFailure)
@@ -214,7 +226,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
                 PublishNotification(
                     NotificationSeverity.Error,
-                    "Supervision error",
+                    "Profile update failed",
                     $"{profile.Name}\nUnexpected profile update failure: {ex.Message}",
                     profile.NotificationTargets
                 );
@@ -348,7 +360,15 @@ public partial class TrayApplicationContext : ApplicationContext
             {
                 bool firstFailure;
                 lock (_runtimeStateLock)
-                    firstFailure = _reportedLifecycleTickErrors.Add(profile);
+                {
+                    firstFailure = !_reportedLifecycleTickErrors.ContainsKey(profile);
+                    _reportedLifecycleTickErrors[profile] = CreateActiveTrayError(
+                        TrayTooltipText.CreateErrorSummary(
+                            $"{profile.Name} lifecycle failed",
+                            ex.Message
+                        )
+                    );
+                }
                 UpdateTrayState();
 
                 if (!firstFailure)
@@ -356,7 +376,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
                 PublishNotification(
                     NotificationSeverity.Error,
-                    "Supervision error",
+                    "Profile lifecycle failed",
                     $"{profile.Name}\nUnexpected lifecycle failure: {ex.Message}",
                     profile.NotificationTargets
                 );
@@ -728,7 +748,7 @@ public partial class TrayApplicationContext : ApplicationContext
                 lock (_runtimeStateLock)
                 {
                     _activeRuntimeErrors.Clear();
-                    _inactiveCleanupError = false;
+                    _inactiveCleanupError = null;
                     _activeHealthErrors.Clear();
                     _reportedProfileTickErrors.Clear();
                     _reportedLifecycleTickErrors.Clear();
@@ -818,7 +838,10 @@ public partial class TrayApplicationContext : ApplicationContext
         ConfigurationLoadFailurePresentation presentation =
             ConfigurationLoadFailureClassifier.Classify(exception, _hasValidConfiguration);
         _configurationLoadError = true;
-        _configurationLoadErrorTrayStatus = presentation.TrayStatus;
+        _configurationLoadErrorTrayStatus = TrayTooltipText.CreateErrorSummary(
+            presentation.TrayStatus,
+            exception.Message
+        );
         SupervisorLog.WriteError(presentation.LogMessage, exception);
 
         if (!_hasValidConfiguration)
@@ -867,7 +890,12 @@ public partial class TrayApplicationContext : ApplicationContext
         IReadOnlyList<NotificationTarget> targets)
     {
         lock (_runtimeStateLock)
-            _inactiveCleanupError = true;
+            _inactiveCleanupError = CreateActiveTrayError(
+                TrayTooltipText.CreateErrorSummary(
+                    $"{displayName} close failed",
+                    message
+                )
+            );
         UpdateTrayState();
 
         PublishNotification(
@@ -882,7 +910,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private void OnInactiveApplicationCleanupRecovered()
     {
         lock (_runtimeStateLock)
-            _inactiveCleanupError = false;
+            _inactiveCleanupError = null;
         UpdateTrayState();
     }
 
@@ -898,12 +926,18 @@ public partial class TrayApplicationContext : ApplicationContext
         string message)
     {
         lock (_runtimeStateLock)
-            _activeRuntimeErrors.Add(new RuntimeErrorIdentity(profile, resource));
+            _activeRuntimeErrors[new RuntimeErrorIdentity(profile, resource)] =
+                CreateActiveTrayError(
+                    TrayTooltipText.CreateErrorSummary(
+                        $"{profile.Name} - {resource.DisplayName}",
+                        message
+                    )
+                );
         UpdateTrayState();
 
         PublishNotification(
             NotificationSeverity.Error,
-            "Supervision error",
+            $"{resource.DisplayName} supervision failed",
             $"{profile.Name} - {resource.DisplayName}\n{message}",
             resource.NotificationTargets
         );
@@ -1024,17 +1058,12 @@ public partial class TrayApplicationContext : ApplicationContext
         if (Volatile.Read(ref _pauseVisualPending) != 0)
             return;
 
-        bool hasRuntimeError;
+        ActiveTrayErrorSnapshot runtimeErrors;
 
         lock (_runtimeStateLock)
-        {
-            hasRuntimeError =
-                _inactiveCleanupError ||
-                _activeRuntimeErrors.Count > 0 ||
-                _activeHealthErrors.Count > 0 ||
-                _reportedProfileTickErrors.Count > 0 ||
-                _reportedLifecycleTickErrors.Count > 0;
-        }
+            runtimeErrors = GetActiveTrayErrorSnapshot();
+
+        bool hasRuntimeError = runtimeErrors.Count > 0;
 
         bool pauseEnabled = !_pausing && !(_configurationLoadError && !_hasValidConfiguration);
         bool startupPending = !_paused && _profiles.Any(profile => profile.StartupPending);
@@ -1068,7 +1097,10 @@ public partial class TrayApplicationContext : ApplicationContext
         else if (_configurationLoadError)
         {
             icon = _errorIcon;
-            text = $"AppSupervisor - {_configurationLoadErrorTrayStatus}";
+            text = TrayTooltipText.FormatError(
+                _configurationLoadErrorTrayStatus,
+                additionalErrorCount: 0
+            );
         }
         else if (hasRuntimeError || _hasSteamVrOfflineDevices)
         {
@@ -1077,11 +1109,26 @@ public partial class TrayApplicationContext : ApplicationContext
                 : startupPending
                     ? _startingErrorIcon
                     : _errorIcon;
-            text = shutdownPending
-                ? $"AppSupervisor - Supervision error; {shutdownText}"
+            IReadOnlyList<SteamVrOfflineDevice> offlineDevices = _steamVrOfflineDevices;
+            int steamVrErrorCount = _hasSteamVrOfflineDevices
+                ? Math.Max(1, offlineDevices.Count)
+                : 0;
+            string errorSummary = runtimeErrors.LatestSummary ??
+                CreateSteamVrTrayErrorSummary(offlineDevices);
+            string? activity = shutdownPending
+                ? shutdownText
                 : startupPending
-                    ? "AppSupervisor - Supervision error; starting helpers"
-                    : "AppSupervisor - Supervision error";
+                    ? "starting helpers"
+                    : null;
+            int additionalErrorCount = Math.Max(
+                0,
+                runtimeErrors.Count + steamVrErrorCount - 1
+            );
+            text = TrayTooltipText.FormatError(
+                errorSummary,
+                additionalErrorCount,
+                activity
+            );
         }
         else if (_profiles.Count == 0 && !_steamVrMonitoringEnabled)
         {
@@ -1131,6 +1178,54 @@ public partial class TrayApplicationContext : ApplicationContext
             _lastScheduledTrayState = state;
             RunOnUiThread(() => ApplyTrayState(state));
         }
+    }
+
+    /// <summary>Creates a monotonically ordered active error while holding the runtime-state lock.</summary>
+    private ActiveTrayError CreateActiveTrayError(string summary)
+        => new(++_trayErrorSequence, summary);
+
+    /// <summary>Returns the most recent concrete runtime error and the total active-error count.</summary>
+    private ActiveTrayErrorSnapshot GetActiveTrayErrorSnapshot()
+    {
+        int count = 0;
+        ActiveTrayError latest = default;
+
+        void Consider(ActiveTrayError error)
+        {
+            count++;
+
+            if (count == 1 || error.Sequence > latest.Sequence)
+                latest = error;
+        }
+
+        foreach (ActiveTrayError error in _activeRuntimeErrors.Values)
+            Consider(error);
+
+        foreach (ActiveTrayError error in _activeHealthErrors.Values)
+            Consider(error);
+
+        foreach (ActiveTrayError error in _reportedProfileTickErrors.Values)
+            Consider(error);
+
+        foreach (ActiveTrayError error in _reportedLifecycleTickErrors.Values)
+            Consider(error);
+
+        if (_inactiveCleanupError is ActiveTrayError inactiveCleanupError)
+            Consider(inactiveCleanupError);
+
+        return new ActiveTrayErrorSnapshot(count, count == 0 ? null : latest.Summary);
+    }
+
+    /// <summary>Describes the first currently offline SteamVR device without reverting to a generic error.</summary>
+    private static string CreateSteamVrTrayErrorSummary(
+        IReadOnlyList<SteamVrOfflineDevice> offlineDevices)
+    {
+        return offlineDevices.Count == 0
+            ? "SteamVR device offline"
+            : TrayTooltipText.CreateErrorSummary(
+                "SteamVR device offline",
+                offlineDevices[0].Name
+            );
     }
 
     /// <summary>Applies a precomputed immutable tray snapshot on the WinForms thread.</summary>

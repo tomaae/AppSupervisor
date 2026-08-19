@@ -7,7 +7,7 @@ namespace AppSupervisor;
 /// </summary>
 public partial class TrayApplicationContext
 {
-    private readonly HashSet<HealthErrorIdentity> _activeHealthErrors = [];
+    private readonly Dictionary<HealthErrorIdentity, ActiveTrayError> _activeHealthErrors = [];
 
     private readonly record struct HealthErrorIdentity(SupervisorProfile Profile, IManagedResource Resource, string CheckKey);
 
@@ -25,7 +25,14 @@ public partial class TrayApplicationContext
         lock (_runtimeStateLock)
         {
             if (notification.ErrorState == ResourceErrorState.Set)
-                _activeHealthErrors.Add(errorKey);
+            {
+                _activeHealthErrors[errorKey] = CreateActiveTrayError(
+                    TrayTooltipText.CreateErrorSummary(
+                        $"{profile.Name} health check failed",
+                        notification.Message
+                    )
+                );
+            }
             else if (notification.ErrorState == ResourceErrorState.Clear)
                 _activeHealthErrors.Remove(errorKey);
         }
