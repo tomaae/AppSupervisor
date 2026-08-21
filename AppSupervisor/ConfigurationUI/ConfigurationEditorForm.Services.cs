@@ -153,6 +153,34 @@ public sealed partial class ConfigurationEditorForm
         }
     }
 
+    /// <summary>Warns only when the selected service currently uses Automatic startup.</summary>
+    /// <param name="service">The service explicitly selected for supervision.</param>
+    private void WarnIfAutomaticService(InstalledServiceInfo service)
+    {
+        if (service.IsAutomaticStart)
+            _automaticServiceWarning(service);
+    }
+
+    /// <summary>Explains the persistent startup-type change before an Automatic service is applied.</summary>
+    /// <param name="service">The Automatic service selected by the user.</param>
+    private void ShowAutomaticServiceWarning(InstalledServiceInfo service)
+    {
+        string serviceDescription = string.Equals(
+            service.DisplayName,
+            service.ServiceName,
+            StringComparison.OrdinalIgnoreCase)
+            ? service.ServiceName
+            : $"{service.DisplayName} ({service.ServiceName})";
+        MessageBox.Show(
+            this,
+            $"The Windows service '{serviceDescription}' is currently set to Automatic startup.\n\n" +
+            "If this service entry and its profile are enabled when you use Save & Apply, AppSupervisor will change the service startup type to Manual so it can control the service on demand.",
+            "Automatic service will be changed to Manual",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning
+        );
+    }
+
     /// <summary>Refreshes the installed-service catalog after an explicit user request.</summary>
     /// <param name="sender">The Refresh list button.</param>
     /// <param name="e">The click event data.</param>

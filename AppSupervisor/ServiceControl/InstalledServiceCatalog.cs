@@ -14,6 +14,7 @@ internal static class InstalledServiceCatalog
     private const uint ScManagerConnect = 0x0001;
     private const uint ScManagerEnumerateService = 0x0004;
     private const uint ServiceQueryConfig = 0x0001;
+    private const uint ServiceAutoStart = 0x00000002;
     private const uint ServiceWin32 = 0x00000030;
     private const uint ServiceStateAll = 0x00000003;
     private const int ScEnumProcessInfo = 0;
@@ -345,7 +346,11 @@ internal static class InstalledServiceCatalog
             string displayName = Marshal.PtrToStringUni(record.DisplayName) ?? serviceName;
 
             if (serviceName.Length == 0 ||
-                !TryReadBinaryPath(manager, serviceName, out string binaryPathName))
+                !TryReadBinaryPath(
+                    manager,
+                    serviceName,
+                    out string binaryPathName,
+                    out bool isAutomaticStart))
             {
                 continue;
             }
@@ -364,7 +369,8 @@ internal static class InstalledServiceCatalog
                 serviceName,
                 string.IsNullOrWhiteSpace(displayName) ? serviceName : displayName,
                 executablePath,
-                publisher
+                publisher,
+                isAutomaticStart
             ));
         }
     }
@@ -375,13 +381,16 @@ internal static class InstalledServiceCatalog
     /// <param name="manager">The open Service Control Manager handle.</param>
     /// <param name="serviceName">The internal service name.</param>
     /// <param name="binaryPathName">Receives the configured executable command line.</param>
+    /// <param name="isAutomaticStart">Receives whether the service startup type is Automatic.</param>
     /// <returns>True when service configuration was readable and contained a binary path.</returns>
     private static bool TryReadBinaryPath(
         SafeServiceHandle manager,
         string serviceName,
-        out string binaryPathName)
+        out string binaryPathName,
+        out bool isAutomaticStart)
     {
         binaryPathName = "";
+        isAutomaticStart = false;
         using SafeServiceHandle service = OpenService(
             manager,
             serviceName,
@@ -406,6 +415,7 @@ internal static class InstalledServiceCatalog
             QueryServiceConfigData config =
                 Marshal.PtrToStructure<QueryServiceConfigData>(buffer);
             binaryPathName = Marshal.PtrToStringUni(config.BinaryPathName) ?? "";
+            isAutomaticStart = config.StartType == ServiceAutoStart;
             return binaryPathName.Length > 0;
         }
         finally

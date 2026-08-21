@@ -12,18 +12,21 @@ internal sealed class InstalledServiceInfo
     /// <param name="displayName">The friendly service name shown by Windows.</param>
     /// <param name="executablePath">The resolved service executable path, when available.</param>
     /// <param name="publisher">The executable publisher, when available.</param>
+    /// <param name="isAutomaticStart">Whether Windows currently starts the service automatically.</param>
     /// <param name="isConfiguredOnly">Whether this entry exists only to preserve a configured service that was not rediscovered.</param>
     public InstalledServiceInfo(
         string serviceName,
         string displayName,
         string? executablePath,
         string? publisher,
+        bool isAutomaticStart = false,
         bool isConfiguredOnly = false)
     {
         ServiceName = serviceName;
         DisplayName = displayName;
         ExecutablePath = executablePath;
         Publisher = publisher;
+        IsAutomaticStart = isAutomaticStart;
         IsConfiguredOnly = isConfiguredOnly;
     }
 
@@ -38,6 +41,9 @@ internal sealed class InstalledServiceInfo
 
     /// <summary>Gets the executable's company name, when version metadata exposed one.</summary>
     public string? Publisher { get; }
+
+    /// <summary>Gets whether the service currently uses Automatic startup.</summary>
+    public bool IsAutomaticStart { get; }
 
     /// <summary>Gets whether this placeholder preserves an existing configuration absent from the discovered catalog.</summary>
     public bool IsConfiguredOnly { get; }

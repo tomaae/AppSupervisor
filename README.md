@@ -83,7 +83,7 @@ The existing **Minimize windows after starting** option remains the simpler pers
 
 ### Windows services
 
-The editor lists installed third-party services by service name. AppSupervisor sets configured services to Manual startup when required, starts them with their profile, optionally restarts them after an unexpected stop, and requests a normal stop when the profile closes.
+The editor lists installed third-party services by service name and warns when an Automatic service is selected because applying an enabled entry changes it to Manual startup. AppSupervisor starts configured services with their profile, optionally restarts them after an unexpected stop, and requests a normal stop when the profile closes.
 
 ### Health checks
 

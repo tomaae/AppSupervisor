@@ -21,6 +21,7 @@ public sealed partial class ConfigurationEditorForm : Form
 
     private readonly Func<CancellationToken, Task<IReadOnlyList<InstalledServiceInfo>>> _serviceCatalogLoader;
     private readonly Func<CancellationToken, Task<IReadOnlyList<AudioEndpointSnapshot>>> _audioEndpointLoader;
+    private readonly Action<InstalledServiceInfo> _automaticServiceWarning;
 
     private IReadOnlyList<InstalledServiceInfo> _installedServices = [];
 
@@ -157,7 +158,8 @@ public sealed partial class ConfigurationEditorForm : Form
         Func<ObsIntegrationConfig, CancellationToken, Task<ObsCatalog>>?
             obsCatalogLoader = null,
         Func<CancellationToken, Task<IReadOnlyList<AudioEndpointSnapshot>>>?
-            audioEndpointLoader = null)
+            audioEndpointLoader = null,
+        Action<InstalledServiceInfo>? automaticServiceWarning = null)
 
     {
 
@@ -174,6 +176,7 @@ public sealed partial class ConfigurationEditorForm : Form
                 .GetActiveEndpoints(),
             cancellationToken
         ));
+        _automaticServiceWarning = automaticServiceWarning ?? ShowAutomaticServiceWarning;
         (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
         _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
@@ -668,8 +671,16 @@ public sealed partial class ConfigurationEditorForm : Form
 
         service.Enabled = _serviceEnabled.Checked;
         if (_serviceName.SelectedItem is InstalledServiceInfo installedService)
-
+        {
+            if (!string.Equals(
+                service.ServiceName,
+                installedService.ServiceName,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                WarnIfAutomaticService(installedService);
+            }
             service.ServiceName = installedService.ServiceName;
+        }
         service.Restart = _serviceRestart.Checked;
         service.Notifications.Target = [.. _serviceNotifications.SelectedTargets];
         _resourceList.Refresh();
@@ -938,6 +949,8 @@ public sealed partial class ConfigurationEditorForm : Form
             ServiceName = installedService.ServiceName
 
         };
+
+        WarnIfAutomaticService(installedService);
 
         profile.Services.Add(service);
         BindResourceList(profile, service);
