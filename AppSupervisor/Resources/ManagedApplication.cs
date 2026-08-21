@@ -20,6 +20,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private readonly TimeSpan _restartTimeout;
     private readonly Func<bool>? _shouldRemainRunning;
     private readonly StartupMacroExecutor _startupMacro;
+    private readonly string _runtimePath;
 
     private CloseOperation? _closeOperation;
     private MinimizeOperation? _minimizeOperation;
@@ -59,6 +60,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         Config = config;
         _restartTimeout = restartTimeout;
         _shouldRemainRunning = shouldRemainRunning;
+        _runtimePath = JavaLauncherDetector.ResolveRuntimePath(config.Path);
         _startupMacro = new StartupMacroExecutor(
             config.StartupMacros,
             GetRunningProcessIds,
@@ -82,16 +84,19 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
     /// <summary>Gets whether a requested helper close is still awaiting completion or fallback handling.</summary>
     bool IManagedApplicationLifecycle.CloseOperationPending =>
-        ProcessPathSnapshot.IsClosePending(Config.Path);
+        ProcessPathSnapshot.IsClosePending(_runtimePath);
 
     /// <summary>Gets whether this instance owns process mutation or post-launch window work.</summary>
     bool IManagedResourceLifecycleWork.LifecycleWorkPending =>
-        ProcessPathSnapshot.GetOwnedTransition(Config.Path, this) is not null ||
+        ProcessPathSnapshot.GetOwnedTransition(_runtimePath, this) is not null ||
         _minimizeOperation is not null ||
         _startupMacro.Pending;
 
     /// <summary>Gets the helper executable filename used in notifications.</summary>
     public string DisplayName => Path.GetFileName(Config.Path);
+
+    /// <summary>Gets the exact persistent process path used for supervision.</summary>
+    internal string RuntimePath => _runtimePath;
 
     /// <summary>
     /// Gets the presentation targets configured specifically for this helper application.
@@ -115,12 +120,12 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
     /// <summary>Returns exact-path identifiers from the current central supervision snapshot.</summary>
     internal IReadOnlySet<int> GetRunningProcessIds() =>
-        ProcessPathSnapshot.FindExactPathProcessIds(Config.Path);
+        ProcessPathSnapshot.FindExactPathProcessIds(_runtimePath);
 
     /// <summary>Checks whether the helper process is started for dependency sequencing.</summary>
     /// <returns><see langword="true"/> when at least one matching helper process is running.</returns>
     public bool IsStarted() =>
-        !ProcessPathSnapshot.HasTransition(Config.Path) && IsRunning();
+        !ProcessPathSnapshot.HasTransition(_runtimePath) && IsRunning();
 
     /// <summary>
     /// Ensures one helper instance is available, normalizing multiple instances before starting a fresh one.
@@ -133,7 +138,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         _missingSince = null;
         _failedMultipleProcessIds = null;
 
-        if (ProcessPathSnapshot.IsClosePending(Config.Path))
+        if (ProcessPathSnapshot.IsClosePending(_runtimePath))
         {
             RequestStart(reportAsRestart: false);
             return;
@@ -160,7 +165,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (_disposed)
             return ManagedResourceUpdate.None;
 
-        if (ProcessPathSnapshot.HasTransition(Config.Path))
+        if (ProcessPathSnapshot.HasTransition(_runtimePath))
             return ManagedResourceUpdate.None;
 
         IReadOnlySet<int> processIds = GetRunningProcessIds();
@@ -211,7 +216,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         );
         _missingSince = null;
         ProcessLifecycleTransitionKind? transition =
-            ProcessPathSnapshot.GetOwnedTransition(Config.Path, this);
+            ProcessPathSnapshot.GetOwnedTransition(_runtimePath, this);
 
         if (transition == ProcessLifecycleTransitionKind.Start && !_launchIssued)
         {
@@ -220,7 +225,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         else
         {
             ProcessPathSnapshot.CancelQueuedTransitions(
-                Config.Path,
+                _runtimePath,
                 this,
                 ProcessLifecycleTransitionKind.Start
             );
@@ -256,7 +261,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         if (ShouldRemainRunning())
         {
-            if (ProcessPathSnapshot.IsClosePending(Config.Path))
+            if (ProcessPathSnapshot.IsClosePending(_runtimePath))
                 RequestStart(reportAsRestart: false);
             else
                 CancelCloseOperation();
@@ -264,22 +269,22 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             return;
         }
 
-        if (ProcessPathSnapshot.HasTransition(Config.Path))
+        if (ProcessPathSnapshot.HasTransition(_runtimePath))
         {
             ProcessPathSnapshot.RequestTransition(
-                Config.Path,
+                _runtimePath,
                 this,
                 ProcessLifecycleTransitionKind.Close
             );
             return;
         }
 
-        ExactPathObservation observation = ProcessPathSnapshot.ObserveExactPath(Config.Path);
+        ExactPathObservation observation = ProcessPathSnapshot.ObserveExactPath(_runtimePath);
 
         if (observation.ProcessIds.Length == 0 && observation.IsAuthoritative)
         {
             CancelCloseOperation();
-            if (ProcessPathSnapshot.GetOwnedTransition(Config.Path, this) ==
+            if (ProcessPathSnapshot.GetOwnedTransition(_runtimePath, this) ==
                 ProcessLifecycleTransitionKind.Close)
             {
                 CompleteOwnedTransition(succeeded: true);
@@ -291,7 +296,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (observation.ProcessIds.Length == 0)
         {
             ProcessPathSnapshot.RequestTransition(
-                Config.Path,
+                _runtimePath,
                 this,
                 ProcessLifecycleTransitionKind.Close
             );
@@ -299,7 +304,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         }
 
         ProcessPathSnapshot.RequestTransition(
-            Config.Path,
+            _runtimePath,
             this,
             ProcessLifecycleTransitionKind.Close
         );
@@ -358,7 +363,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         ManagedResourceUpdate update = ManagedResourceUpdate.None;
         ProcessLifecycleTransitionKind? transition =
-            ProcessPathSnapshot.GetOwnedTransition(Config.Path, this);
+            ProcessPathSnapshot.GetOwnedTransition(_runtimePath, this);
 
         if (transition == ProcessLifecycleTransitionKind.Start)
             update = AdvanceStartOperation(nowUtc);
@@ -374,12 +379,12 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private void RequestStart(bool reportAsRestart)
     {
         ProcessPathSnapshot.RequestTransition(
-            Config.Path,
+            _runtimePath,
             this,
             ProcessLifecycleTransitionKind.Start
         );
 
-        if (ProcessPathSnapshot.GetOwnedTransition(Config.Path, this) ==
+        if (ProcessPathSnapshot.GetOwnedTransition(_runtimePath, this) ==
             ProcessLifecycleTransitionKind.Start)
         {
             _reportPendingStartAsRestart |= reportAsRestart;
@@ -390,12 +395,12 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private void RequestCloseThenStart(bool reportAsRestart)
     {
         ProcessPathSnapshot.RequestTransition(
-            Config.Path,
+            _runtimePath,
             this,
             ProcessLifecycleTransitionKind.Close
         );
         ProcessPathSnapshot.RequestTransition(
-            Config.Path,
+            _runtimePath,
             this,
             ProcessLifecycleTransitionKind.Start
         );
@@ -950,7 +955,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <summary>Opens exact matches and reports whether absence was safely observable.</summary>
     private List<Process> FindRunningProcesses(bool fresh, out bool authoritative)
     {
-        string targetPath = Path.GetFullPath(Config.Path);
+        string targetPath = _runtimePath;
         var matches = new List<Process>();
 
         ExactPathObservation observation = fresh
@@ -1034,7 +1039,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <summary>Completes this instance's current central transition.</summary>
     private void CompleteOwnedTransition(bool succeeded)
     {
-        ProcessPathSnapshot.CompleteTransition(Config.Path, this, succeeded);
+        ProcessPathSnapshot.CompleteTransition(_runtimePath, this, succeeded);
     }
 
     /// <summary>

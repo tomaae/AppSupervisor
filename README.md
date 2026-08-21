@@ -19,6 +19,7 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
 - Launches every helper with the monitored executable's directory as its working directory so relative files resolve consistently.
+- Recognizes Launch4j helpers with a bundled Java runtime, launching their wrapper and supervising the persistent `javaw.exe` process.
 - Runs ordered per-application Startup macros after confirmed launches, including delays, hotkeys, and window placement actions.
 - Provides per-application listener and VRChat OSCQuery health checks, including optional recovery after a confirmed failure.
 - Monitors expected SteamVR controllers, trackers, and base stations without starting or controlling SteamVR.
@@ -51,7 +52,7 @@ A resource may depend on one earlier application or service being ready. Profile
 
 Applications can be launched directly from an executable, through Steam, or through a Microsoft Store/MSIX app entry. Direct launches may include command-line arguments.
 
-AppSupervisor identifies helpers by executable path. If multiple independent instances are found, it closes them before starting one fresh instance. Closing is graceful unless **Allow force-kill after all graceful close attempts fail** is enabled.
+AppSupervisor identifies helpers by executable path. For a conservatively detected Launch4j wrapper with an adjacent `jre\bin\javaw.exe`, it launches the configured wrapper and arguments but identifies and controls the helper through that persistent bundled runtime. If multiple independent instances are found, it closes them before starting one fresh instance. Closing is graceful unless **Allow force-kill after all graceful close attempts fail** is enabled.
 
 Per-application options include:
 

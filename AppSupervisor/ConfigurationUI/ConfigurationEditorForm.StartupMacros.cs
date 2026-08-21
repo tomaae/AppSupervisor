@@ -96,7 +96,7 @@ public sealed partial class ConfigurationEditorForm
                 Type = StartupMacroActionType.Delay,
                 DelayMilliseconds = 2_000
             },
-            application.Path
+            JavaLauncherDetector.ResolveRuntimePath(application.Path)
         );
 
         if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Result is null)
@@ -118,7 +118,7 @@ public sealed partial class ConfigurationEditorForm
         int index = application.StartupMacros.IndexOf(selected);
         using var dialog = new StartupMacroActionEditorDialog(
             ConfigJson.Clone(selected),
-            application.Path
+            JavaLauncherDetector.ResolveRuntimePath(application.Path)
         );
 
         if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Result is null)
@@ -199,6 +199,8 @@ public sealed partial class ConfigurationEditorForm
 
         try
         {
+            string runtimePath = JavaLauncherDetector.ResolveRuntimePath(application.Path);
+
             for (int index = 0; index < actions.Count; index++)
             {
                 StartupMacroActionConfig action = actions[index];
@@ -210,7 +212,7 @@ public sealed partial class ConfigurationEditorForm
                 }
 
                 IReadOnlySet<int> processIds = ProcessPathDiscovery.FindRunningProcessIds(
-                    application.Path,
+                    runtimePath,
                     useSharedCache: false
                 );
                 StartupMacroWindowActions.ExecutionResult result =

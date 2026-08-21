@@ -222,9 +222,10 @@ public sealed partial class ConfigurationEditorForm
                 return;
             }
 
+            string runtimePath = JavaLauncherDetector.ResolveRuntimePath(application.Path);
             IReadOnlySet<int> ownerProcessIds =
                 ProcessPathDiscovery.FindRunningProcessIds(
-                    application.Path,
+                    runtimePath,
                     useSharedCache: false
                 );
             using IHealthProbe probe = HealthCheckFactory.CreateProbe(healthCheck);
