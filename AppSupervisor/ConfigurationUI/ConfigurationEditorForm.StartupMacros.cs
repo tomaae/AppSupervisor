@@ -279,6 +279,5 @@ internal static class StartupMacroDisplay
         _ => "Unknown"
     };
 
-    private static string Monitor(string? monitor) =>
-        string.IsNullOrWhiteSpace(monitor) ? "primary monitor" : monitor;
+    private static string Monitor(string? monitor) => DisplayMonitorCatalog.Describe(monitor);
 }

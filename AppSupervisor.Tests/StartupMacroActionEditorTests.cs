@@ -115,6 +115,15 @@ public sealed class StartupMacroActionEditorTests
                     string? friendlyName = DisplayMonitorCatalog.GetFriendlyName(screen.DeviceName);
                     if (!string.IsNullOrWhiteSpace(friendlyName))
                         Assert.Contains(friendlyName, displayName);
+
+                    string actionText = StartupMacroDisplay.Action(new StartupMacroActionConfig
+                    {
+                        Type = StartupMacroActionType.MoveWindow,
+                        Monitor = screen.DeviceName,
+                        X = 26,
+                        Y = 26
+                    });
+                    Assert.Equal($"Move window to {displayName} at 26, 26", actionText);
                 }
             }
             catch (Exception exception)
@@ -137,6 +146,43 @@ public sealed class StartupMacroActionEditorTests
         );
 
         Assert.Equal(new Point(120, 85), relative);
+    }
+
+    /// <summary>Uses the picker's friendly display identity when formatting a configured monitor.</summary>
+    [Fact]
+    public void Describe_KnownMonitor_ReturnsPickerDisplayName()
+    {
+        DisplayMonitorCatalog.MonitorChoice[] monitors =
+        [
+            new(
+                @"\\.\DISPLAY1",
+                @"Dell UltraSharp (\\.\DISPLAY1) — Primary",
+                new Rectangle(0, 0, 1920, 1040),
+                Primary: true
+            ),
+            new(
+                @"\\.\DISPLAY2",
+                @"LG UltraGear (\\.\DISPLAY2)",
+                new Rectangle(1920, 0, 2560, 1400),
+                Primary: false
+            )
+        ];
+
+        string description = DisplayMonitorCatalog.Describe(@"\\.\DISPLAY2", monitors);
+
+        Assert.Equal(@"LG UltraGear (\\.\DISPLAY2)", description);
+    }
+
+    /// <summary>Identifies a configured monitor that is no longer connected.</summary>
+    [Fact]
+    public void Describe_DisconnectedMonitor_ReturnsExplicitFallback()
+    {
+        string description = DisplayMonitorCatalog.Describe(
+            @"\\.\DISPLAY3",
+            Array.Empty<DisplayMonitorCatalog.MonitorChoice>()
+        );
+
+        Assert.Equal(@"\\.\DISPLAY3 (disconnected)", description);
     }
 
     private static IEnumerable<Control> EnumerateControls(Control root)
