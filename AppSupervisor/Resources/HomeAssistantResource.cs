@@ -233,6 +233,12 @@ internal sealed class HomeAssistantResource :
     private string? DesiredState =>
         HomeAssistantServiceSemantics.GetDesiredState(_configuration.Service);
 
+    private int? DesiredBrightnessPercent =>
+        HomeAssistantServiceSemantics.GetBrightnessPercentage(
+            _configuration.Service,
+            _configuration.BrightnessPercent
+        );
+
     private string? ReverseDesiredState => ReverseService is null
         ? null
         : HomeAssistantServiceSemantics.GetDesiredState(ReverseService);
@@ -287,12 +293,14 @@ internal sealed class HomeAssistantResource :
                 HomeAssistantOperation.Activation => await ApplyServiceAsync(
                     _configuration.Service,
                     DesiredState,
+                    DesiredBrightnessPercent,
                     _configuration.VerifyStateChange,
                     cancellationToken
                 ).ConfigureAwait(false),
                 HomeAssistantOperation.Deactivation => await ApplyServiceAsync(
                     ReverseService!,
                     ReverseDesiredState,
+                    brightnessPercent: null,
                     _configuration.VerifyStateChange,
                     cancellationToken
                 ).ConfigureAwait(false),
@@ -372,14 +380,25 @@ internal sealed class HomeAssistantResource :
     private async Task<bool> ApplyServiceAsync(
         string service,
         string? expectedState,
+        int? brightnessPercent,
         bool verify,
         CancellationToken cancellationToken)
     {
-        await _client.CallServiceAsync(service, _configuration.EntityId, cancellationToken)
-            .ConfigureAwait(false);
+        await _client.CallServiceAsync(
+            service,
+            _configuration.EntityId,
+            brightnessPercent,
+            cancellationToken
+        ).ConfigureAwait(false);
 
         if (verify && expectedState is not null)
-            await VerifyStateAsync(expectedState, cancellationToken).ConfigureAwait(false);
+        {
+            await VerifyStateAsync(
+                expectedState,
+                brightnessPercent,
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
 
         return false;
     }
@@ -387,31 +406,39 @@ internal sealed class HomeAssistantResource :
     private async Task<bool> CheckAndRestoreAsync(CancellationToken cancellationToken)
     {
         string expectedState = DesiredState!;
-        string actualState = await _client.GetEntityStateAsync(
+        HomeAssistantEntityState actualState = await _client.GetEntityStateAsync(
             _configuration.EntityId,
             cancellationToken
         ).ConfigureAwait(false);
 
-        if (string.Equals(actualState, expectedState, StringComparison.OrdinalIgnoreCase))
+        if (actualState.Matches(expectedState, DesiredBrightnessPercent))
             return false;
 
         await _client.CallServiceAsync(
             _configuration.Service,
             _configuration.EntityId,
+            DesiredBrightnessPercent,
             cancellationToken
         ).ConfigureAwait(false);
 
         if (_configuration.VerifyStateChange)
-            await VerifyStateAsync(expectedState, cancellationToken).ConfigureAwait(false);
+        {
+            await VerifyStateAsync(
+                expectedState,
+                DesiredBrightnessPercent,
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
 
         return true;
     }
 
     private async Task VerifyStateAsync(
         string expectedState,
+        int? expectedBrightnessPercent,
         CancellationToken cancellationToken)
     {
-        string actualState = "unknown";
+        var actualState = new HomeAssistantEntityState("unknown", null);
 
         for (int attempt = 0; attempt < VerificationAttempts; attempt++)
         {
@@ -423,13 +450,20 @@ internal sealed class HomeAssistantResource :
                 cancellationToken
             ).ConfigureAwait(false);
 
-            if (string.Equals(actualState, expectedState, StringComparison.OrdinalIgnoreCase))
+            if (actualState.Matches(expectedState, expectedBrightnessPercent))
                 return;
         }
 
+        string brightnessDetail = expectedBrightnessPercent is int percentage
+            ? $" at {percentage}% brightness"
+            : "";
+        string actualBrightnessDetail = actualState.BrightnessPercent is int actualPercentage
+            ? $" at {actualPercentage}% brightness"
+            : "";
         throw new InvalidOperationException(
-            $"Home Assistant entity '{_configuration.EntityId}' remained '{actualState}' " +
-            $"instead of becoming '{expectedState}'."
+            $"Home Assistant entity '{_configuration.EntityId}' remained " +
+            $"'{actualState.State}'{actualBrightnessDetail} instead of becoming " +
+            $"'{expectedState}'{brightnessDetail}."
         );
     }
 

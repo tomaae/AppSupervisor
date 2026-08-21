@@ -96,7 +96,7 @@ A confirmed failure can optionally trigger a graceful restart of the helper. One
 
 ### Home Assistant
 
-Profiles can run `turn_on`, `turn_off`, and `button.press` actions against compatible entities. Stateful actions can be verified after execution and kept persistent while the profile is active. When the profile closes, `turn_on` and `turn_off` actions are reversed; buttons run only during activation.
+Profiles can run `turn_on`, `turn_off`, and `button.press` actions against compatible entities. `light.turn_on` actions also set a brightness from 1% through 100%; verification and persistence check that percentage as well as the `on` state. Stateful actions can be verified after execution and kept persistent while the profile is active. When the profile closes, `turn_on` and `turn_off` actions are reversed; buttons run only during activation.
 
 Home Assistant uses a shared URL and long-lived access token. The token is stored in the local configuration files, so those files must be treated as credentials.
 

@@ -16,6 +16,7 @@ public sealed class HomeAssistantActionTesterTests
             client,
             "switch.turn_on",
             "switch.test",
+            brightnessPercent: null,
             (delay, _) =>
             {
                 requestedDelay = delay;
@@ -46,6 +47,7 @@ public sealed class HomeAssistantActionTesterTests
             client,
             "switch.turn_on",
             "switch.test",
+            brightnessPercent: null,
             (_, _) =>
             {
                 delayed = true;
@@ -70,6 +72,7 @@ public sealed class HomeAssistantActionTesterTests
                 client,
                 "switch.turn_on",
                 "switch.test",
+                brightnessPercent: null,
                 (_, _) => Task.CompletedTask,
                 CancellationToken.None
             )
@@ -93,6 +96,7 @@ public sealed class HomeAssistantActionTesterTests
                 client,
                 "button.press",
                 "button.test",
+                brightnessPercent: null,
                 (_, _) => Task.CompletedTask,
                 CancellationToken.None
             )
@@ -102,24 +106,70 @@ public sealed class HomeAssistantActionTesterTests
         Assert.Empty(client.Calls);
     }
 
+    /// <summary>Passes configured brightness only to the temporary light.turn_on call.</summary>
+    [Fact]
+    public async Task RunAsync_LightTurnOn_PassesBrightnessToPreviewOnly()
+    {
+        var client = new FakeHomeAssistantClient("off");
+
+        await HomeAssistantActionTester.RunAsync(
+            client,
+            "light.turn_on",
+            "light.test",
+            42,
+            (_, _) => Task.CompletedTask,
+            CancellationToken.None
+        );
+
+        Assert.Equal([42, null], client.BrightnessPercentages);
+    }
+
+    /// <summary>Restores an already-on light's original brightness after previewing a new one.</summary>
+    [Fact]
+    public async Task RunAsync_LightAlreadyOn_RestoresOriginalBrightness()
+    {
+        var client = new FakeHomeAssistantClient("on", brightnessPercent: 70);
+
+        HomeAssistantActionTestResult result = await HomeAssistantActionTester.RunAsync(
+            client,
+            "light.turn_on",
+            "light.test",
+            35,
+            (_, _) => Task.CompletedTask,
+            CancellationToken.None
+        );
+
+        Assert.True(result.Changed);
+        Assert.Equal([35, 70], client.BrightnessPercentages);
+        Assert.Equal("on", client.State);
+        Assert.Equal(70, client.BrightnessPercent);
+    }
+
     /// <summary>Provides deterministic state reads and service effects for action-preview tests.</summary>
     private sealed class FakeHomeAssistantClient : IHomeAssistantClient
     {
         /// <summary>Creates a fake client with a selected initial entity state.</summary>
         /// <param name="state">The initial Home Assistant state.</param>
-        public FakeHomeAssistantClient(string state)
+        public FakeHomeAssistantClient(string state, int? brightnessPercent = null)
         {
             State = state;
+            BrightnessPercent = brightnessPercent;
         }
 
         /// <summary>Gets the ordered service calls received by the fake client.</summary>
         public List<string> Calls { get; } = [];
+
+        /// <summary>Gets the ordered optional brightness values received by service calls.</summary>
+        public List<int?> BrightnessPercentages { get; } = [];
 
         /// <summary>Gets or sets whether turn_on and turn_off calls mutate the fake state.</summary>
         public bool ApplyStateChanges { get; set; } = true;
 
         /// <summary>Gets the fake entity's current state.</summary>
         public string State { get; private set; }
+
+        /// <summary>Gets the fake light brightness.</summary>
+        public int? BrightnessPercent { get; private set; }
 
         /// <summary>Records a service call and optionally applies its deterministic state.</summary>
         /// <param name="service">The requested Home Assistant service.</param>
@@ -129,14 +179,21 @@ public sealed class HomeAssistantActionTesterTests
         public Task CallServiceAsync(
             string service,
             string entityId,
+            int? brightnessPercent,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             Calls.Add($"{service}:{entityId}");
+            BrightnessPercentages.Add(brightnessPercent);
 
             if (ApplyStateChanges)
             {
                 State = HomeAssistantServiceSemantics.GetDesiredState(service) ?? State;
+
+                if (brightnessPercent is not null)
+                    BrightnessPercent = brightnessPercent;
+                else if (string.Equals(State, "off", StringComparison.OrdinalIgnoreCase))
+                    BrightnessPercent = null;
             }
 
             return Task.CompletedTask;
@@ -146,12 +203,12 @@ public sealed class HomeAssistantActionTesterTests
         /// <param name="entityId">The ignored fake entity identifier.</param>
         /// <param name="cancellationToken">The operation cancellation token.</param>
         /// <returns>The current fake state.</returns>
-        public Task<string> GetEntityStateAsync(
+        public Task<HomeAssistantEntityState> GetEntityStateAsync(
             string entityId,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(State);
+            return Task.FromResult(new HomeAssistantEntityState(State, BrightnessPercent));
         }
 
         /// <summary>Releases the fake client; it owns no resources.</summary>

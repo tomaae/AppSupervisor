@@ -52,11 +52,13 @@ public sealed class ConfigurationEditorHomeAssistantTests
             "2026.7.3",
             [
                 new HomeAssistantServiceInfo("button.press", ["button"]),
+                new HomeAssistantServiceInfo("light.turn_on", ["light"]),
                 new HomeAssistantServiceInfo("switch.turn_on", ["switch"]),
                 new HomeAssistantServiceInfo("switch.turn_off", ["switch"])
             ],
             [
                 new HomeAssistantEntityInfo("switch.power", "Power", "off"),
+                new HomeAssistantEntityInfo("light.hue", "Hue lamp", "off"),
                 new HomeAssistantEntityInfo("button.restart", "Restart", "unknown")
             ]
         );
@@ -77,7 +79,9 @@ public sealed class ConfigurationEditorHomeAssistantTests
                         ),
                         homeAssistantCatalogLoader: (_, _) => Task.FromResult(catalog)
                     );
-                    form.CreateControl();
+                    form.ShowInTaskbar = false;
+                    form.Opacity = 0;
+                    form.Show();
                     Application.DoEvents();
                     Control[] controls = EnumerateControls(form).ToArray();
                     Button add = Assert.Single(
@@ -111,6 +115,35 @@ public sealed class ConfigurationEditorHomeAssistantTests
                         ["switch.power"],
                         entity.Items.Cast<HomeAssistantEntityInfo>().Select(item => item.EntityId)
                     );
+
+                    Label brightnessLabel = Assert.Single(
+                        controls.OfType<Label>(),
+                        label => label.Text == "Brightness (%)"
+                    );
+                    var homeAssistantLayout = Assert.IsType<TableLayoutPanel>(
+                        brightnessLabel.Parent
+                    );
+                    var brightness = Assert.IsType<NumericUpDown>(
+                        homeAssistantLayout.GetControlFromPosition(
+                            1,
+                            homeAssistantLayout.GetRow(brightnessLabel)
+                        )
+                    );
+                    Assert.False(IsLocallyVisible(brightnessLabel));
+                    Assert.False(IsLocallyVisible(brightness));
+
+                    service.SelectedItem = service.Items.Cast<HomeAssistantServiceInfo>()
+                        .Single(item => item.Service == "light.turn_on");
+                    Application.DoEvents();
+
+                    Assert.Equal(
+                        ["light.hue"],
+                        entity.Items.Cast<HomeAssistantEntityInfo>().Select(item => item.EntityId)
+                    );
+                    Assert.True(IsLocallyVisible(brightnessLabel));
+                    Assert.True(IsLocallyVisible(brightness));
+                    Assert.Equal(100, brightness.Value);
+                    brightness.Value = 42;
 
                     service.SelectedItem = service.Items.Cast<HomeAssistantServiceInfo>()
                         .Single(item => item.Service == "button.press");
@@ -155,5 +188,16 @@ public sealed class ConfigurationEditorHomeAssistantTests
         foreach (Control child in root.Controls)
             foreach (Control descendant in EnumerateControls(child))
                 yield return descendant;
+    }
+
+    private static bool IsLocallyVisible(Control control)
+    {
+        const int StateVisible = 0x00000002;
+        var getState = typeof(Control).GetMethod(
+            "GetState",
+            System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic
+        ) ?? throw new InvalidOperationException("Control.GetState was not found.");
+        return (bool)(getState.Invoke(control, [StateVisible]) ?? false);
     }
 }

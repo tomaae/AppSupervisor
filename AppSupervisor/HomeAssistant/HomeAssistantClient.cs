@@ -76,6 +76,7 @@ internal sealed class HomeAssistantClient : IHomeAssistantClient
     public async Task CallServiceAsync(
         string service,
         string entityId,
+        int? brightnessPercent,
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -84,15 +85,48 @@ internal sealed class HomeAssistantClient : IHomeAssistantClient
         if (parts.Length != 2)
             throw new ArgumentException("The Home Assistant service must use domain.service form.", nameof(service));
 
+        IReadOnlyDictionary<string, object> payload = CreateServicePayload(
+            entityId,
+            brightnessPercent
+        );
+
         using HttpResponseMessage response = await _httpClient.PostAsJsonAsync(
             $"api/services/{Uri.EscapeDataString(parts[0])}/{Uri.EscapeDataString(parts[1])}",
-            new { entity_id = entityId },
+            payload,
             cancellationToken
         ).ConfigureAwait(false);
         EnsureSuccess(response, "call Home Assistant service");
     }
 
-    public async Task<string> GetEntityStateAsync(
+    /// <summary>Builds one REST service payload with optional light brightness.</summary>
+    /// <param name="entityId">The target entity identifier.</param>
+    /// <param name="brightnessPercent">The optional brightness from 1 through 100.</param>
+    /// <returns>The JSON-ready service data.</returns>
+    internal static IReadOnlyDictionary<string, object> CreateServicePayload(
+        string entityId,
+        int? brightnessPercent)
+    {
+        if (brightnessPercent is < 1 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(brightnessPercent),
+                brightnessPercent,
+                "Home Assistant brightness must be between 1 and 100 percent."
+            );
+        }
+
+        var payload = new Dictionary<string, object>
+        {
+            ["entity_id"] = entityId
+        };
+
+        if (brightnessPercent is int percentage)
+            payload["brightness_pct"] = percentage;
+
+        return payload;
+    }
+
+    public async Task<HomeAssistantEntityState> GetEntityStateAsync(
         string entityId,
         CancellationToken cancellationToken)
     {
@@ -101,9 +135,29 @@ internal sealed class HomeAssistantClient : IHomeAssistantClient
             $"api/states/{Uri.EscapeDataString(entityId)}",
             cancellationToken
         ).ConfigureAwait(false);
-        return document.RootElement.TryGetProperty("state", out JsonElement state)
-            ? state.GetString() ?? "unknown"
+        return ReadEntityState(document.RootElement);
+    }
+
+    /// <summary>Reads an entity state and converts Home Assistant's 0–255 brightness to percent.</summary>
+    internal static HomeAssistantEntityState ReadEntityState(JsonElement root)
+    {
+        string state = root.TryGetProperty("state", out JsonElement stateElement)
+            ? stateElement.GetString() ?? "unknown"
             : "unknown";
+        int? brightnessPercent = null;
+
+        if (root.TryGetProperty("attributes", out JsonElement attributes) &&
+            attributes.TryGetProperty("brightness", out JsonElement brightnessElement) &&
+            brightnessElement.TryGetInt32(out int brightness))
+        {
+            brightnessPercent = Math.Clamp(
+                (int)Math.Round(brightness * 100d / 255d, MidpointRounding.AwayFromZero),
+                0,
+                100
+            );
+        }
+
+        return new HomeAssistantEntityState(state, brightnessPercent);
     }
 
     public void Dispose()

@@ -38,6 +38,14 @@ public sealed partial class ConfigurationEditorForm
         DropDownStyle = ComboBoxStyle.DropDownList,
         DisplayMember = nameof(HomeAssistantEntityInfo.DisplayName)
     };
+    private readonly NumericUpDown _homeAssistantBrightness = new()
+    {
+        Minimum = 1,
+        Maximum = 100,
+        Value = 100,
+        Width = 120
+    };
+    private Label _homeAssistantBrightnessLabel = null!;
     private readonly CheckBox _homeAssistantVerify = new()
     {
         Text = "Verify requested state change",
@@ -86,6 +94,11 @@ public sealed partial class ConfigurationEditorForm
         AddEditorRow(layout, "", _homeAssistantEnabled);
         AddEditorRow(layout, "HA service", BuildHomeAssistantServiceSelector());
         AddEditorRow(layout, "HA entity", _homeAssistantEntity);
+        _homeAssistantBrightnessLabel = AddEditorRow(
+            layout,
+            "Brightness (%)",
+            _homeAssistantBrightness
+        );
         _testHomeAssistantActionButton = CreateButton(
             "Test action",
             TestHomeAssistantActionClicked
@@ -111,6 +124,8 @@ public sealed partial class ConfigurationEditorForm
         _homeAssistantEnabled.CheckedChanged += HomeAssistantResourceFieldChanged;
         _homeAssistantService.SelectedIndexChanged += HomeAssistantServiceChanged;
         _homeAssistantEntity.SelectedIndexChanged += HomeAssistantResourceFieldChanged;
+        _homeAssistantBrightness.ValueChanged += HomeAssistantResourceFieldChanged;
+        _homeAssistantBrightness.TextChanged += HomeAssistantResourceFieldChanged;
         _homeAssistantVerify.CheckedChanged += HomeAssistantResourceFieldChanged;
         _homeAssistantPersistent.CheckedChanged += HomeAssistantResourceFieldChanged;
         _homeAssistantNotifications.TargetsChanged += HomeAssistantResourceFieldChanged;
@@ -181,6 +196,14 @@ public sealed partial class ConfigurationEditorForm
             _testHomeAssistantActionButton.Enabled =
                 resource is not null && !_homeAssistantActionTestPending;
             _homeAssistantEnabled.Checked = resource?.Enabled ?? false;
+            _homeAssistantBrightness.Value = Math.Clamp(
+                HomeAssistantServiceSemantics.GetBrightnessPercentage(
+                    resource?.Service ?? "",
+                    resource?.BrightnessPercent
+                ) ?? 100,
+                Decimal.ToInt32(_homeAssistantBrightness.Minimum),
+                Decimal.ToInt32(_homeAssistantBrightness.Maximum)
+            );
             _homeAssistantVerify.Checked = resource?.VerifyStateChange ?? false;
             _homeAssistantPersistent.Checked = resource?.Persistent ?? false;
             _homeAssistantNotifications.LoadTargets(resource?.Notifications.Target ?? []);
@@ -354,6 +377,21 @@ public sealed partial class ConfigurationEditorForm
         resource.Service = (_homeAssistantService.SelectedItem as HomeAssistantServiceInfo)?.Service ?? "";
         resource.EntityId = "";
         resource.EntityName = "";
+
+        if (HomeAssistantServiceSemantics.SupportsBrightnessPercentage(resource.Service))
+        {
+            resource.BrightnessPercent ??= 100;
+            _homeAssistantBrightness.Value = Math.Clamp(
+                resource.BrightnessPercent.Value,
+                Decimal.ToInt32(_homeAssistantBrightness.Minimum),
+                Decimal.ToInt32(_homeAssistantBrightness.Maximum)
+            );
+        }
+        else
+        {
+            resource.BrightnessPercent = null;
+        }
+
         UpdateHomeAssistantStateOptions();
 
         if (_homeAssistantCatalog is not null)
@@ -367,6 +405,10 @@ public sealed partial class ConfigurationEditorForm
         string service = (_homeAssistantService.SelectedItem as HomeAssistantServiceInfo)?.Service ?? "";
         bool stateful = service.EndsWith(".turn_on", StringComparison.OrdinalIgnoreCase) ||
             service.EndsWith(".turn_off", StringComparison.OrdinalIgnoreCase);
+        bool supportsBrightness =
+            HomeAssistantServiceSemantics.SupportsBrightnessPercentage(service);
+        _homeAssistantBrightnessLabel.Visible = supportsBrightness;
+        _homeAssistantBrightness.Visible = supportsBrightness;
         _homeAssistantVerify.Enabled = stateful;
         _homeAssistantPersistent.Enabled = stateful;
 
@@ -394,6 +436,10 @@ public sealed partial class ConfigurationEditorForm
 
         resource.VerifyStateChange = _homeAssistantVerify.Checked;
         resource.Persistent = _homeAssistantPersistent.Checked;
+        resource.BrightnessPercent =
+            HomeAssistantServiceSemantics.SupportsBrightnessPercentage(resource.Service)
+                ? ReadDisplayedNumber(_homeAssistantBrightness)
+                : null;
         resource.Notifications.Target = [.. _homeAssistantNotifications.SelectedTargets];
         _resourceList.Refresh();
         UpdateStatus();
@@ -438,7 +484,11 @@ public sealed partial class ConfigurationEditorForm
             {
                 Service = service.Service,
                 EntityId = entity.EntityId,
-                EntityName = entity.FriendlyName
+                EntityName = entity.FriendlyName,
+                BrightnessPercent =
+                    HomeAssistantServiceSemantics.SupportsBrightnessPercentage(service.Service)
+                        ? 100
+                        : null
             };
             profile.HomeAssistantResources.Add(resource);
             BindResourceList(profile, resource);
@@ -565,6 +615,10 @@ public sealed partial class ConfigurationEditorForm
                 client,
                 service,
                 entityId,
+                HomeAssistantServiceSemantics.GetBrightnessPercentage(
+                    service,
+                    resource.BrightnessPercent
+                ),
                 CancellationToken.None
             );
 

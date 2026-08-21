@@ -176,9 +176,10 @@ public sealed class IntegrationConfigTests
                         [
                             new HomeAssistantResourceConfig
                             {
-                                Service = "switch.turn_on",
-                                EntityId = "switch.test",
-                                EntityName = "Test switch",
+                                Service = "light.turn_on",
+                                EntityId = "light.test",
+                                EntityName = "Test light",
+                                BrightnessPercent = 42,
                                 VerifyStateChange = true,
                                 Persistent = true,
                                 Notifications = new NotificationConfig
@@ -198,8 +199,9 @@ public sealed class IntegrationConfigTests
 
             Assert.Equal("https://home-assistant.example:8123", loaded.Integrations.HomeAssistant.Url);
             Assert.Equal("test-token", loaded.Integrations.HomeAssistant.Token);
-            Assert.Equal("switch.turn_on", resource.Service);
-            Assert.Equal("switch.test", resource.EntityId);
+            Assert.Equal("light.turn_on", resource.Service);
+            Assert.Equal("light.test", resource.EntityId);
+            Assert.Equal(42, resource.BrightnessPercent);
             Assert.True(resource.VerifyStateChange);
             Assert.True(resource.Persistent);
             Assert.Equal([NotificationTarget.Windows], resource.Notifications.Target);
@@ -233,6 +235,59 @@ public sealed class IntegrationConfigTests
         );
 
         Assert.Contains("stateless", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(101)]
+    public void Validate_LightBrightnessOutsideRange_ThrowsValidationError(
+        int brightnessPercent)
+    {
+        var profile = new SupervisorProfileConfig
+        {
+            Name = "Light",
+            MonitorProcess = "notepad.exe",
+            HomeAssistantResources =
+            [
+                new HomeAssistantResourceConfig
+                {
+                    Service = "light.turn_on",
+                    EntityId = "light.test",
+                    BrightnessPercent = brightnessPercent
+                }
+            ]
+        };
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigValidator.Validate([profile])
+        );
+
+        Assert.Contains("brightnessPercent must be between 1 and 100", exception.Message);
+    }
+
+    [Fact]
+    public void Validate_BrightnessOnUnsupportedService_ThrowsValidationError()
+    {
+        var profile = new SupervisorProfileConfig
+        {
+            Name = "Switch",
+            MonitorProcess = "notepad.exe",
+            HomeAssistantResources =
+            [
+                new HomeAssistantResourceConfig
+                {
+                    Service = "switch.turn_on",
+                    EntityId = "switch.test",
+                    BrightnessPercent = 42
+                }
+            ]
+        };
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigValidator.Validate([profile])
+        );
+
+        Assert.Contains("supported only for light.turn_on", exception.Message);
     }
 
     [Fact]

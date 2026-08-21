@@ -1314,7 +1314,7 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <param name="layout">The target editor table.</param>
     /// <param name="labelText">The row label.</param>
     /// <param name="control">The row editor or explanatory control.</param>
-    private static void AddEditorRow(
+    private static Label AddEditorRow(
         TableLayoutPanel layout,
         string labelText,
         Control control,
@@ -1322,7 +1322,7 @@ public sealed partial class ConfigurationEditorForm : Form
     {
         int row = layout.RowCount++;
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label
+        var label = new Label
         {
             Text = labelText,
             AutoSize = true,
@@ -1330,9 +1330,11 @@ public sealed partial class ConfigurationEditorForm : Form
                 ? AnchorStyles.Top | AnchorStyles.Left
                 : AnchorStyles.Left,
             Margin = new Padding(0, 8, 12, 6)
-        }, 0, row);
+        };
+        layout.Controls.Add(label, 0, row);
         control.Margin = new Padding(0, 4, 0, 7);
         layout.Controls.Add(control, 1, row);
+        return label;
     }
 
     /// <summary>Gets the currently selected supervisor profile.</summary>

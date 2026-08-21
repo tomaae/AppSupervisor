@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace AppSupervisor;
 
 /// <summary>Configures one Home Assistant service call governed by a supervisor profile.</summary>
@@ -11,6 +13,10 @@ public sealed class HomeAssistantResourceConfig : ManagedResourceConfig
 
     /// <summary>Gets or sets the friendly entity name captured during discovery.</summary>
     public string EntityName { get; set; } = "";
+
+    /// <summary>Gets or sets the requested light.turn_on brightness percentage.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? BrightnessPercent { get; set; }
 
     /// <summary>Gets or sets whether AppSupervisor confirms the requested state after a service call.</summary>
     public bool VerifyStateChange { get; set; }

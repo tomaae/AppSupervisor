@@ -1,3 +1,5 @@
+using AppSupervisor.HomeAssistant;
+
 namespace AppSupervisor.Configuration;
 
 /// <summary>Validates delay and Home Assistant profile resources.</summary>
@@ -85,6 +87,8 @@ public static partial class ConfigValidator
 
             bool stateful = serviceParts[1] is "turn_on" or "turn_off";
             bool buttonPress = serviceParts[0] == "button" && serviceParts[1] == "press";
+            bool supportsBrightness =
+                HomeAssistantServiceSemantics.SupportsBrightnessPercentage(resource.Service ?? "");
 
             if (!stateful && !buttonPress)
             {
@@ -98,6 +102,15 @@ public static partial class ConfigValidator
                 errors.Add(
                     $"{label} cannot verify or persist button.press because Home Assistant buttons are stateless."
                 );
+            }
+
+            if (resource.BrightnessPercent is not null && !supportsBrightness)
+            {
+                errors.Add($"{label} brightnessPercent is supported only for light.turn_on.");
+            }
+            else if (resource.BrightnessPercent is < 1 or > 100)
+            {
+                errors.Add($"{label} brightnessPercent must be between 1 and 100.");
             }
 
             if (!profileEnabled)

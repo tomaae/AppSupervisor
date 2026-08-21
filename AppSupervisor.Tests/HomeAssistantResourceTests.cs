@@ -46,6 +46,41 @@ public sealed class HomeAssistantResourceTests
     }
 
     [Fact]
+    public void Activate_LightTurnOn_PassesConfiguredBrightness()
+    {
+        var client = new FakeHomeAssistantClient();
+        using var resource = CreateResource(
+            client,
+            service: "light.turn_on",
+            entityId: "light.test",
+            brightnessPercent: 42
+        );
+
+        resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+
+        Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
+        Assert.Equal([42], client.BrightnessPercentages);
+    }
+
+    [Fact]
+    public void Activate_OlderLightTurnOnConfig_DefaultsBrightnessTo100()
+    {
+        var client = new FakeHomeAssistantClient();
+        using var resource = CreateResource(
+            client,
+            service: "light.turn_on",
+            entityId: "light.test"
+        );
+
+        resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+
+        Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
+        Assert.Equal([100], client.BrightnessPercentages);
+    }
+
+    [Fact]
     public void Deactivate_ButtonPress_DoesNotPressStatelessButtonAgain()
     {
         var client = new FakeHomeAssistantClient();
@@ -89,6 +124,37 @@ public sealed class HomeAssistantResourceTests
 
         Assert.Equal(ManagedResourceUpdate.Restarted, resource.Supervise());
         Assert.Equal("on", client.State);
+    }
+
+    [Fact]
+    public void Supervise_PersistentLightBrightnessChanged_ReappliesConfiguredBrightness()
+    {
+        var client = new FakeHomeAssistantClient();
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        using var resource = CreateResource(
+            client,
+            service: "light.turn_on",
+            entityId: "light.test",
+            persistent: true,
+            brightnessPercent: 35,
+            timeProvider: time
+        );
+        resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
+        client.BrightnessPercent = 70;
+        time.Advance(TimeSpan.FromMinutes(1).Add(TimeSpan.FromSeconds(1)));
+
+        Assert.Equal(ManagedResourceUpdate.None, resource.Supervise());
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        Assert.True(SpinWait.SpinUntil(
+            () => client.Calls.Count == 2,
+            TimeSpan.FromSeconds(2)
+        ));
+
+        Assert.Equal(ManagedResourceUpdate.Restarted, resource.Supervise());
+        Assert.Equal([35, 35], client.BrightnessPercentages);
+        Assert.Equal(35, client.BrightnessPercent);
     }
 
     [Fact]
@@ -149,6 +215,7 @@ public sealed class HomeAssistantResourceTests
         string entityId = "switch.test",
         bool verify = false,
         bool persistent = false,
+        int? brightnessPercent = null,
         TimeProvider? timeProvider = null)
     {
         return new HomeAssistantResource(
@@ -157,6 +224,7 @@ public sealed class HomeAssistantResourceTests
                 Service = service,
                 EntityId = entityId,
                 EntityName = "Test entity",
+                BrightnessPercent = brightnessPercent,
                 VerifyStateChange = verify,
                 Persistent = persistent
             },
@@ -169,31 +237,44 @@ public sealed class HomeAssistantResourceTests
     {
         public List<string> Calls { get; } = [];
 
+        public List<int?> BrightnessPercentages { get; } = [];
+
         public string State { get; set; } = "off";
+
+        public int? BrightnessPercent { get; set; }
 
         public int StateQueries { get; private set; }
 
         public Task CallServiceAsync(
             string service,
             string entityId,
+            int? brightnessPercent,
             CancellationToken cancellationToken)
         {
             Calls.Add($"{service}:{entityId}");
+            BrightnessPercentages.Add(brightnessPercent);
 
             if (service.EndsWith(".turn_on", StringComparison.Ordinal))
+            {
                 State = "on";
+                if (brightnessPercent is not null)
+                    BrightnessPercent = brightnessPercent;
+            }
             else if (service.EndsWith(".turn_off", StringComparison.Ordinal))
+            {
                 State = "off";
+                BrightnessPercent = null;
+            }
 
             return Task.CompletedTask;
         }
 
-        public Task<string> GetEntityStateAsync(
+        public Task<HomeAssistantEntityState> GetEntityStateAsync(
             string entityId,
             CancellationToken cancellationToken)
         {
             StateQueries++;
-            return Task.FromResult(State);
+            return Task.FromResult(new HomeAssistantEntityState(State, BrightnessPercent));
         }
 
         public void Dispose() { }
@@ -208,12 +289,14 @@ public sealed class HomeAssistantResourceTests
         public Task CallServiceAsync(
             string service,
             string entityId,
+            int? brightnessPercent,
             CancellationToken cancellationToken) =>
             _completion.Task.WaitAsync(cancellationToken);
 
-        public Task<string> GetEntityStateAsync(
+        public Task<HomeAssistantEntityState> GetEntityStateAsync(
             string entityId,
-            CancellationToken cancellationToken) => Task.FromResult("on");
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HomeAssistantEntityState("on", null));
 
         public void Complete() => _completion.TrySetResult();
 

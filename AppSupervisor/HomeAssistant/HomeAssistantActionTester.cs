@@ -12,18 +12,21 @@ internal static class HomeAssistantActionTester
     /// <param name="client">The authenticated Home Assistant client.</param>
     /// <param name="service">The configured stateful service.</param>
     /// <param name="entityId">The configured entity identifier.</param>
+    /// <param name="brightnessPercent">The optional light.turn_on brightness percentage.</param>
     /// <param name="cancellationToken">Cancels preparation before the action is applied.</param>
     /// <returns>A result describing whether a state-changing preview was required.</returns>
     public static Task<HomeAssistantActionTestResult> RunAsync(
         IHomeAssistantClient client,
         string service,
         string entityId,
+        int? brightnessPercent,
         CancellationToken cancellationToken)
     {
         return RunAsync(
             client,
             service,
             entityId,
+            brightnessPercent,
             (delay, token) => Task.Delay(delay, token),
             cancellationToken
         );
@@ -33,6 +36,7 @@ internal static class HomeAssistantActionTester
     /// <param name="client">The authenticated Home Assistant client.</param>
     /// <param name="service">The configured stateful service.</param>
     /// <param name="entityId">The configured entity identifier.</param>
+    /// <param name="brightnessPercent">The optional light.turn_on brightness percentage.</param>
     /// <param name="delay">The delay implementation used between applying and restoring the action.</param>
     /// <param name="cancellationToken">Cancels preparation before the action is applied.</param>
     /// <returns>A result describing whether a state-changing preview was required.</returns>
@@ -40,6 +44,7 @@ internal static class HomeAssistantActionTester
         IHomeAssistantClient client,
         string service,
         string entityId,
+        int? brightnessPercent,
         Func<TimeSpan, CancellationToken, Task> delay,
         CancellationToken cancellationToken)
     {
@@ -56,23 +61,39 @@ internal static class HomeAssistantActionTester
             );
         }
 
-        string originalState = await client.GetEntityStateAsync(entityId, cancellationToken)
+        HomeAssistantEntityState original = await client.GetEntityStateAsync(
+            entityId,
+            cancellationToken
+        )
             .ConfigureAwait(false);
+        int? desiredBrightnessPercent =
+            HomeAssistantServiceSemantics.GetBrightnessPercentage(service, brightnessPercent);
 
-        if (string.Equals(originalState, desiredState, StringComparison.OrdinalIgnoreCase))
+        if (original.Matches(desiredState, desiredBrightnessPercent))
         {
             return new HomeAssistantActionTestResult(
                 Changed: false,
-                OriginalState: originalState,
+                OriginalState: original.State,
                 DesiredState: desiredState
             );
         }
 
-        if (!string.Equals(originalState, "on", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(originalState, "off", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(original.State, "on", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(original.State, "off", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"'{entityId}' is currently '{originalState}', so AppSupervisor cannot safely restore its original state after the test."
+                $"'{entityId}' is currently '{original.State}', so AppSupervisor cannot safely restore its original state after the test."
+            );
+        }
+
+        bool restoreLightBrightness =
+            desiredBrightnessPercent is not null &&
+            string.Equals(original.State, "on", StringComparison.OrdinalIgnoreCase);
+
+        if (restoreLightBrightness && original.BrightnessPercent is null)
+        {
+            throw new InvalidOperationException(
+                $"Home Assistant did not report the current brightness for '{entityId}', so AppSupervisor cannot safely restore it after the test."
             );
         }
 
@@ -81,19 +102,31 @@ internal static class HomeAssistantActionTester
 
         try
         {
-            await client.CallServiceAsync(service, entityId, cancellationToken)
+            await client.CallServiceAsync(
+                service,
+                entityId,
+                brightnessPercent,
+                cancellationToken
+            )
                 .ConfigureAwait(false);
             actionApplied = true;
             await delay(PreviewDuration, CancellationToken.None).ConfigureAwait(false);
-            string observedState = await client.GetEntityStateAsync(
+            HomeAssistantEntityState observedState = await client.GetEntityStateAsync(
                 entityId,
                 CancellationToken.None
             ).ConfigureAwait(false);
 
-            if (!string.Equals(observedState, desiredState, StringComparison.OrdinalIgnoreCase))
+            if (!observedState.Matches(desiredState, desiredBrightnessPercent))
             {
+                string observedBrightness = observedState.BrightnessPercent is int observedPercentage
+                    ? $" at {observedPercentage}% brightness"
+                    : "";
+                string desiredBrightness = desiredBrightnessPercent is int desiredPercentage
+                    ? $" at {desiredPercentage}% brightness"
+                    : "";
                 previewFailure = new InvalidOperationException(
-                    $"'{entityId}' became '{observedState}' instead of '{desiredState}'."
+                    $"'{entityId}' became '{observedState.State}'{observedBrightness} " +
+                    $"instead of '{desiredState}'{desiredBrightness}."
                 );
             }
         }
@@ -106,13 +139,18 @@ internal static class HomeAssistantActionTester
         {
             try
             {
-                await client.CallServiceAsync(reverseService, entityId, CancellationToken.None)
+                await client.CallServiceAsync(
+                    restoreLightBrightness ? service : reverseService,
+                    entityId,
+                    restoreLightBrightness ? original.BrightnessPercent : null,
+                    CancellationToken.None
+                )
                     .ConfigureAwait(false);
             }
             catch (Exception restorationFailure)
             {
                 throw new InvalidOperationException(
-                    $"The test could not restore '{entityId}' to its original '{originalState}' state. Restore it manually. {restorationFailure.Message}",
+                    $"The test could not restore '{entityId}' to its original '{original.State}' state. Restore it manually. {restorationFailure.Message}",
                     restorationFailure
                 );
             }
@@ -121,14 +159,14 @@ internal static class HomeAssistantActionTester
         if (previewFailure is not null)
         {
             throw new InvalidOperationException(
-                $"The test action did not produce the expected '{desiredState}' state. The original '{originalState}' state was requested again. {previewFailure.Message}",
+                $"The test action did not produce the expected '{desiredState}' state. The original '{original.State}' state was requested again. {previewFailure.Message}",
                 previewFailure
             );
         }
 
         return new HomeAssistantActionTestResult(
             Changed: true,
-            OriginalState: originalState,
+            OriginalState: original.State,
             DesiredState: desiredState
         );
     }
