@@ -13,6 +13,7 @@ internal static class ApplicationUri
     public static ProcessStartInfo CreateStartInfo(ManagedApplicationConfig configuration)
     {
         string appUri = configuration.AppUri?.Trim() ?? "";
+        string workingDirectory = GetWorkingDirectory(configuration.Path);
 
         if (string.IsNullOrWhiteSpace(appUri))
         {
@@ -20,6 +21,7 @@ internal static class ApplicationUri
             {
                 FileName = configuration.Path,
                 Arguments = configuration.Arguments ?? "",
+                WorkingDirectory = workingDirectory,
                 UseShellExecute = true
             };
         }
@@ -35,6 +37,7 @@ internal static class ApplicationUri
             {
                 FileName = explorerPath,
                 Arguments = appUri,
+                WorkingDirectory = workingDirectory,
                 UseShellExecute = true
             };
         }
@@ -42,8 +45,16 @@ internal static class ApplicationUri
         return new ProcessStartInfo
         {
             FileName = appUri,
+            WorkingDirectory = workingDirectory,
             UseShellExecute = true
         };
+    }
+
+    /// <summary>Returns the helper executable directory used by every supported launch mechanism.</summary>
+    private static string GetWorkingDirectory(string executablePath)
+    {
+        string fullPath = Path.GetFullPath(executablePath);
+        return Path.GetDirectoryName(fullPath) ?? Path.GetPathRoot(fullPath)!;
     }
 
     /// <summary>Checks whether an app URI is an exact positive Steam rungameid URI.</summary>

@@ -18,6 +18,7 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 - Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
+- Launches every helper with the monitored executable's directory as its working directory so relative files resolve consistently.
 - Runs ordered per-application Startup macros after confirmed launches, including delays, hotkeys, and window placement actions.
 - Provides per-application listener and VRChat OSCQuery health checks, including optional recovery after a confirmed failure.
 - Monitors expected SteamVR controllers, trackers, and base stations without starting or controlling SteamVR.

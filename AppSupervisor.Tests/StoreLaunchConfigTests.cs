@@ -51,6 +51,10 @@ public sealed class StoreLaunchConfigTests
             startInfo.FileName
         );
         Assert.Equal(AppUri, startInfo.Arguments);
+        Assert.Equal(
+            Path.GetDirectoryName(Path.GetFullPath(application.Path)),
+            startInfo.WorkingDirectory
+        );
     }
 
     /// <summary>Creates an enabled helper with either complete or deliberately incomplete package identity.</summary>
