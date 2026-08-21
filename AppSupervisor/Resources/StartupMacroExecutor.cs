@@ -3,7 +3,8 @@ namespace AppSupervisor.Resources;
 /// <summary>Advances a helper's ordered startup macro without blocking the lifecycle timer.</summary>
 internal sealed class StartupMacroExecutor
 {
-    private static readonly TimeSpan WindowDiscoveryTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultWindowDiscoveryTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MoveResizeWindowDiscoveryTimeout = TimeSpan.FromMinutes(2);
 
     private readonly IReadOnlyList<StartupMacroActionConfig> _actions;
     private readonly Func<IReadOnlySet<int>> _processIdProvider;
@@ -15,6 +16,7 @@ internal sealed class StartupMacroExecutor
     private int _actionIndex;
     private DateTime? _actionStartedUtc;
     private DateTime? _delayUntilUtc;
+    private DateTime? _moveResizeWindowWaitStartedUtc;
     private bool _failed;
 
     public StartupMacroExecutor(
@@ -55,6 +57,7 @@ internal sealed class StartupMacroExecutor
         _actionIndex = 0;
         _actionStartedUtc = null;
         _delayUntilUtc = null;
+        _moveResizeWindowWaitStartedUtc = null;
         _failed = false;
     }
 
@@ -79,9 +82,16 @@ internal sealed class StartupMacroExecutor
 
             StartupMacroWindowActions.ExecutionResult result =
                 _execute(action, _processIdProvider());
+            bool moveOrResize = IsMoveOrResize(action);
+            DateTime windowWaitStartedUtc = moveOrResize
+                ? _moveResizeWindowWaitStartedUtc ??= nowUtc
+                : _actionStartedUtc.Value;
+            TimeSpan windowDiscoveryTimeout = moveOrResize
+                ? MoveResizeWindowDiscoveryTimeout
+                : DefaultWindowDiscoveryTimeout;
 
             if (result.Status == StartupMacroWindowActions.ExecutionStatus.WindowUnavailable &&
-                nowUtc - _actionStartedUtc < WindowDiscoveryTimeout)
+                nowUtc - windowWaitStartedUtc < windowDiscoveryTimeout)
             {
                 return;
             }
@@ -89,12 +99,21 @@ internal sealed class StartupMacroExecutor
             if (result.Status != StartupMacroWindowActions.ExecutionStatus.Succeeded)
             {
                 _failed = true;
+                string detail = result.Status ==
+                    StartupMacroWindowActions.ExecutionStatus.WindowUnavailable
+                    ? $"{result.Detail} The window did not become available within " +
+                        FormatTimeout(windowDiscoveryTimeout) + "."
+                    : result.Detail;
                 _failureReporter(
-                    $"Startup macro action {_actionIndex + 1} ({action.Type}) failed: {result.Detail}"
+                    $"Startup macro action {_actionIndex + 1} ({action.Type}) failed: {detail}"
                 );
             }
 
-            CompleteAction();
+            bool preserveMoveResizeWait =
+                moveOrResize &&
+                result.Status == StartupMacroWindowActions.ExecutionStatus.WindowUnavailable &&
+                NextActionIsMoveOrResize();
+            CompleteAction(preserveMoveResizeWait);
         }
 
         if (!Pending)
@@ -104,10 +123,24 @@ internal sealed class StartupMacroExecutor
         _completed(!_failed);
     }
 
-    private void CompleteAction()
+    private void CompleteAction(bool preserveMoveResizeWait = false)
     {
         _actionIndex++;
         _actionStartedUtc = null;
         _delayUntilUtc = null;
+
+        if (!preserveMoveResizeWait)
+            _moveResizeWindowWaitStartedUtc = null;
     }
+
+    private bool NextActionIsMoveOrResize() =>
+        _actionIndex + 1 < _actions.Count && IsMoveOrResize(_actions[_actionIndex + 1]);
+
+    private static bool IsMoveOrResize(StartupMacroActionConfig action) =>
+        action.Type is StartupMacroActionType.MoveWindow or StartupMacroActionType.ResizeWindow;
+
+    private static string FormatTimeout(TimeSpan timeout) =>
+        timeout.TotalMinutes >= 1
+            ? $"{timeout.TotalMinutes:0} minutes"
+            : $"{timeout.TotalSeconds:0} seconds";
 }

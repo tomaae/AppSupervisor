@@ -78,7 +78,7 @@ The editor displays detected monitor hardware names and stable Windows display i
 
 Hotkeys use Windows `SendInput`, so they are injected system-wide rather than sent to one window. AppSupervisor does not explicitly activate the helper, but the active application may also observe the shortcut and the helper's resulting command may change focus.
 
-Window actions require exactly one eligible visible top-level helper window. Missing or ambiguous windows produce a helper error through its configured notification destinations. Safe later actions continue, and a macro failure does not itself restart the helper.
+Window actions require exactly one eligible visible top-level helper window. Move and Resize wait non-blockingly for up to two minutes for that window, while other window actions retain their shorter readiness wait. Missing or ambiguous windows produce a helper error through its configured notification destinations. Safe later actions continue, and a macro failure does not itself restart the helper.
 
 The existing **Minimize windows after starting** option remains the simpler persistent minimization behavior. When a Startup macro contains a Minimize action, that option is disabled and ignored to prevent the two mechanisms from competing.
 
