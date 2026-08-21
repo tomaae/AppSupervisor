@@ -36,52 +36,9 @@ internal static class InstalledServiceCatalog
     /// <returns>Third-party service entries ordered by display name and internal service name.</returns>
     public static IReadOnlyList<InstalledServiceInfo> LoadThirdPartyServices()
     {
-        using SafeServiceHandle manager = OpenSCManager(
-            null,
-            null,
-            ScManagerConnect | ScManagerEnumerateService
-        );
-
-        if (manager.IsInvalid)
-            throw CreateWin32Exception("open the Windows Service Control Manager for enumeration");
-
         var services = new List<InstalledServiceInfo>();
-        IntPtr buffer = Marshal.AllocHGlobal(EnumerationBufferSize);
-
-        try
-        {
-            uint resumeHandle = 0;
-
-            do
-            {
-                bool complete = EnumServicesStatusEx(
-                    manager,
-                    ScEnumProcessInfo,
-                    ServiceWin32,
-                    ServiceStateAll,
-                    buffer,
-                    EnumerationBufferSize,
-                    out _,
-                    out uint servicesReturned,
-                    ref resumeHandle,
-                    null
-                );
-                int errorCode = Marshal.GetLastWin32Error();
-
-                if (!complete && errorCode != ErrorMoreData)
-                    throw CreateWin32Exception("enumerate installed Windows services", errorCode);
-
-                AddPageServices(manager, buffer, servicesReturned, services);
-
-                if (complete)
-                    break;
-            }
-            while (resumeHandle != 0);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
+        EnumerateServices((manager, buffer, servicesReturned) =>
+            AddPageServices(manager, buffer, servicesReturned, services));
 
         return services
             .GroupBy(service => service.ServiceName, StringComparer.OrdinalIgnoreCase)
@@ -89,6 +46,16 @@ internal static class InstalledServiceCatalog
             .OrderBy(service => service.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(service => service.ServiceName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    /// <summary>Enumerates the process IDs currently hosting one or more Win32 services.</summary>
+    /// <returns>The unique nonzero process IDs reported by the Service Control Manager.</returns>
+    public static IReadOnlySet<int> LoadRunningServiceProcessIds()
+    {
+        var processIds = new HashSet<int>();
+        EnumerateServices((_, buffer, servicesReturned) =>
+            AddPageProcessIds(buffer, servicesReturned, processIds));
+        return processIds;
     }
 
     /// <summary>
@@ -178,6 +145,81 @@ internal static class InstalledServiceCatalog
 
         return string.IsNullOrWhiteSpace(publisher) &&
             (hostedByWindowsPath || configuredWithWindowsAlias);
+    }
+
+    /// <summary>Enumerates every Win32 service page through one shared Service Control Manager handle.</summary>
+    /// <param name="addPage">Consumes the native records returned for one enumeration page.</param>
+    private static void EnumerateServices(
+        Action<SafeServiceHandle, IntPtr, uint> addPage)
+    {
+        using SafeServiceHandle manager = OpenSCManager(
+            null,
+            null,
+            ScManagerConnect | ScManagerEnumerateService
+        );
+
+        if (manager.IsInvalid)
+            throw CreateWin32Exception("open the Windows Service Control Manager for enumeration");
+
+        IntPtr buffer = Marshal.AllocHGlobal(EnumerationBufferSize);
+
+        try
+        {
+            uint resumeHandle = 0;
+
+            do
+            {
+                bool complete = EnumServicesStatusEx(
+                    manager,
+                    ScEnumProcessInfo,
+                    ServiceWin32,
+                    ServiceStateAll,
+                    buffer,
+                    EnumerationBufferSize,
+                    out _,
+                    out uint servicesReturned,
+                    ref resumeHandle,
+                    null
+                );
+                int errorCode = Marshal.GetLastWin32Error();
+
+                if (!complete && errorCode != ErrorMoreData)
+                    throw CreateWin32Exception("enumerate installed Windows services", errorCode);
+
+                addPage(manager, buffer, servicesReturned);
+
+                if (complete)
+                    break;
+            }
+            while (resumeHandle != 0);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>Adds the active service-host process IDs from one native enumeration page.</summary>
+    /// <param name="buffer">The first native service-status record.</param>
+    /// <param name="servicesReturned">The number of records in the page.</param>
+    /// <param name="processIds">The destination process-ID set.</param>
+    private static void AddPageProcessIds(
+        IntPtr buffer,
+        uint servicesReturned,
+        ISet<int> processIds)
+    {
+        int recordSize = Marshal.SizeOf<EnumServiceStatusProcess>();
+
+        for (uint index = 0; index < servicesReturned; index++)
+        {
+            IntPtr recordPointer = IntPtr.Add(buffer, checked((int)index * recordSize));
+            EnumServiceStatusProcess record =
+                Marshal.PtrToStructure<EnumServiceStatusProcess>(recordPointer);
+            uint processId = record.ServiceStatusProcess.ProcessId;
+
+            if (processId > 0 && processId <= int.MaxValue)
+                processIds.Add((int)processId);
+        }
     }
 
     /// <summary>

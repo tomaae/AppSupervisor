@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AppSupervisor.ServiceControl;
 
 namespace AppSupervisor.ConfigurationUI;
 
@@ -202,6 +203,19 @@ public sealed class RunningProcessPickerDialog : Form
             .ToArray();
     }
 
+    /// <summary>Removes processes that currently host one or more registered Windows services.</summary>
+    /// <param name="rows">The raw per-process snapshot rows.</param>
+    /// <param name="serviceProcessIds">Process IDs reported by the Service Control Manager.</param>
+    /// <returns>Only rows that are not running as Windows services.</returns>
+    internal static IReadOnlyList<ProcessRow> RemoveServiceProcesses(
+        IEnumerable<ProcessRow> rows,
+        IReadOnlySet<int> serviceProcessIds)
+    {
+        return rows
+            .Where(row => !serviceProcessIds.Contains(row.ProcessId))
+            .ToArray();
+    }
+
     /// <summary>Refreshes the process snapshot after the user presses Refresh.</summary>
     /// <param name="sender">The Refresh button.</param>
     /// <param name="e">The click event data.</param>
@@ -308,6 +322,8 @@ public sealed class RunningProcessPickerDialog : Form
 
         foreach (Process process in Process.GetProcesses())
         {
+            int processId = process.Id;
+
             try
             {
                 string? path = process.MainModule?.FileName;
@@ -322,7 +338,8 @@ public sealed class RunningProcessPickerDialog : Form
                         path,
                         TryReadCompanyName(path),
                         windowsDirectory
-                    )
+                    ),
+                    processId
                 ));
             }
             catch
@@ -336,7 +353,8 @@ public sealed class RunningProcessPickerDialog : Form
                         executablePath: null,
                         companyName: null,
                         windowsDirectory
-                    )
+                    ),
+                    processId
                 ));
             }
             finally
@@ -345,7 +363,9 @@ public sealed class RunningProcessPickerDialog : Form
             }
         }
 
-        return RemoveDuplicateProcesses(rows);
+        IReadOnlySet<int> serviceProcessIds =
+            InstalledServiceCatalog.LoadRunningServiceProcessIds();
+        return RemoveDuplicateProcesses(RemoveServiceProcesses(rows, serviceProcessIds));
     }
 
     /// <summary>Cancels pending process discovery when the picker closes.</summary>
@@ -464,5 +484,6 @@ public sealed class RunningProcessPickerDialog : Form
     internal sealed record ProcessRow(
         string Name,
         string? Path,
-        bool IsStandardMicrosoftProcess);
+        bool IsStandardMicrosoftProcess,
+        int ProcessId = 0);
 }
