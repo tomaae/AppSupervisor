@@ -107,4 +107,95 @@ public sealed class InstalledServiceCatalogTests
 
         Assert.False(filtered);
     }
+
+    /// <summary>Uses an explicit executable company name without consulting DriverStore metadata.</summary>
+    [Fact]
+    public void ResolvePublisher_ExecutableCompanyName_ReturnsCompanyName()
+    {
+        string publisher = Assert.IsType<string>(InstalledServiceCatalog.ResolvePublisher(
+            "Tobii AB",
+            @"C:\Program Files\Tobii\service.exe",
+            @"C:\Windows\System32\DriverStore\FileRepository"
+        ));
+
+        Assert.Equal("Tobii AB", publisher);
+    }
+
+    /// <summary>Falls back to a tokenized INF provider for a DriverStore executable without company metadata.</summary>
+    [Fact]
+    public void ResolvePublisher_DriverStoreInfProvider_ReturnsResolvedProvider()
+    {
+        string temporaryRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"AppSupervisor-{Guid.NewGuid():N}"
+        );
+        string driverStoreDirectory = Path.Combine(temporaryRoot, "FileRepository");
+        string packageDirectory = Path.Combine(
+            driverStoreDirectory,
+            "eyetracker5.inf_amd64_test"
+        );
+        Directory.CreateDirectory(packageDirectory);
+
+        try
+        {
+            string infPath = Path.Combine(packageDirectory, "eyetracker5.inf");
+            File.WriteAllText(
+                infPath,
+                "[Version]\r\n" +
+                "Signature=\"$Windows NT$\"\r\n" +
+                "Provider=%ProviderName%\r\n" +
+                "\r\n" +
+                "[Strings]\r\n" +
+                "ProviderName=\"Tobii AB\"\r\n"
+            );
+
+            string executablePath = Path.Combine(packageDirectory, "service.exe");
+            string publisher = Assert.IsType<string>(InstalledServiceCatalog.ResolvePublisher(
+                executablePublisher: null,
+                executablePath,
+                driverStoreDirectory
+            ));
+
+            Assert.Equal("Tobii AB", publisher);
+        }
+        finally
+        {
+            Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
+    /// <summary>Does not borrow INF metadata for an executable outside the DriverStore package root.</summary>
+    [Fact]
+    public void ResolvePublisher_OutsideDriverStore_ReturnsNull()
+    {
+        string? publisher = InstalledServiceCatalog.ResolvePublisher(
+            executablePublisher: null,
+            @"C:\Program Files\Vendor\service.exe",
+            @"C:\Windows\System32\DriverStore\FileRepository"
+        );
+
+        Assert.Null(publisher);
+    }
+
+    /// <summary>Keeps a DriverStore service when its resolved package provider is third-party.</summary>
+    [Fact]
+    public void IsMicrosoftOrWindowsService_ThirdPartyDriverStoreProvider_ReturnsFalse()
+    {
+        string executablePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "System32",
+            "DriverStore",
+            "FileRepository",
+            "eyetracker5.inf_amd64_test",
+            "service.exe"
+        );
+
+        bool filtered = InstalledServiceCatalog.IsMicrosoftOrWindowsService(
+            executablePath,
+            executablePath,
+            "Tobii AB"
+        );
+
+        Assert.False(filtered);
+    }
 }

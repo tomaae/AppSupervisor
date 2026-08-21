@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace AppSupervisor.ServiceControl;
@@ -19,6 +20,7 @@ internal static class InstalledServiceCatalog
     private const int ErrorMoreData = 234;
     private const int ErrorInsufficientBuffer = 122;
     private const int EnumerationBufferSize = 256 * 1024;
+    private const uint InfStyleWin4 = 0x00000002;
 
     private static readonly HashSet<string> WindowsServiceHosts = new(
         StringComparer.OrdinalIgnoreCase)
@@ -145,6 +147,103 @@ internal static class InstalledServiceCatalog
 
         return string.IsNullOrWhiteSpace(publisher) &&
             (hostedByWindowsPath || configuredWithWindowsAlias);
+    }
+
+    /// <summary>
+    /// Uses executable version metadata first, then resolves a missing publisher from the containing DriverStore package INF.
+    /// </summary>
+    /// <param name="executablePublisher">The company name read from executable version metadata.</param>
+    /// <param name="executablePath">The fully qualified service executable path.</param>
+    /// <param name="driverStoreDirectory">The DriverStore FileRepository root.</param>
+    /// <returns>The best available publisher name, or null when none can be determined.</returns>
+    internal static string? ResolvePublisher(
+        string? executablePublisher,
+        string executablePath,
+        string driverStoreDirectory)
+    {
+        if (!string.IsNullOrWhiteSpace(executablePublisher))
+            return executablePublisher.Trim();
+
+        try
+        {
+            string fullExecutablePath = Path.GetFullPath(executablePath);
+            string fullDriverStoreDirectory = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(driverStoreDirectory)
+            );
+            string driverStorePrefix =
+                fullDriverStoreDirectory + Path.DirectorySeparatorChar;
+
+            if (!fullExecutablePath.StartsWith(
+                driverStorePrefix,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            string relativePath = fullExecutablePath[driverStorePrefix.Length..];
+            int separatorIndex = relativePath.IndexOfAny(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar
+            );
+
+            if (separatorIndex <= 0)
+                return null;
+
+            string packageDirectory = Path.Combine(
+                fullDriverStoreDirectory,
+                relativePath[..separatorIndex]
+            );
+
+            foreach (string infPath in Directory
+                .GetFiles(packageDirectory, "*.inf", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                string? provider = ReadInfProvider(infPath);
+
+                if (!string.IsNullOrWhiteSpace(provider))
+                    return provider.Trim();
+            }
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or IOException or NotSupportedException or
+                UnauthorizedAccessException)
+        {
+        }
+
+        return null;
+    }
+
+    /// <summary>Reads the provider declared by an installed driver package INF.</summary>
+    /// <param name="infPath">The fully qualified INF path.</param>
+    /// <returns>The resolved Version-section provider, or null when it cannot be read.</returns>
+    internal static string? ReadInfProvider(string infPath)
+    {
+        using SafeInfHandle inf = SetupOpenInfFile(
+            infPath,
+            infClass: null,
+            InfStyleWin4,
+            out _
+        );
+
+        if (inf.IsInvalid ||
+            !SetupFindFirstLine(inf, "Version", "Provider", out InfContext context))
+            return null;
+
+        SetupGetStringField(ref context, 1, null, 0, out uint requiredSize);
+
+        if (requiredSize <= 1 || requiredSize > int.MaxValue)
+            return null;
+
+        var provider = new StringBuilder(checked((int)requiredSize));
+        return SetupGetStringField(
+            ref context,
+            1,
+            provider,
+            requiredSize,
+            out _
+        )
+            ? provider.ToString()
+            : null;
     }
 
     /// <summary>Enumerates every Win32 service page through one shared Service Control Manager handle.</summary>
@@ -322,15 +421,29 @@ internal static class InstalledServiceCatalog
     /// <returns>The company name, or null when version metadata is unavailable.</returns>
     private static string? ReadPublisher(string executablePath)
     {
+        string? executablePublisher = null;
+
         try
         {
-            return FileVersionInfo.GetVersionInfo(executablePath).CompanyName;
+            executablePublisher = FileVersionInfo.GetVersionInfo(executablePath).CompanyName;
         }
         catch (Exception exception) when (
             exception is FileNotFoundException or IOException or UnauthorizedAccessException)
         {
-            return null;
         }
+
+        string windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        string driverStoreDirectory = Path.Combine(
+            windowsDirectory,
+            "System32",
+            "DriverStore",
+            "FileRepository"
+        );
+        return ResolvePublisher(
+            executablePublisher,
+            executablePath,
+            driverStoreDirectory
+        );
     }
 
     /// <summary>
@@ -394,6 +507,16 @@ internal static class InstalledServiceCatalog
         public IntPtr DisplayName;
     }
 
+    /// <summary>Stores SetupAPI's opaque cursor for one parsed INF line.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct InfContext
+    {
+        public IntPtr Inf;
+        public IntPtr CurrentInf;
+        public uint Section;
+        public uint Line;
+    }
+
     /// <summary>Owns a native Service Control Manager or service handle.</summary>
     private sealed class SafeServiceHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
@@ -408,6 +531,24 @@ internal static class InstalledServiceCatalog
         protected override bool ReleaseHandle()
         {
             return CloseServiceHandle(handle);
+        }
+    }
+
+    /// <summary>Owns a parsed INF handle returned by SetupAPI.</summary>
+    private sealed class SafeInfHandle : SafeHandleMinusOneIsInvalid
+    {
+        /// <summary>Creates an empty safe INF handle for native marshalling.</summary>
+        private SafeInfHandle()
+            : base(ownsHandle: true)
+        {
+        }
+
+        /// <summary>Releases SetupAPI resources associated with the parsed INF.</summary>
+        /// <returns>True after the handle is released.</returns>
+        protected override bool ReleaseHandle()
+        {
+            SetupCloseInfFile(handle);
+            return true;
         }
     }
 
@@ -452,6 +593,40 @@ internal static class InstalledServiceCatalog
         uint bufferSize,
         out uint bytesNeeded
     );
+
+    /// <summary>Opens and parses an installed driver package INF.</summary>
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeInfHandle SetupOpenInfFile(
+        string fileName,
+        string? infClass,
+        uint infStyle,
+        out uint errorLine
+    );
+
+    /// <summary>Locates a keyed line within an INF section.</summary>
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupFindFirstLine(
+        SafeInfHandle infHandle,
+        string section,
+        string key,
+        out InfContext context
+    );
+
+    /// <summary>Reads one resolved string field from an INF line.</summary>
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupGetStringField(
+        ref InfContext context,
+        uint fieldIndex,
+        StringBuilder? returnBuffer,
+        uint returnBufferSize,
+        out uint requiredSize
+    );
+
+    /// <summary>Closes a parsed INF handle.</summary>
+    [DllImport("setupapi.dll")]
+    private static extern void SetupCloseInfFile(IntPtr infHandle);
 
     /// <summary>Releases a Service Control Manager or service handle.</summary>
     [DllImport("advapi32.dll", SetLastError = true)]
