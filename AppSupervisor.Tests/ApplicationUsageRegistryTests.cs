@@ -151,6 +151,68 @@ public sealed class ApplicationUsageRegistryTests
         Assert.Equal(0, cleanupFactoryCalls);
     }
 
+    /// <summary>Confirms cleanup settings never cross executable-path ownership boundaries.</summary>
+    [Fact]
+    public void CompleteRegistration_DifferentHelpers_KeepCleanupSettingsIsolated()
+    {
+        string firstPath = Path.Combine(Path.GetTempPath(), "FirstCleanupHelper.exe");
+        string secondPath = Path.Combine(Path.GetTempPath(), "SecondCleanupHelper.exe");
+        var cleanupConfigurations = new List<ManagedApplicationConfig>();
+        using var registry = new ApplicationUsageRegistry(configuration =>
+        {
+            cleanupConfigurations.Add(configuration);
+            return new FakeApplicationLifecycle { Config = configuration };
+        });
+
+        registry.RegisterApplication(
+            new ManagedApplicationConfig
+            {
+                Path = firstPath,
+                EnsureClosedUntilNeeded = true,
+                ForceKillAfterCloseFailure = true,
+                Notifications = new NotificationConfig
+                {
+                    Target = [NotificationTarget.Popup]
+                }
+            },
+            new object(),
+            () => false
+        );
+        registry.RegisterApplication(
+            new ManagedApplicationConfig
+            {
+                Path = secondPath,
+                EnsureClosedUntilNeeded = true,
+                ForceKillAfterCloseFailure = false,
+                Notifications = new NotificationConfig
+                {
+                    Target = [NotificationTarget.Windows]
+                }
+            },
+            new object(),
+            () => false
+        );
+
+        registry.CompleteRegistration();
+
+        ManagedApplicationConfig first = Assert.Single(cleanupConfigurations,
+            configuration => string.Equals(
+                configuration.Path,
+                firstPath,
+                StringComparison.OrdinalIgnoreCase
+            ));
+        ManagedApplicationConfig second = Assert.Single(cleanupConfigurations,
+            configuration => string.Equals(
+                configuration.Path,
+                secondPath,
+                StringComparison.OrdinalIgnoreCase
+            ));
+        Assert.True(first.ForceKillAfterCloseFailure);
+        Assert.Equal([NotificationTarget.Popup], first.Notifications.Target);
+        Assert.False(second.ForceKillAfterCloseFailure);
+        Assert.Equal([NotificationTarget.Windows], second.Notifications.Target);
+    }
+
     /// <summary>Confirms leave-running takes precedence over the contradictory inactive-cleanup option.</summary>
     [Fact]
     public void CompleteRegistration_LeaveRunningReference_DoesNotCreateCleaner()

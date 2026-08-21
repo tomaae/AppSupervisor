@@ -1,4 +1,5 @@
 using AppSupervisor.Core;
+using AppSupervisor.Notifications;
 
 namespace AppSupervisor;
 
@@ -38,11 +39,9 @@ public partial class TrayApplicationContext
         }
 
         UpdateTrayState();
-        PublishNotification(
-            notification.Severity,
-            notification.Title,
+        _notificationService.Publish(ScopedNotificationFactory.CreateCheck(
             $"{profile.Name} - {notification.Message}",
-            notification.Targets
-        );
+            notification
+        ));
     }
 }

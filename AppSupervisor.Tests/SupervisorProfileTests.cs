@@ -54,37 +54,6 @@ public sealed class SupervisorProfileTests
     }
 
     /// <summary>
-    /// Confirms that profile-wide messages use the distinct union of enabled helper destinations.
-    /// </summary>
-    [Fact]
-    public void Constructor_MultipleResources_BuildsDistinctTargetUnion()
-    {
-        var first = new FakeResource(
-            [NotificationTarget.Popup, NotificationTarget.Windows]
-        );
-        var second = new FakeResource(
-            [NotificationTarget.Windows, NotificationTarget.XsOverlay]
-        );
-
-        using var profile = new SupervisorProfile(
-            "Targets",
-            "root.exe",
-            new FakeTrigger(),
-            [first, second],
-            TimeSpan.FromSeconds(20)
-        );
-
-        Assert.Equal(
-            [
-                NotificationTarget.Popup,
-                NotificationTarget.Windows,
-                NotificationTarget.XsOverlay
-            ],
-            profile.NotificationTargets
-        );
-    }
-
-    /// <summary>
     /// Confirms that one defective resource is reported without preventing later resources from being supervised.
     /// </summary>
     [Fact]

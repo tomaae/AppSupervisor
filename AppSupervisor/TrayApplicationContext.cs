@@ -194,17 +194,6 @@ public partial class TrayApplicationContext : ApplicationContext
                     $"Profile '{profile.Name}': Update returned a trigger transition; " +
                     $"active={profile.TriggerActive}."
                 );
-
-                PublishNotification(
-                    NotificationSeverity.Information,
-                    "AppSupervisor",
-                    $"{profile.Name}: {profile.TriggerDisplayName} is now " +
-                    (profile.TriggerActive ? "running." : "stopped."),
-                    profile.NotificationTargets
-                );
-                SupervisorLog.WriteTrace(
-                    $"Profile '{profile.Name}': trigger-transition notification submitted."
-                );
             }
             catch (Exception ex)
             {
@@ -224,11 +213,10 @@ public partial class TrayApplicationContext : ApplicationContext
                 if (!firstFailure)
                     continue;
 
-                PublishNotification(
+                PublishSystemNotification(
                     NotificationSeverity.Error,
                     "Profile update failed",
-                    $"{profile.Name}\nUnexpected profile update failure: {ex.Message}",
-                    profile.NotificationTargets
+                    $"{profile.Name}\nUnexpected profile update failure: {ex.Message}"
                 );
             }
         }
@@ -374,11 +362,10 @@ public partial class TrayApplicationContext : ApplicationContext
                 if (!firstFailure)
                     continue;
 
-                PublishNotification(
+                PublishSystemNotification(
                     NotificationSeverity.Error,
                     "Profile lifecycle failed",
-                    $"{profile.Name}\nUnexpected lifecycle failure: {ex.Message}",
-                    profile.NotificationTargets
+                    $"{profile.Name}\nUnexpected lifecycle failure: {ex.Message}"
                 );
             }
         }
@@ -797,11 +784,10 @@ public partial class TrayApplicationContext : ApplicationContext
 
         if (showNotification)
         {
-            PublishNotification(
+            PublishSystemNotification(
                 NotificationSeverity.Information,
                 "AppSupervisor",
-                $"Configuration reloaded. {_profiles.Count} profile(s) active.",
-                GetOperationalNotificationTargets()
+                $"Configuration reloaded. {_profiles.Count} profile(s) active."
             );
         }
     }
@@ -855,11 +841,10 @@ public partial class TrayApplicationContext : ApplicationContext
 
         UpdateTrayState();
 
-        PublishNotification(
+        PublishSystemNotification(
             NotificationSeverity.Error,
             presentation.NotificationTitle,
-            $"{presentation.MessagePrefix}\n{exception.Message}",
-            GetOperationalNotificationTargets()
+            $"{presentation.MessagePrefix}\n{exception.Message}"
         );
     }
 
@@ -872,11 +857,11 @@ public partial class TrayApplicationContext : ApplicationContext
         SupervisorProfile profile,
         IManagedResource resource)
     {
-        PublishNotification(
+        PublishResourceNotification(
             NotificationSeverity.Warning,
             "Resource restarted",
             $"{profile.Name}: {resource.DisplayName} was restarted.",
-            resource.NotificationTargets
+            resource
         );
     }
 
@@ -898,7 +883,7 @@ public partial class TrayApplicationContext : ApplicationContext
             );
         UpdateTrayState();
 
-        PublishNotification(
+        PublishSharedApplicationNotification(
             NotificationSeverity.Error,
             "Inactive helper close failed",
             $"{displayName}\n{message}",
@@ -935,11 +920,11 @@ public partial class TrayApplicationContext : ApplicationContext
                 );
         UpdateTrayState();
 
-        PublishNotification(
+        PublishResourceNotification(
             NotificationSeverity.Error,
             $"{resource.DisplayName} supervision failed",
             $"{profile.Name} - {resource.DisplayName}\n{message}",
-            resource.NotificationTargets
+            resource
         );
     }
 
@@ -978,20 +963,18 @@ public partial class TrayApplicationContext : ApplicationContext
 
             StartupRegistration.Enable();
 
-            PublishNotification(
+            PublishSystemNotification(
                 NotificationSeverity.Information,
                 "AppSupervisor",
-                "AppSupervisor will start automatically when you sign in to Windows.",
-                GetOperationalNotificationTargets()
+                "AppSupervisor will start automatically when you sign in to Windows."
             );
         }
         catch (Exception ex)
         {
-            PublishNotification(
+            PublishSystemNotification(
                 NotificationSeverity.Error,
                 "Windows startup error",
-                $"Startup registration could not be checked or updated.\n{ex.Message}",
-                GetOperationalNotificationTargets()
+                $"Startup registration could not be checked or updated.\n{ex.Message}"
             );
         }
     }
@@ -1013,13 +996,14 @@ public partial class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
-    /// Publishes provider-independent content to the notification router.
+    /// Publishes a same-executable cleanup notification through the targets of entries that
+    /// explicitly enabled cleanup for that helper.
     /// </summary>
     /// <param name="severity">The presentation severity.</param>
     /// <param name="title">The notification heading.</param>
     /// <param name="message">The detailed notification text.</param>
     /// <param name="targets">The configured presentation targets.</param>
-    private void PublishNotification(
+    private void PublishSharedApplicationNotification(
         NotificationSeverity severity,
         string title,
         string message,
@@ -1033,21 +1017,32 @@ public partial class TrayApplicationContext : ApplicationContext
         ));
     }
 
-    /// <summary>
-    /// Combines active profile targets for application-level messages and provides a popup before any valid config exists.
-    /// </summary>
-    /// <returns>The distinct targets used for configuration and startup messages.</returns>
-    private IReadOnlyList<NotificationTarget> GetOperationalNotificationTargets()
+    /// <summary>Publishes an AppSupervisor-level message without borrowing helper settings.</summary>
+    private void PublishSystemNotification(
+        NotificationSeverity severity,
+        string title,
+        string message)
     {
-        NotificationTarget[] targets = _profiles
-            .SelectMany(profile => profile.NotificationTargets)
-            .Distinct()
-            .ToArray();
+        _notificationService.Publish(ScopedNotificationFactory.CreateSystem(
+            severity,
+            title,
+            message
+        ));
+    }
 
-        if (_hasValidConfiguration || targets.Length > 0)
-            return targets;
-
-        return [NotificationTarget.Popup];
+    /// <summary>Publishes a lifecycle message through only its owning helper's settings.</summary>
+    private void PublishResourceNotification(
+        NotificationSeverity severity,
+        string title,
+        string message,
+        IManagedResource resource)
+    {
+        _notificationService.Publish(ScopedNotificationFactory.CreateResource(
+            severity,
+            title,
+            message,
+            resource
+        ));
     }
 
     /// <summary>

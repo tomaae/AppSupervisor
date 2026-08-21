@@ -48,6 +48,8 @@ Resources can include:
 
 A resource may depend on one earlier application or service being ready. Profiles operate independently, so a delay or slow resource in one profile does not hold up another. Pausing or exiting AppSupervisor leaves external applications and services untouched.
 
+The monitor process only controls whether its profile is active; its start or stop does not produce a notification. Notification destinations configured on a helper apply only to that helper, and destinations configured on a health check apply only to that check. AppSupervisor-level configuration and startup messages use their own popup channel instead of borrowing destinations from profile resources.
+
 ### Helper applications
 
 Applications can be launched directly from an executable, through Steam, or through a Microsoft Store/MSIX app entry. Direct launches may include command-line arguments.

@@ -1,5 +1,3 @@
-using AppSupervisor.Notifications;
-
 namespace AppSupervisor.Core;
 
 /// <summary>
@@ -26,7 +24,7 @@ public sealed class SupervisorProfile : IDisposable
     /// Creates a supervisor profile with fresh runtime and timeout state.
     /// </summary>
     /// <param name="name">The human-readable profile name.</param>
-    /// <param name="triggerDisplayName">The trigger name shown in status notifications.</param>
+    /// <param name="triggerDisplayName">The configured human-readable trigger name.</param>
     /// <param name="trigger">The condition that determines whether the profile is active.</param>
     /// <param name="resources">The resources supervised while the trigger is active.</param>
     /// <param name="closeTimeout">How long the trigger may remain inactive before resources are closed.</param>
@@ -53,7 +51,7 @@ public sealed class SupervisorProfile : IDisposable
 
     /// <summary>Creates a profile with explicit cross-type startup sequencing metadata.</summary>
     /// <param name="name">The human-readable profile name.</param>
-    /// <param name="triggerDisplayName">The trigger name shown in status notifications.</param>
+    /// <param name="triggerDisplayName">The configured human-readable trigger name.</param>
     /// <param name="trigger">The condition that determines whether the profile is active.</param>
     /// <param name="startupResources">The resources in startup order with delay and dependency settings.</param>
     /// <param name="closeTimeout">How long the trigger may remain inactive before resources are closed.</param>
@@ -75,10 +73,6 @@ public sealed class SupervisorProfile : IDisposable
         _resources = _startupResources
             .Select(startup => startup.Resource)
             .ToList();
-        NotificationTargets = _resources
-            .SelectMany(resource => resource.NotificationTargets)
-            .Distinct()
-            .ToArray();
         _closeTimeout = closeTimeout;
         foreach (IManagedResource resource in _resources)
         {
@@ -108,13 +102,8 @@ public sealed class SupervisorProfile : IDisposable
     /// <summary>Gets the human-readable supervisor profile name.</summary>
     public string Name { get; }
 
-    /// <summary>Gets the trigger name displayed in status notifications.</summary>
+    /// <summary>Gets the configured human-readable trigger name.</summary>
     public string TriggerDisplayName { get; }
-
-    /// <summary>
-    /// Gets the distinct union of notification targets configured by this profile's enabled helper resources.
-    /// </summary>
-    public IReadOnlyList<NotificationTarget> NotificationTargets { get; }
 
     /// <summary>Gets whether the supervisor profile's activation trigger is currently present.</summary>
     public bool TriggerActive { get; private set; }
