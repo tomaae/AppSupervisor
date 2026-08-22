@@ -156,15 +156,25 @@ internal sealed class TwitchAuthorizationService : IDisposable
         }
     }
 
-    public async Task<TwitchAccess> ForceRefreshAsync(CancellationToken cancellationToken)
+    public async Task<TwitchAccess> ForceRefreshAsync(
+        string rejectedAccessToken,
+        CancellationToken cancellationToken)
     {
         await CredentialGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            TwitchStoredAuthorization stored = await RefreshNoLockAsync(
-                LoadMatchingAuthorization(),
-                cancellationToken
-            ).ConfigureAwait(false);
+            TwitchStoredAuthorization stored = LoadMatchingAuthorization();
+
+            // A different request may have refreshed the one-time-use credential while this
+            // request was waiting for the shared gate. Reuse that persisted replacement.
+            if (string.Equals(
+                stored.AccessToken,
+                rejectedAccessToken,
+                StringComparison.Ordinal))
+            {
+                stored = await RefreshNoLockAsync(stored, cancellationToken).ConfigureAwait(false);
+            }
+
             return new TwitchAccess(stored.ClientId, stored.AccessToken, stored.UserId, stored.Login);
         }
         finally

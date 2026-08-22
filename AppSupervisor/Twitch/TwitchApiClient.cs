@@ -134,7 +134,10 @@ internal sealed class TwitchApiClient : ITwitchApiClient
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
             response.Dispose();
-            access = await _authorization.ForceRefreshAsync(cancellationToken).ConfigureAwait(false);
+            access = await _authorization.ForceRefreshAsync(
+                access.AccessToken,
+                cancellationToken
+            ).ConfigureAwait(false);
             response = await SendOnceAsync(requestFactory(access), cancellationToken).ConfigureAwait(false);
         }
 

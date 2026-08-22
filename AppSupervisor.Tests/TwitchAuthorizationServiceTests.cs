@@ -151,6 +151,65 @@ public sealed class TwitchAuthorizationServiceTests
         Assert.Equal("new-refresh", store.Authorization!.RefreshToken);
     }
 
+    [Fact]
+    public async Task ForceRefresh_ConcurrentRejectedAccess_ConsumesRefreshTokenOnce()
+    {
+        var store = CreateValidStore();
+        int refreshCount = 0;
+        using var httpClient = new HttpClient(new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/token", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref refreshCount);
+                return Json(HttpStatusCode.OK,
+                    "{\"access_token\":\"new-access\",\"refresh_token\":\"new-refresh\",\"expires_in\":14400}");
+            }
+
+            return Json(HttpStatusCode.OK,
+                $"{{\"client_id\":\"{TwitchApplication.ClientId}\",\"login\":\"broadcaster\",\"user_id\":\"123\",\"scopes\":[\"moderator:manage:chat_settings\",\"user:write:chat\",\"channel:edit:commercial\"],\"expires_in\":14000}}");
+        }));
+        using var first = new TwitchAuthorizationService(
+            new TwitchIntegrationConfig(),
+            store,
+            httpClient
+        );
+        using var second = new TwitchAuthorizationService(
+            new TwitchIntegrationConfig(),
+            store,
+            httpClient
+        );
+
+        TwitchAccess[] access = await Task.WhenAll(
+            first.ForceRefreshAsync("old-access", CancellationToken.None),
+            second.ForceRefreshAsync("old-access", CancellationToken.None)
+        );
+
+        Assert.Equal(1, refreshCount);
+        Assert.All(access, item => Assert.Equal("new-access", item.AccessToken));
+        Assert.Equal("new-refresh", store.Authorization!.RefreshToken);
+    }
+
+    [Fact]
+    public async Task ForceRefresh_StoredTokenAlreadyChanged_ReusesPersistedReplacement()
+    {
+        var store = CreateValidStore();
+        using var httpClient = new HttpClient(new StubHandler(_ =>
+            throw new InvalidOperationException("No HTTP request was expected.")));
+        using var service = new TwitchAuthorizationService(
+            new TwitchIntegrationConfig(),
+            store,
+            httpClient
+        );
+
+        TwitchAccess access = await service.ForceRefreshAsync(
+            "different-rejected-access",
+            CancellationToken.None
+        );
+
+        Assert.Equal("old-access", access.AccessToken);
+        Assert.Equal(0, store.SaveCount);
+    }
+
     private static MemoryCredentialStore CreateExpiredStore() => new()
     {
         Authorization = new TwitchStoredAuthorization
@@ -161,6 +220,19 @@ public sealed class TwitchAuthorizationServiceTests
             UserId = "123",
             Login = "broadcaster",
             ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1)
+        }
+    };
+
+    private static MemoryCredentialStore CreateValidStore() => new()
+    {
+        Authorization = new TwitchStoredAuthorization
+        {
+            ClientId = TwitchApplication.ClientId,
+            AccessToken = "old-access",
+            RefreshToken = "old-refresh",
+            UserId = "123",
+            Login = "broadcaster",
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
         }
     };
 
