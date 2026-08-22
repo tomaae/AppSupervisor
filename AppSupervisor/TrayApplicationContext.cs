@@ -57,9 +57,15 @@ public partial class TrayApplicationContext : ApplicationContext
     private volatile bool _configurationLoadError;
     private string _configurationLoadErrorTrayStatus = "Configuration error";
     private readonly Dictionary<RuntimeErrorIdentity, ActiveTrayError> _activeRuntimeErrors = [];
+    private readonly ActiveNotificationDeduplicator<RuntimeErrorNotificationIdentity>
+        _runtimeErrorNotifications = new();
     private ActiveTrayError? _inactiveCleanupError;
     private long _trayErrorSequence;
     private readonly record struct RuntimeErrorIdentity(SupervisorProfile Profile, IManagedResource Resource);
+    private readonly record struct RuntimeErrorNotificationIdentity(
+        SupervisorProfile Profile,
+        IManagedResource Resource,
+        string Message);
     private readonly record struct ActiveTrayError(long Sequence, string Summary);
     private readonly record struct ActiveTrayErrorSnapshot(int Count, string? LatestSummary);
     private TrayStateSnapshot? _lastScheduledTrayState;
@@ -735,6 +741,7 @@ public partial class TrayApplicationContext : ApplicationContext
                 lock (_runtimeStateLock)
                 {
                     _activeRuntimeErrors.Clear();
+                    _runtimeErrorNotifications.Clear();
                     _inactiveCleanupError = null;
                     _activeHealthErrors.Clear();
                     _reportedProfileTickErrors.Clear();
@@ -910,7 +917,9 @@ public partial class TrayApplicationContext : ApplicationContext
         IManagedResource resource,
         string message)
     {
+        bool firstNotification;
         lock (_runtimeStateLock)
+        {
             _activeRuntimeErrors[new RuntimeErrorIdentity(profile, resource)] =
                 CreateActiveTrayError(
                     TrayTooltipText.CreateErrorSummary(
@@ -918,7 +927,14 @@ public partial class TrayApplicationContext : ApplicationContext
                         message
                     )
                 );
+            firstNotification = _runtimeErrorNotifications.TryActivate(
+                new RuntimeErrorNotificationIdentity(profile, resource, message)
+            );
+        }
         UpdateTrayState();
+
+        if (!firstNotification)
+            return;
 
         PublishResourceNotification(
             NotificationSeverity.Error,
@@ -936,7 +952,13 @@ public partial class TrayApplicationContext : ApplicationContext
         IManagedResource resource)
     {
         lock (_runtimeStateLock)
+        {
             _activeRuntimeErrors.Remove(new RuntimeErrorIdentity(profile, resource));
+            _runtimeErrorNotifications.ClearWhere(identity =>
+                ReferenceEquals(identity.Profile, profile) &&
+                ReferenceEquals(identity.Resource, resource)
+            );
+        }
         UpdateTrayState();
     }
 
