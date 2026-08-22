@@ -33,7 +33,7 @@ internal sealed class SteamVrOfflineDevicesForm : Form
             AutoSize = true,
             Padding = new Padding(12),
             MaximumSize = new Size(640, 0),
-            Text = "The devices below failed two SteamVR connection checks. Silencing stops reminders for the current outage; monitoring and automatic recovery detection continue."
+            Text = "The devices below failed two SteamVR connection checks. Silencing stops alerts for the rest of the current SteamVR session; monitoring and automatic recovery detection continue."
         };
         var buttons = new FlowLayoutPanel
         {
@@ -56,17 +56,19 @@ internal sealed class SteamVrOfflineDevicesForm : Form
         _durationTimer.Start();
     }
 
-    /// <summary>Refreshes the shown incident list and closes the window after every device recovers.</summary>
+    /// <summary>Refreshes the incident list and closes a visible window when no active alerts remain.</summary>
     public void UpdateDevices(IReadOnlyList<SteamVrOfflineDevice> devices)
     {
         _snapshot = devices;
 
-        if (devices.Count == 0)
+        if (Visible && devices.All(device => device.Silenced))
         {
-            if (Visible)
-                Close();
+            Close();
             return;
         }
+
+        if (devices.Count == 0)
+            return;
 
         RefreshDeviceList();
     }

@@ -161,7 +161,7 @@ public sealed class SteamVrDeviceMonitorTests
     }
 
     [Fact]
-    public void Silence_CurrentIncident_SuppressesReminderButRecoveryStillClearsIt()
+    public void Silence_DeviceForSession_SuppressesReminderAndLaterDisconnectionAlert()
     {
         using var monitor = CreateMonitor();
         var notifications = new List<SupervisorNotification>();
@@ -187,6 +187,46 @@ public sealed class SteamVrDeviceMonitorTests
         Assert.Contains(notifications, notification =>
             notification.Severity == NotificationSeverity.Information &&
             notification.Title.Contains("recovered", StringComparison.OrdinalIgnoreCase));
+
+        monitor.ProcessSnapshot(missing, failedAt + TimeSpan.FromMinutes(6));
+        monitor.ProcessSnapshot(missing, failedAt + TimeSpan.FromMinutes(6.5));
+
+        Assert.True(Assert.Single(monitor.OfflineDevices).Silenced);
+        Assert.Single(notifications, notification => notification.Severity == NotificationSeverity.Error);
+    }
+
+    [Fact]
+    public void ProcessSnapshot_NewSteamVrSession_ClearsDeviceSilence()
+    {
+        using var monitor = CreateMonitor();
+        var alerts = new List<SupervisorNotification>();
+        monitor.AlertRequested += alerts.Add;
+        SteamVrSnapshot missing = CreateSnapshot(connected: false);
+
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(60));
+        monitor.Silence(["LHR-TEST"]);
+
+        DateTime nextSessionStart = SessionStartUtc + TimeSpan.FromHours(1);
+        monitor.ProcessSnapshot(
+            CreateSnapshot(connected: true, nextSessionStart),
+            nextSessionStart + TimeSpan.FromSeconds(1)
+        );
+        SteamVrSnapshot missingInNextSession = CreateSnapshot(
+            connected: false,
+            nextSessionStart
+        );
+        monitor.ProcessSnapshot(
+            missingInNextSession,
+            nextSessionStart + TimeSpan.FromSeconds(30)
+        );
+        monitor.ProcessSnapshot(
+            missingInNextSession,
+            nextSessionStart + TimeSpan.FromSeconds(60)
+        );
+
+        Assert.False(Assert.Single(monitor.OfflineDevices).Silenced);
+        Assert.Equal(2, alerts.Count);
     }
 
     [Fact]
@@ -335,7 +375,9 @@ public sealed class SteamVrDeviceMonitorTests
         };
     }
 
-    private static SteamVrSnapshot CreateSnapshot(bool connected)
+    private static SteamVrSnapshot CreateSnapshot(
+        bool connected,
+        DateTime? sessionStartUtc = null)
     {
         IReadOnlyList<SteamVrDeviceSnapshot> devices = connected
             ?
@@ -349,7 +391,7 @@ public sealed class SteamVrDeviceMonitorTests
                 )
             ]
             : [];
-        return new SteamVrSnapshot(true, SessionStartUtc, devices);
+        return new SteamVrSnapshot(true, sessionStartUtc ?? SessionStartUtc, devices);
     }
 
     private sealed class UnusedSource : ISteamVrDeviceSource

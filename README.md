@@ -120,7 +120,7 @@ Windows can replace an audio endpoint ID after a driver update, reconnect, or de
 
 AppSupervisor can monitor configured controllers, trackers, and Lighthouse/base-station devices while SteamVR is already running. Discovery records controller handedness and SteamVR tracker assignments such as left foot, left knee, or waist, so offline and recovery notifications identify the missing role. It does not start or restart SteamVR and does not control devices.
 
-After repeated connection failures, it sends the selected notifications and shows an offline-device window. Reminders can be silenced for the current outage; recovery is detected automatically.
+After repeated connection failures, it sends the selected notifications and shows an offline-device window. Alerts for a device can be silenced for the rest of the current SteamVR session, including any later disconnections after a recovery; recovery is still detected automatically. The window closes once every device shown in it has been silenced.
 
 Generic/FBT trackers are monitored only after SteamVR reports them connected at least once in the current SteamVR session. A tracker intentionally left powered off for the whole session therefore does not produce an offline alert. Hand controllers and tracking references such as base stations remain mandatory from session startup.
 

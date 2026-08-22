@@ -131,7 +131,7 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         return Task.Run(_source.Capture, cancellationToken);
     }
 
-    /// <summary>Silences reminder notifications for selected devices until they recover.</summary>
+    /// <summary>Silences offline alerts for selected devices until the SteamVR session ends.</summary>
     public void Silence(IEnumerable<string> serialNumbers)
     {
         bool changed = false;
@@ -293,7 +293,6 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
                     recovered.Add(state);
                     state.OfflineSinceUtc = null;
                     state.NextReminderUtc = null;
-                    state.Silenced = false;
                 }
 
                 continue;
@@ -312,13 +311,16 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
             {
                 state.OfflineSinceUtc = nowUtc;
                 state.NextReminderUtc = nowUtc + ReminderInterval;
-                state.Silenced = false;
                 newlyOffline.Add(state);
             }
         }
 
-        if (newlyOffline.Count > 0)
-            RequestOfflineAlert(newlyOffline, reminder: false);
+        DeviceState[] newlyOfflineAndUnsilenced = newlyOffline
+            .Where(state => !state.Silenced)
+            .ToArray();
+
+        if (newlyOfflineAndUnsilenced.Length > 0)
+            RequestOfflineAlert(newlyOfflineAndUnsilenced, reminder: false);
 
         foreach (DeviceState state in recovered)
         {
