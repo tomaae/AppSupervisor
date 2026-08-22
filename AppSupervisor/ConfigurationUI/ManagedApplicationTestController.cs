@@ -339,7 +339,7 @@ internal sealed class ManagedApplicationTestController : IHelperTestController
 
         if (State == HelperTestState.Starting)
         {
-            if (application.IsStarted())
+            if (application.IsStarted() && !lifecycleWorkPending)
             {
                 SetState(HelperTestState.Running);
                 _startCompletion?.TrySetResult();

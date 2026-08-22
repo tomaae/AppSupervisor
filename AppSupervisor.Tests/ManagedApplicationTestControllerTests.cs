@@ -8,9 +8,9 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies the editor helper-test state machine around the production lifecycle contract.</summary>
 public sealed class ManagedApplicationTestControllerTests
 {
-    /// <summary>Confirms startup waits for readiness and stop waits for immediate deactivation.</summary>
+    /// <summary>Confirms startup waits for readiness and activation work before enabling stop.</summary>
     [Fact]
-    public async Task StartAndStopAsync_ReadinessAndClosePhases_GateCompletion()
+    public async Task StartAndStopAsync_ReadinessActivationWorkAndClosePhases_GateCompletion()
     {
         FakeApplicationLifecycle? lifecycle = null;
         ManagedApplicationConfig? receivedConfiguration = null;
@@ -57,7 +57,14 @@ public sealed class ManagedApplicationTestControllerTests
         Assert.Single(receivedConfiguration.StartupMacros);
         Assert.False(receivedConfiguration.LeaveRunningAfterProfileStops);
 
-        lifecycle!.AllowStart = true;
+        lifecycle!.KeepActivationWorkPending = true;
+        lifecycle.AllowStart = true;
+        await WaitUntilAsync(lifecycle.IsStarted);
+
+        Assert.Equal(HelperTestState.Starting, controller.State);
+        Assert.False(startTask.IsCompleted);
+
+        lifecycle.KeepActivationWorkPending = false;
         await startTask.WaitAsync(TimeSpan.FromSeconds(3));
 
         Assert.Equal(HelperTestState.Running, controller.State);
@@ -206,9 +213,12 @@ public sealed class ManagedApplicationTestControllerTests
 
         public bool AllowClose { get; set; }
 
+        public bool KeepActivationWorkPending { get; set; }
+
         public bool CloseOperationPending => _closing;
 
-        public bool LifecycleWorkPending => _starting || _closing;
+        public bool LifecycleWorkPending =>
+            _starting || _closing || (_running && KeepActivationWorkPending);
 
         public void Activate()
         {
