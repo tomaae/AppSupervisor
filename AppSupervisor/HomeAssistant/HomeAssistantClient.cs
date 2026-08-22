@@ -148,6 +148,7 @@ internal sealed class HomeAssistantClient : IHomeAssistantClient
 
         if (root.TryGetProperty("attributes", out JsonElement attributes) &&
             attributes.TryGetProperty("brightness", out JsonElement brightnessElement) &&
+            brightnessElement.ValueKind == JsonValueKind.Number &&
             brightnessElement.TryGetInt32(out int brightness))
         {
             brightnessPercent = Math.Clamp(

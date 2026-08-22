@@ -47,4 +47,19 @@ public sealed class HomeAssistantClientStateTests
         Assert.Equal("off", state.State);
         Assert.Null(state.BrightnessPercent);
     }
+
+    [Fact]
+    public void ReadEntityState_NullBrightnessLeavesPercentageUnknown()
+    {
+        using JsonDocument document = JsonDocument.Parse(
+            """{"state":"off","attributes":{"brightness":null}}"""
+        );
+
+        HomeAssistantEntityState state = HomeAssistantClient.ReadEntityState(
+            document.RootElement
+        );
+
+        Assert.Equal("off", state.State);
+        Assert.Null(state.BrightnessPercent);
+    }
 }
