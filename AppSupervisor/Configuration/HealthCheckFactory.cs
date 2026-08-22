@@ -8,6 +8,8 @@ namespace AppSupervisor.Configuration;
 public static class HealthCheckFactory
 {
     internal const string ResponsivenessCheckName = "Application responsiveness";
+    internal static readonly TimeSpan VrcOscMinimumVrChatUptime =
+        TimeSpan.FromMinutes(3);
 
     /// <summary>Creates one runtime health check with the correct probe and automatic activation condition.</summary>
     /// <param name="config">The validated health-check configuration.</param>
@@ -83,10 +85,22 @@ public static class HealthCheckFactory
             HealthCheckType.Listener => string.IsNullOrWhiteSpace(config.ActiveWhenProcess)
                 ? new AlwaysActiveCondition()
                 : new ProcessRunningCondition(config.ActiveWhenProcess),
-            HealthCheckType.Vrcosc => new ProcessRunningCondition("VRChat.exe"),
+            HealthCheckType.Vrcosc => new ProcessUptimeCondition(
+                "VRChat.exe",
+                VrcOscMinimumVrChatUptime
+            ),
             _ => throw new InvalidOperationException(
                 $"Unsupported health-check type: {config.Type}."
             )
         };
+    }
+
+    /// <summary>Creates the prerequisite for an explicit one-shot editor test without automatic settle delays.</summary>
+    internal static IHealthCheckActivationCondition CreateOneShotActivationCondition(
+        HealthCheckConfig config)
+    {
+        return config.Type == HealthCheckType.Vrcosc
+            ? new ProcessRunningCondition("VRChat.exe")
+            : CreateActivationCondition(config);
     }
 }

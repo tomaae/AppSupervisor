@@ -38,6 +38,10 @@ public sealed class HealthCheckEditorLayoutTests
                     labels,
                     text => text.Contains("strict majority", StringComparison.Ordinal)
                 );
+                Assert.Contains(
+                    labels,
+                    text => text.Contains("three-minute VRChat startup period", StringComparison.Ordinal)
+                );
             }
             catch (Exception exception)
             {

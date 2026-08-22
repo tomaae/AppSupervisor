@@ -515,7 +515,7 @@ public sealed partial class ConfigurationEditorForm
             HealthCheckConfig healthCheck = ConfigJson.Clone(selected);
             ValidateHealthCheckForTest(application.Path, healthCheck);
             IHealthCheckActivationCondition activationCondition =
-                HealthCheckFactory.CreateActivationCondition(healthCheck);
+                HealthCheckFactory.CreateOneShotActivationCondition(healthCheck);
 
             if (!activationCondition.IsActive())
             {

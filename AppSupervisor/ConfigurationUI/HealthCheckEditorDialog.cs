@@ -184,16 +184,16 @@ public sealed partial class HealthCheckEditorDialog : Form
     {
         GroupBox group = CreateGroup("VRChat OSCQuery");
         TableLayoutPanel layout = CreateSettingsTable();
-        AddRow(layout, "Runs only while", new Label
+        AddRow(layout, "Automatic checks after", new Label
         {
             AutoSize = true,
-            Text = "VRChat.exe is running"
+            Text = "VRChat.exe has run for 3 minutes"
         });
         AddSpanningRow(layout, new Label
         {
             AutoSize = true,
             MaximumSize = new Size(610, 0),
-            Text = "OSCQuery discovers VRChat's HTTP and OSC endpoints automatically; no address, port, or protocol is configured."
+            Text = "Automatic OSCQuery requests wait for the three-minute VRChat startup period. Discovery then finds VRChat's HTTP and OSC endpoints; no address, port, or protocol is configured."
         });
         AddRow(layout, "Parameter leaf names", _parametersTextBox);
         AddSpanningRow(layout, new Label

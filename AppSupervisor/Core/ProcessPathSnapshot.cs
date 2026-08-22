@@ -43,10 +43,14 @@ internal static class ProcessPathSnapshot
 
     /// <summary>Checks process-name presence, reusing the current timer-cycle cache.</summary>
     internal static bool IsProcessNameRunning(string processName)
+        => FindProcessNameIds(processName).Count > 0;
+
+    /// <summary>Returns process identifiers for one executable name from the current timer-cycle cache.</summary>
+    internal static IReadOnlyList<int> FindProcessNameIds(string processName)
     {
         string normalizedName = NormalizeProcessName(processName);
         if (normalizedName.Length == 0)
-            return false;
+            return [];
 
         lock (SyncRoot)
         {
@@ -59,8 +63,9 @@ internal static class ProcessPathSnapshot
 
                 if (_sharedSnapshotCaptured)
                 {
-                    return _processesByName.TryGetValue(normalizedName, out int[]? ids) &&
-                        ids.Length > 0;
+                    return _processesByName.TryGetValue(normalizedName, out int[]? ids)
+                        ? ids
+                        : [];
                 }
             }
 
@@ -70,7 +75,7 @@ internal static class ProcessPathSnapshot
                 _processesByName[normalizedName] = processIds;
             }
 
-            return processIds.Length > 0;
+            return processIds;
         }
     }
 
