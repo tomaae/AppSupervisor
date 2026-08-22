@@ -18,15 +18,18 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 - Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
-- Launches every helper with the monitored executable's directory as its working directory so relative files resolve consistently.
+- Launches every helper with the helper executable's directory as its working directory so relative files resolve consistently.
 - Recognizes Launch4j helpers with a bundled Java runtime, launching their wrapper and supervising the persistent `javaw.exe` process.
 - Runs ordered per-application Startup macros on profile activation after confirming the helper is available, including delays, hotkeys, and window placement actions.
+- Can test a selected helper through its normal launch, Startup macro, and close lifecycle without activating its profile.
 - Provides per-application listener and VRChat OSCQuery health checks, including optional recovery after a confirmed failure.
 - Monitors expected SteamVR controllers, trackers, and base stations without starting or controlling SteamVR.
 - Runs Twitch broadcaster chat messages, ads, and reversible chat-mode changes when a profile activates.
 - Sends per-resource alerts through popup dialogs, Windows notifications, or XSOverlay.
-- Includes a graphical configuration editor with application, Steam, Store, service, and running-process pickers.
+- Suppresses repeated copies of the same active supervision error and exposes concrete active-error details in the tray tooltip.
+- Includes a graphical configuration editor with searchable, loading-aware pickers and recognizable resource-list icons.
 - Validates configuration before applying it and keeps the last valid configuration active if a reload fails.
+- Writes configurable per-session diagnostic logs beside the executable and configuration.
 - Can register itself to start elevated when the user signs in to Windows.
 - Can expose cached supervision status through an optional passwordless, read-only local HTTP API.
 
@@ -64,6 +67,8 @@ Per-application options include:
 - Detecting unresponsive windows and restarting after repeated failures.
 - Choosing notification destinations.
 
+The editor's **Test helper** button exercises the selected helper through the same production lifecycle without activating its profile. It uses the configured direct, Steam, or Store launch mechanism and direct-launch arguments, waits for startup confirmation, runs the complete Startup macro, and becomes **Stop test** only after startup work finishes. Stopping uses the normal graceful close, retry, tray-exit, and optional force-kill behavior without waiting for the profile close timeout. The test is unavailable while the selected profile is active or still completing shutdown. Closing the editor or AppSupervisor while a test is active first attempts to close the test helper.
+
 ### Startup macros
 
 Each helper application can have an ordered **Startup macros** sequence. AppSupervisor runs the sequence whenever a profile activates the helper: immediately when one existing helper instance is confirmed, or after a requested launch or relaunch is confirmed.
@@ -95,6 +100,8 @@ Health checks belong to a helper application and have their own timing, failure 
 
 - **Listener** verifies that the helper owns a configured TCP or UDP port. It can run only while another selected process is active.
 - **VRChat OSCQuery** checks VRChat OSCQuery availability and selected avatar parameters. It can also report when most available parameters remain unchanged for too long.
+
+Automatic VRChat OSCQuery checks begin only after `VRChat.exe` has run continuously for three minutes, preventing startup discovery from being treated as a health failure. While VRChat is running, **Pick...** can immediately discover the current avatar's available parameter leaf names without waiting for that automatic-check gate. Applying picker choices preserves configured names that the current avatar does not expose.
 
 A confirmed failure can optionally trigger a graceful restart of the helper. One-shot tests do not change live failure state or restart external processes.
 
@@ -132,7 +139,7 @@ Twitch uses one global broadcaster connection and allows Twitch resources in onl
 
 ### Notifications
 
-Applications, services, health checks, Windows audio interfaces, Home Assistant actions, and SteamVR devices can report through:
+Helper applications, Windows services, health checks, Windows audio interfaces, Home Assistant actions, OBS actions, Twitch actions, and SteamVR devices can report through:
 
 - Popup dialogs.
 - Windows notifications.
@@ -140,13 +147,25 @@ Applications, services, health checks, Windows audio interfaces, Home Assistant 
 
 If XSOverlay is unavailable, its notifications fall back to Windows notifications.
 
+An identical ordinary supervision error from the same resource is published only once while that error remains active. A distinct error can still notify once, and recovery clears the suppression so a later incident can notify again. The red-X tray tooltip identifies a concrete active error, includes a count when more errors are active, and retains any simultaneous helper startup or shutdown activity that fits within the Windows tooltip limit.
+
 ### Configuration editor
 
 Open the editor from **Configure...** in the tray menu or by double-clicking the tray icon. It supports adding, duplicating, removing, enabling, reordering, and configuring profiles and resources.
 
-The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, and SteamVR devices. Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
+The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, SteamVR devices, and live VRChat OSCQuery parameter names. Running, Steam, and Store application pickers show a loading overlay that prevents selecting incomplete results and provide text filtering after results are ready. The running-process picker excludes Windows service processes and hides Microsoft/Windows applications by default; the Store picker similarly hides Microsoft/system applications unless requested. The running and Store picker status text reports visible and filtered counts.
+
+Steam and Microsoft Store catalog discovery retries transient failures up to four total attempts before reporting a distinct **Application discovery error**. If discovery fails while applying a reload, the previous valid configuration and its supervision remain active. The unified resource list uses each helper executable's icon when available and dedicated type pictograms for services, delays, Windows audio, Home Assistant, OBS, and Twitch resources.
+
+Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
 
 **Validate** checks the complete configuration without saving. **Save & Apply** validates and writes it, then replaces the running configuration. If the new configuration cannot be applied, the previous valid configuration remains active.
+
+### Diagnostic logging
+
+Each AppSupervisor run creates a uniquely named `AppSupervisor_yyMMdd-HHmmss.log` session log beside `AppSupervisor.exe` and `config.json`. Records use local ISO 8601 timestamps with the UTC offset and stable `TRACE`, `INFO`, `WARN`, and `ERROR` labels. Multiline content is indented, and ordinary prose is wrapped for readable viewing without splitting quoted paths or long unbroken values.
+
+Choose the minimum **Log level** under **Integrations → Global — Diagnostic logging**. `Info` is the default, `Trace` includes detailed execution flow, and `Warning` or `Error` reduce routine output. On the first write in a session, AppSupervisor removes current-format and legacy `AppSupervisor.log` files older than five days. Logging is best-effort and never interrupts supervision or shutdown.
 
 ### Supervisor API
 
