@@ -135,7 +135,7 @@ public sealed class ConfigurationEditorResourceLayoutTests
                             list.Items.Cast<object>().All(item => item is ManagedResourceConfig)
                     );
                     Assert.Equal(DrawMode.OwnerDrawFixed, resourceList.DrawMode);
-                    int standardIconSize = Math.Max(16, 16 * resourceList.DeviceDpi / 96);
+                    int standardIconSize = Math.Max(20, 20 * resourceList.DeviceDpi / 96);
                     Assert.Equal(
                         Math.Max(resourceList.Font.Height + 2, standardIconSize + 2),
                         resourceList.ItemHeight

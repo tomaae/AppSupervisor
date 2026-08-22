@@ -47,7 +47,7 @@ public sealed class ConfigurationEditorResourceListPresentationTests
     [Fact]
     public void Draw_BrandedResourceMarks_UsesDistinctRecognizableColors()
     {
-        const int iconSize = 16;
+        const int iconSize = 20;
         using var preview = new Bitmap(iconSize * 4, iconSize, PixelFormat.Format32bppArgb);
         using Graphics graphics = Graphics.FromImage(preview);
         graphics.Clear(Color.White);

@@ -52,7 +52,7 @@ public sealed partial class ConfigurationEditorForm
     private Control BuildResourceListPanel()
     {
         var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
-        int iconSize = Math.Max(16, 16 * DeviceDpi / 96);
+        int iconSize = Math.Max(20, 20 * DeviceDpi / 96);
         _resourceList.ItemHeight = Math.Max(_resourceList.Font.Height + 2, iconSize + 2);
         var buttons = new TableLayoutPanel
         {
@@ -348,7 +348,7 @@ public sealed partial class ConfigurationEditorForm
             return;
         }
 
-        int preferredIconSize = Math.Max(16, 16 * DeviceDpi / 96);
+        int preferredIconSize = Math.Max(20, 20 * DeviceDpi / 96);
         int iconSize = Math.Min(preferredIconSize, e.Bounds.Height - 2);
         int iconTop = e.Bounds.Top + (e.Bounds.Height - iconSize) / 2;
         var iconBounds = new Rectangle(e.Bounds.Left + 3, iconTop, iconSize, iconSize);
