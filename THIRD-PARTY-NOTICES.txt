@@ -35,3 +35,19 @@ SOFTWARE.
 
 The AppSupervisor source and binary distribution is separately licensed under
 the Apache License 2.0; see LICENSE.
+
+Resource-list icon vector data
+------------------------------
+
+The resource-list service, Home Assistant, and Twitch marks incorporate vector
+data from Material Design Icons by Pictogrammers. The icons are licensed under
+the Apache License 2.0; see LICENSE. The vector data was adapted for direct GDI+
+rendering and compact 16-pixel presentation.
+
+The OBS Studio resource-list mark incorporates vector data from Simple Icons,
+which is made available under CC0 1.0 Universal. See
+https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md.
+
+Product names, logos, brands, and other trademarks featured or referred to are
+the property of their respective trademark holders. They are used only to
+identify the corresponding resource type and do not imply endorsement.

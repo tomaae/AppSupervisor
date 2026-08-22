@@ -332,7 +332,7 @@ public sealed partial class ConfigurationEditorForm
         if (e.ListItem is not ManagedResourceConfig resource)
             return;
 
-        e.Value = GetResourceDisplayName(resource);
+        e.Value = GetResourceListDisplayName(resource);
     }
 
     /// <summary>Draws one compact resource row with a standard small icon and an ellipsized label.</summary>
@@ -352,7 +352,8 @@ public sealed partial class ConfigurationEditorForm
         int iconSize = Math.Min(preferredIconSize, e.Bounds.Height - 2);
         int iconTop = e.Bounds.Top + (e.Bounds.Height - iconSize) / 2;
         var iconBounds = new Rectangle(e.Bounds.Left + 3, iconTop, iconSize, iconSize);
-        DrawResourceIcon(e.Graphics, iconBounds, resource, e.ForeColor);
+        bool selected = (e.State & DrawItemState.Selected) != 0;
+        DrawResourceIcon(e.Graphics, iconBounds, resource, e.ForeColor, selected);
 
         var textBounds = new Rectangle(
             iconBounds.Right + 4,
@@ -362,7 +363,7 @@ public sealed partial class ConfigurationEditorForm
         );
         TextRenderer.DrawText(
             e.Graphics,
-            GetResourceDisplayName(resource),
+            GetResourceListDisplayName(resource),
             _resourceList.Font,
             textBounds,
             e.ForeColor,
@@ -379,7 +380,8 @@ public sealed partial class ConfigurationEditorForm
         Graphics graphics,
         Rectangle bounds,
         ManagedResourceConfig resource,
-        Color color)
+        Color color,
+        bool selected)
     {
         if (resource is ManagedApplicationConfig application &&
             TryGetApplicationIcon(application.Path) is Icon applicationIcon)
@@ -393,6 +395,30 @@ public sealed partial class ConfigurationEditorForm
 
         try
         {
+            if (resource is ManagedServiceConfig)
+            {
+                ResourceListIconRenderer.DrawService(graphics, bounds, color, selected);
+                return;
+            }
+
+            if (resource is HomeAssistantResourceConfig)
+            {
+                ResourceListIconRenderer.DrawHomeAssistant(graphics, bounds, color, selected);
+                return;
+            }
+
+            if (resource is ObsResourceConfig)
+            {
+                ResourceListIconRenderer.DrawObs(graphics, bounds, color, selected);
+                return;
+            }
+
+            if (resource is TwitchResourceConfig)
+            {
+                ResourceListIconRenderer.DrawTwitch(graphics, bounds, color, selected);
+                return;
+            }
+
             float strokeWidth = Math.Max(1f, bounds.Width / 11f);
             using var pen = new Pen(color, strokeWidth)
             {
@@ -401,16 +427,8 @@ public sealed partial class ConfigurationEditorForm
                 LineJoin = LineJoin.Round
             };
 
-            if (resource is ManagedServiceConfig)
-                DrawServiceIcon(graphics, pen, bounds);
-            else if (resource is DelayResourceConfig)
+            if (resource is DelayResourceConfig)
                 DrawDelayIcon(graphics, pen, bounds);
-            else if (resource is HomeAssistantResourceConfig)
-                DrawHomeIcon(graphics, pen, bounds);
-            else if (resource is ObsResourceConfig)
-                DrawObsIcon(graphics, pen, bounds);
-            else if (resource is TwitchResourceConfig)
-                DrawApplicationIcon(graphics, pen, bounds);
             else if (resource is AudioInterfaceResourceConfig)
                 DrawAudioIcon(graphics, pen, bounds);
             else
@@ -479,41 +497,6 @@ public sealed partial class ConfigurationEditorForm
         );
     }
 
-    /// <summary>Draws a compact service/gear pictogram.</summary>
-    private static void DrawServiceIcon(Graphics graphics, Pen pen, Rectangle bounds)
-    {
-        var center = new PointF(bounds.Left + bounds.Width / 2f, bounds.Top + bounds.Height / 2f);
-        float outerRadius = bounds.Width * 0.36f;
-        float innerRadius = bounds.Width * 0.12f;
-
-        for (int index = 0; index < 8; index++)
-        {
-            double angle = index * Math.PI / 4;
-            graphics.DrawLine(
-                pen,
-                center.X + (float)Math.Cos(angle) * outerRadius * 0.72f,
-                center.Y + (float)Math.Sin(angle) * outerRadius * 0.72f,
-                center.X + (float)Math.Cos(angle) * outerRadius,
-                center.Y + (float)Math.Sin(angle) * outerRadius
-            );
-        }
-
-        graphics.DrawEllipse(
-            pen,
-            center.X - outerRadius * 0.72f,
-            center.Y - outerRadius * 0.72f,
-            outerRadius * 1.44f,
-            outerRadius * 1.44f
-        );
-        graphics.DrawEllipse(
-            pen,
-            center.X - innerRadius,
-            center.Y - innerRadius,
-            innerRadius * 2,
-            innerRadius * 2
-        );
-    }
-
     /// <summary>Draws a compact clock pictogram for explicit delays.</summary>
     private static void DrawDelayIcon(Graphics graphics, Pen pen, Rectangle bounds)
     {
@@ -523,41 +506,6 @@ public sealed partial class ConfigurationEditorForm
         graphics.DrawLine(pen, center, new PointF(center.X, clock.Top + clock.Height * 0.25f));
         graphics.DrawLine(pen, center, new PointF(clock.Right - clock.Width * 0.23f, center.Y));
     }
-
-    /// <summary>Draws a compact house pictogram for Home Assistant actions.</summary>
-    private static void DrawHomeIcon(Graphics graphics, Pen pen, Rectangle bounds)
-    {
-        float left = bounds.Left + bounds.Width * 0.14f;
-        float right = bounds.Right - bounds.Width * 0.14f;
-        float roofY = bounds.Top + bounds.Height * 0.43f;
-        float bottom = bounds.Bottom - bounds.Height * 0.12f;
-        float centerX = bounds.Left + bounds.Width / 2f;
-        float top = bounds.Top + bounds.Height * 0.10f;
-        graphics.DrawLines(pen,
-        [
-            new PointF(left, roofY),
-            new PointF(centerX, top),
-            new PointF(right, roofY)
-        ]);
-        graphics.DrawLine(pen, left, roofY, left, bottom);
-        graphics.DrawLine(pen, right, roofY, right, bottom);
-        graphics.DrawLine(pen, left, bottom, right, bottom);
-    }
-
-    /// <summary>Draws a compact video-frame pictogram for OBS actions.</summary>
-    private static void DrawObsIcon(Graphics graphics, Pen pen, Rectangle bounds)
-    {
-        var frame = RectangleF.Inflate(bounds, -bounds.Width * 0.10f, -bounds.Height * 0.20f);
-        graphics.DrawRectangle(pen, frame.X, frame.Y, frame.Width, frame.Height);
-        graphics.DrawLine(
-            pen,
-            frame.Left + frame.Width * 0.38f,
-            frame.Top,
-            frame.Left + frame.Width * 0.38f,
-            frame.Bottom
-        );
-    }
-
 
     /// <summary>Records the selected resource and pointer origin for a possible drag operation.</summary>
     /// <param name="sender">The combined resource list.</param>
@@ -705,6 +653,31 @@ public sealed partial class ConfigurationEditorForm
             AudioInterfaceResourceConfig audio =>
                 $"[Audio] {AudioInterfaceResource.GetDisplayName(audio)}",
             _ => "[Resource]"
+        };
+        return name + (resource.Enabled ? "" : " (disabled)");
+    }
+
+    /// <summary>Returns the concise label used beside a recognizable icon in the resource list.</summary>
+    /// <param name="resource">The resource configuration to label.</param>
+    /// <returns>A name without a redundant bracketed type prefix.</returns>
+    internal static string GetResourceListDisplayName(ManagedResourceConfig resource)
+    {
+        string name = resource switch
+        {
+            ManagedApplicationConfig application =>
+                SafeFileName(application.Path, "New application"),
+            ManagedServiceConfig service =>
+                DisplayName(service.ServiceName, "New service"),
+            DelayResourceConfig delay => $"{delay.DurationMilliseconds:N0} ms",
+            HomeAssistantResourceConfig homeAssistant =>
+                DisplayName(
+                    homeAssistant.EntityName,
+                    DisplayName(homeAssistant.EntityId, "New action")
+                ),
+            ObsResourceConfig obs => ObsResource.GetDisplayName(obs),
+            TwitchResourceConfig twitch => TwitchResource.GetDisplayName(twitch),
+            AudioInterfaceResourceConfig audio => AudioInterfaceResource.GetDisplayName(audio),
+            _ => "Resource"
         };
         return name + (resource.Enabled ? "" : " (disabled)");
     }
