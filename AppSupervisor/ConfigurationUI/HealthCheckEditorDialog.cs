@@ -226,12 +226,6 @@ public sealed partial class HealthCheckEditorDialog : Form
             AutoSize = true,
             Text = "VRChat.exe has run for 3 minutes"
         });
-        AddSpanningRow(layout, new Label
-        {
-            AutoSize = true,
-            MaximumSize = new Size(610, 0),
-            Text = "Automatic OSCQuery requests wait for the three-minute VRChat startup period. Discovery then finds VRChat's HTTP and OSC endpoints; no address, port, or protocol is configured."
-        });
         var parameterPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,

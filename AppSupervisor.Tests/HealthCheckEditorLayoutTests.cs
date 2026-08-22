@@ -67,7 +67,7 @@ public sealed class HealthCheckEditorLayoutTests
         Assert.Equal(["UnavailableOnAvatar", "EyeLeft"], merged);
     }
 
-    /// <summary>Confirms VRCOSC guidance describes root structure and strict-majority freshness accurately.</summary>
+    /// <summary>Confirms VRCOSC guidance stays limited to actionable parameter and freshness details.</summary>
     [Fact]
     public void Constructor_VrcOscGuidance_UsesCurrentBehavior()
     {
@@ -98,9 +98,9 @@ public sealed class HealthCheckEditorLayoutTests
                     labels,
                     text => text.Contains("strict majority", StringComparison.Ordinal)
                 );
-                Assert.Contains(
+                Assert.DoesNotContain(
                     labels,
-                    text => text.Contains("three-minute VRChat startup period", StringComparison.Ordinal)
+                    text => text.Contains("Automatic OSCQuery requests", StringComparison.Ordinal)
                 );
             }
             catch (Exception exception)
