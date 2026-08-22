@@ -20,7 +20,7 @@ AppSupervisor is a lightweight Windows tray application that starts, supervises,
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
 - Launches every helper with the monitored executable's directory as its working directory so relative files resolve consistently.
 - Recognizes Launch4j helpers with a bundled Java runtime, launching their wrapper and supervising the persistent `javaw.exe` process.
-- Runs ordered per-application Startup macros after confirmed launches, including delays, hotkeys, and window placement actions.
+- Runs ordered per-application Startup macros on profile activation after confirming the helper is available, including delays, hotkeys, and window placement actions.
 - Provides per-application listener and VRChat OSCQuery health checks, including optional recovery after a confirmed failure.
 - Monitors expected SteamVR controllers, trackers, and base stations without starting or controlling SteamVR.
 - Runs Twitch broadcaster chat messages, ads, and reversible chat-mode changes when a profile activates.
@@ -66,7 +66,7 @@ Per-application options include:
 
 ### Startup macros
 
-Each helper application can have an ordered **Startup macros** sequence. AppSupervisor runs the sequence after it confirms a launch or relaunch that it requested; it does not run merely because an already-running process was discovered.
+Each helper application can have an ordered **Startup macros** sequence. AppSupervisor runs the sequence whenever a profile activates the helper: immediately when one existing helper instance is confirmed, or after a requested launch or relaunch is confirmed.
 
 Available actions are:
 

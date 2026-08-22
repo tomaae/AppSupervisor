@@ -19,6 +19,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
     private readonly TimeSpan _restartTimeout;
     private readonly Func<bool>? _shouldRemainRunning;
+    private readonly Func<IReadOnlySet<int>>? _processIdProvider;
     private readonly StartupMacroExecutor _startupMacro;
     private readonly string _runtimePath;
 
@@ -55,11 +56,13 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     internal ManagedApplication(
         ManagedApplicationConfig config,
         TimeSpan restartTimeout,
-        Func<bool>? shouldRemainRunning)
+        Func<bool>? shouldRemainRunning,
+        Func<IReadOnlySet<int>>? processIdProvider = null)
     {
         Config = config;
         _restartTimeout = restartTimeout;
         _shouldRemainRunning = shouldRemainRunning;
+        _processIdProvider = processIdProvider;
         _runtimePath = JavaLauncherDetector.ResolveRuntimePath(config.Path);
         _startupMacro = new StartupMacroExecutor(
             config.StartupMacros,
@@ -120,6 +123,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
     /// <summary>Returns exact-path identifiers from the current central supervision snapshot.</summary>
     internal IReadOnlySet<int> GetRunningProcessIds() =>
+        _processIdProvider?.Invoke() ??
         ProcessPathSnapshot.FindExactPathProcessIds(_runtimePath);
 
     /// <summary>Checks whether the helper process is started for dependency sequencing.</summary>
@@ -153,6 +157,10 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         else if (CountIndependentInstances(processIds) > 1)
         {
             RequestCloseThenStart(reportAsRestart: false);
+        }
+        else
+        {
+            _startupMacro.Start();
         }
     }
 
