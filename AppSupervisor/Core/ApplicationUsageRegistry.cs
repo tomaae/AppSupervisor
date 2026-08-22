@@ -117,6 +117,20 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         ) && usage.IsRequiredByAnotherOwner(requestingOwner);
     }
 
+    /// <summary>Checks whether any enabled profile is actively keeping the executable available.</summary>
+    /// <param name="executablePath">The helper executable identity.</param>
+    /// <returns><see langword="true"/> when an enabled profile must keep the helper running.</returns>
+    internal bool IsRequiredByAnyActiveProfile(string executablePath)
+    {
+        if (_disposed)
+            return true;
+
+        return _usages.TryGetValue(
+            NormalizePath(executablePath),
+            out ApplicationUsage? usage
+        ) && usage.IsActivelyRequiredByAnyOwner();
+    }
+
     /// <summary>
     /// Starts nonblocking close operations for opted-in helpers that are not needed by any profile.
     /// </summary>
@@ -346,6 +360,12 @@ internal sealed class ApplicationUsageRegistry : IDisposable
         private bool IsRequiredByAnyOwner()
         {
             return _references.Any(reference => reference.RequiresHelperToRemainRunning());
+        }
+
+        /// <summary>Checks active ownership without treating an inactive leave-running preference as test ownership.</summary>
+        public bool IsActivelyRequiredByAnyOwner()
+        {
+            return _references.Any(reference => reference.KeepsResourcesActive());
         }
 
         /// <summary>Converts the managed-application failure into a group-level cleanup failure.</summary>

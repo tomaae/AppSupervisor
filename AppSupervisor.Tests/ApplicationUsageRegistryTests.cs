@@ -35,10 +35,16 @@ public sealed class ApplicationUsageRegistryTests
 
         Assert.True(registry.IsRequiredByAnotherProfile(path, inactiveOwner));
         Assert.False(registry.IsRequiredByAnotherProfile(path, activeOwner));
+        Assert.True(registry.IsRequiredByAnyActiveProfile(path));
 
         inactiveNeedsResources = true;
 
         Assert.True(registry.IsRequiredByAnotherProfile(path, activeOwner));
+
+        activeNeedsResources = false;
+        inactiveNeedsResources = false;
+
+        Assert.False(registry.IsRequiredByAnyActiveProfile(path));
     }
 
     /// <summary>Confirms cleanup starts only while unused and is cancelled when any profile needs the helper again.</summary>

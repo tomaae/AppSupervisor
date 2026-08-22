@@ -12,6 +12,17 @@ namespace AppSupervisor.ConfigurationUI;
 public sealed partial class ConfigurationEditorForm
 {
     private readonly Action<SupervisorNotification>? _notificationPublisher;
+    private readonly IHelperTestController? _helperTestController;
+    private readonly System.Windows.Forms.Timer _helperTestAvailabilityTimer = new()
+    {
+        Interval = 500
+    };
+    private Button _testHelperButton = null!;
+    private bool _helperTestCanStart;
+    private bool _helperTestAvailabilityRefreshPending;
+    private bool _helperTestClosePending;
+    private bool _helperTestCloseReady;
+    private bool _helperTestingDisposed;
 
     /// <summary>Creates an editor connected to the running supervisor's production notification router.</summary>
     /// <param name="configPath">The active config.json path.</param>
@@ -34,7 +45,8 @@ public sealed partial class ConfigurationEditorForm
     internal ConfigurationEditorForm(
         string configPath,
         Action<SupervisorNotification> notificationPublisher,
-        Func<CancellationToken, Task<SteamVrSnapshot>> steamVrDeviceLoader)
+        Func<CancellationToken, Task<SteamVrSnapshot>> steamVrDeviceLoader,
+        IHelperTestController? helperTestController = null)
         : this(
             configPath,
             cancellationToken => Task.Run(
@@ -42,9 +54,304 @@ public sealed partial class ConfigurationEditorForm
                 cancellationToken
             ),
             notificationPublisher,
-            steamVrDeviceLoader
+            steamVrDeviceLoader,
+            helperTestController: helperTestController
         )
     {
+    }
+
+    /// <summary>Builds the production-lifecycle helper test action and its availability explanation.</summary>
+    /// <returns>A compact button and status panel.</returns>
+    private Control BuildHelperTestPanel()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = Padding.Empty
+        };
+        _testHelperButton = CreateButton("Test helper", TestHelperClicked);
+        _testHelperButton.Enabled = false;
+        panel.Controls.Add(_testHelperButton);
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(8, 7, 0, 0),
+            Text = "Uses the normal launch, startup macros, and close behavior."
+        });
+        return panel;
+    }
+
+    /// <summary>Connects test-state notifications and active-profile availability polling.</summary>
+    private void InitializeHelperTesting()
+    {
+        _helperTestAvailabilityTimer.Tick += HelperTestAvailabilityTimerTick;
+
+        if (_helperTestController is null)
+        {
+            UpdateHelperTestButton();
+            return;
+        }
+
+        _helperTestController.StateChanged += HelperTestControllerStateChanged;
+        _helperTestAvailabilityTimer.Start();
+        BeginRefreshHelperTestAvailability();
+    }
+
+    /// <summary>Starts or immediately stops the selected helper test.</summary>
+    private async void TestHelperClicked(object? sender, EventArgs e)
+    {
+        if (_helperTestController is null)
+            return;
+
+        try
+        {
+            if (_helperTestController.State == HelperTestState.Idle)
+            {
+                if (SelectedProfile is not SupervisorProfileConfig profile ||
+                    SelectedApplication is not ManagedApplicationConfig application)
+                {
+                    return;
+                }
+
+                ManagedApplicationConfig testConfiguration = ConfigJson.Clone(application);
+                ValidateHelperForTest(testConfiguration);
+                await _helperTestController.StartAsync(profile.ProfileId, testConfiguration);
+            }
+            else
+            {
+                await _helperTestController.StopAsync();
+            }
+        }
+        catch (OperationCanceledException) when (_helperTestClosePending || IsDisposed)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!IsDisposed && !_helperTestClosePending)
+            {
+                MessageBox.Show(
+                    this,
+                    exception.Message,
+                    "Helper test could not complete",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+            }
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                UpdateHelperTestButton();
+                BeginRefreshHelperTestAvailability();
+            }
+        }
+    }
+
+    /// <summary>Validates the selected helper without requiring the rest of its edited profile.</summary>
+    private static void ValidateHelperForTest(ManagedApplicationConfig application)
+    {
+        application.Enabled = true;
+        application.StartupOrder = 0;
+        application.DependencyResourceId = "";
+        var profile = new SupervisorProfileConfig
+        {
+            Name = "Helper test",
+            MonitorProcess = "AppSupervisor.HelperTest.Trigger.exe",
+            RestartTimeoutSeconds = 20,
+            Applications = [application]
+        };
+        ConfigValidator.Validate([profile]);
+    }
+
+    /// <summary>Coalesces the periodic live-profile availability check.</summary>
+    private async void BeginRefreshHelperTestAvailability()
+    {
+        if (_helperTestingDisposed || _helperTestAvailabilityRefreshPending ||
+            _helperTestController is null ||
+            _helperTestController.State != HelperTestState.Idle ||
+            SelectedProfile is not SupervisorProfileConfig profile)
+        {
+            UpdateHelperTestButton();
+            return;
+        }
+
+        string profileId = profile.ProfileId;
+        _helperTestAvailabilityRefreshPending = true;
+
+        try
+        {
+            bool canStart = await _helperTestController.CanStartAsync(profileId);
+
+            if (!IsDisposed &&
+                SelectedProfile is SupervisorProfileConfig selected &&
+                string.Equals(selected.ProfileId, profileId, StringComparison.Ordinal))
+            {
+                _helperTestCanStart = canStart;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _helperTestCanStart = false;
+        }
+        catch (ObjectDisposedException)
+        {
+            _helperTestCanStart = false;
+        }
+        finally
+        {
+            _helperTestAvailabilityRefreshPending = false;
+
+            if (!IsDisposed)
+                UpdateHelperTestButton();
+        }
+    }
+
+    /// <summary>Refreshes active-profile availability twice per second.</summary>
+    private void HelperTestAvailabilityTimerTick(object? sender, EventArgs e)
+    {
+        BeginRefreshHelperTestAvailability();
+    }
+
+    /// <summary>Marshals controller state changes back to the editor thread.</summary>
+    private void HelperTestControllerStateChanged(object? sender, EventArgs e)
+    {
+        if (IsDisposed || Disposing)
+            return;
+
+        if (InvokeRequired)
+        {
+            try
+            {
+                BeginInvoke(new Action(UpdateHelperTestStateFromController));
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            return;
+        }
+
+        UpdateHelperTestStateFromController();
+    }
+
+    /// <summary>Applies one controller phase and refreshes availability after returning to idle.</summary>
+    private void UpdateHelperTestStateFromController()
+    {
+        UpdateHelperTestButton();
+
+        if (_helperTestController?.State == HelperTestState.Idle)
+            BeginRefreshHelperTestAvailability();
+    }
+
+    /// <summary>Maps the test phase and selected profile availability to button text and enabled state.</summary>
+    private void UpdateHelperTestButton()
+    {
+        if (_testHelperButton is null || _testHelperButton.IsDisposed)
+            return;
+
+        HelperTestState state = _helperTestController?.State ?? HelperTestState.Idle;
+        _testHelperButton.Text = state switch
+        {
+            HelperTestState.Starting => "Starting test...",
+            HelperTestState.Running => "Stop test",
+            HelperTestState.Stopping => "Stopping test...",
+            _ => "Test helper"
+        };
+        _testHelperButton.Enabled = state switch
+        {
+            HelperTestState.Running => true,
+            HelperTestState.Idle => _helperTestController is not null &&
+                SelectedApplication is not null &&
+                SelectedProfile is not null &&
+                _helperTestCanStart,
+            _ => false
+        };
+    }
+
+    /// <summary>Defers an accepted editor close until the test helper has finished closing.</summary>
+    private bool DelayCloseForHelperTest(FormClosingEventArgs e)
+    {
+        if (_helperTestCloseReady || _helperTestController is null ||
+            _helperTestController.State == HelperTestState.Idle)
+        {
+            return false;
+        }
+
+        e.Cancel = true;
+
+        if (!_helperTestClosePending)
+        {
+            _helperTestClosePending = true;
+            UpdateHelperTestButton();
+            _ = StopHelperTestBeforeCloseAsync();
+        }
+
+        return true;
+    }
+
+    /// <summary>Waits for normal helper deactivation, then retries the already-approved form close.</summary>
+    private async Task StopHelperTestBeforeCloseAsync()
+    {
+        try
+        {
+            if (_helperTestController is not null)
+                await _helperTestController.StopAsync();
+
+            _helperTestCloseReady = true;
+            Close();
+        }
+        catch (Exception exception)
+        {
+            _helperTestClosePending = false;
+            UpdateHelperTestButton();
+            MessageBox.Show(
+                this,
+                $"The test helper is still running, so the editor will remain open.\n\n{exception.Message}",
+                "Test helper could not close",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning
+            );
+        }
+    }
+
+    /// <summary>Stops a test before complete supervisor shutdown without showing an editor-owned prompt.</summary>
+    internal async Task StopHelperTestForSupervisorExitAsync()
+    {
+        _closeWithoutUnsavedChangesPrompt = true;
+
+        if (_helperTestController is null ||
+            _helperTestController.State == HelperTestState.Idle)
+        {
+            return;
+        }
+
+        try
+        {
+            await _helperTestController.StopAsync();
+        }
+        finally
+        {
+            _helperTestCloseReady = true;
+        }
+    }
+
+    /// <summary>Stops polling and removes the controller subscription during form disposal.</summary>
+    private void DisposeHelperTesting()
+    {
+        if (_helperTestingDisposed)
+            return;
+
+        _helperTestingDisposed = true;
+        _helperTestAvailabilityTimer.Stop();
+        _helperTestAvailabilityTimer.Tick -= HelperTestAvailabilityTimerTick;
+        _helperTestAvailabilityTimer.Dispose();
+
+        if (_helperTestController is not null)
+            _helperTestController.StateChanged -= HelperTestControllerStateChanged;
     }
 
     /// <summary>Builds a notification target selector with a production-path test button.</summary>

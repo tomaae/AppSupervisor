@@ -159,7 +159,8 @@ public sealed partial class ConfigurationEditorForm : Form
             obsCatalogLoader = null,
         Func<CancellationToken, Task<IReadOnlyList<AudioEndpointSnapshot>>>?
             audioEndpointLoader = null,
-        Action<InstalledServiceInfo>? automaticServiceWarning = null)
+        Action<InstalledServiceInfo>? automaticServiceWarning = null,
+        IHelperTestController? helperTestController = null)
 
     {
 
@@ -177,6 +178,7 @@ public sealed partial class ConfigurationEditorForm : Form
             cancellationToken
         ));
         _automaticServiceWarning = automaticServiceWarning ?? ShowAutomaticServiceWarning;
+        _helperTestController = helperTestController;
         (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
         _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
@@ -195,6 +197,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _tabs.TabPages.Add(BuildResourcesPage());
         _tabs.TabPages.Add(BuildIntegrationsPage());
         WireEvents();
+        InitializeHelperTesting();
 
         BeginRefreshInstalledServices(showErrors: false);
 
@@ -367,6 +370,7 @@ public sealed partial class ConfigurationEditorForm : Form
             ForeColor = SystemColors.GrayText,
             Text = "Force-kill is intentionally disabled by default. Without it, AppSupervisor reports an error when graceful close attempts fail and leaves the process running."
         });
+        AddEditorRow(layout, "Test", BuildHelperTestPanel());
         AddEditorRow(layout, "Notifications", BuildNotificationTestPanel(
             _applicationNotifications,
             TestApplicationNotificationClicked
@@ -526,6 +530,8 @@ public sealed partial class ConfigurationEditorForm : Form
 
         LoadSelectedResource();
         UpdateStatus();
+        _helperTestCanStart = false;
+        BeginRefreshHelperTestAvailability();
     }
 
     /// <summary>Loads the selected application's lifecycle, target, and health-check controls.</summary>
@@ -563,6 +569,8 @@ public sealed partial class ConfigurationEditorForm : Form
         {
             _loadingControls = false;
         }
+
+        BeginRefreshHelperTestAvailability();
     }
 
     /// <summary>Loads the selected service's lifecycle and notification controls.</summary>
@@ -681,6 +689,7 @@ public sealed partial class ConfigurationEditorForm : Form
             }
             service.ServiceName = installedService.ServiceName;
         }
+
         service.Restart = _serviceRestart.Checked;
         service.Notifications.Target = [.. _serviceNotifications.SelectedTargets];
         _resourceList.Refresh();
@@ -1145,6 +1154,9 @@ public sealed partial class ConfigurationEditorForm : Form
 
             _closeWithoutUnsavedChangesPrompt = true;
         }
+
+        if (DelayCloseForHelperTest(e))
+            return;
 
         base.OnFormClosing(e);
     }

@@ -1297,6 +1297,22 @@ public partial class TrayApplicationContext : ApplicationContext
         _exiting = true;
         Application.Idle -= ApplicationBecameIdle;
         _configurationLoadGeneration++;
+
+        if (_configurationEditor is { IsDisposed: false } configurationEditor)
+        {
+            try
+            {
+                await configurationEditor.StopHelperTestForSupervisorExitAsync();
+            }
+            catch (Exception exception)
+            {
+                SupervisorLog.WriteError(
+                    "The test helper could not be closed before AppSupervisor exited.",
+                    exception
+                );
+            }
+        }
+
         CloseAllWindows();
         SaveVerifiedConfigurationBackup();
         Application.ApplicationExit -= ApplicationExiting;

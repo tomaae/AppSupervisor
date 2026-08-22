@@ -60,6 +60,7 @@ public sealed class ConfigurationEditorFeatureSmokeTests
                     Assert.Contains("Test check", buttonTexts);
                     Assert.Contains("Test action", buttonTexts);
                     Assert.Contains("Test macro", buttonTexts);
+                    Assert.Contains("Test helper", buttonTexts);
                     Assert.Contains("Startup macros", visibleTexts);
                     Assert.DoesNotContain(
                         visibleTexts,

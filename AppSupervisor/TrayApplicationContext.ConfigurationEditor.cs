@@ -1,5 +1,6 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
+using AppSupervisor.Core;
 using Microsoft.Win32;
 
 namespace AppSupervisor;
@@ -32,10 +33,16 @@ public partial class TrayApplicationContext
 
         try
         {
+            await using var helperTestController = new ManagedApplicationTestController(
+                ExecuteSupervisionAsync,
+                IsProfileBusyForHelperTest,
+                path => _applicationUsageRegistry.IsRequiredByAnyActiveProfile(path)
+            );
             using var editor = new ConfigurationEditorForm(
                 _configPath,
                 _notificationService.Publish,
-                _steamVrMonitor.DiscoverAsync
+                _steamVrMonitor.DiscoverAsync,
+                helperTestController
             );
             _configurationEditor = editor;
 
@@ -47,6 +54,31 @@ public partial class TrayApplicationContext
             _configurationEditor = null;
             _configurationEditorOpen = false;
         }
+    }
+
+    /// <summary>Checks the accepted runtime profile state corresponding to one editor profile identifier.</summary>
+    private bool IsProfileBusyForHelperTest(string profileId)
+    {
+        int runtimeIndex = 0;
+
+        foreach (SupervisorProfileConfig configuration in
+            _configuration.Profiles.Where(profile => profile.Enabled))
+        {
+            if (runtimeIndex >= _profiles.Count)
+                return true;
+
+            SupervisorProfile runtimeProfile = _profiles[runtimeIndex++];
+
+            if (string.Equals(
+                configuration.ProfileId,
+                profileId,
+                StringComparison.Ordinal))
+            {
+                return runtimeProfile.KeepsResourcesActive();
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Saves the last successfully loaded configuration to config.json.old during normal application shutdown.</summary>
