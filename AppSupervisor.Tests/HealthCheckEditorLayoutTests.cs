@@ -7,6 +7,66 @@ namespace AppSupervisor.Tests;
 [Collection(WinFormsTestCollection.Name)]
 public sealed class HealthCheckEditorLayoutTests
 {
+    /// <summary>Confirms the VRCOSC picker follows live VRChat process availability.</summary>
+    /// <param name="vrChatRunning">Whether the injected process observation reports VRChat.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Constructor_ParameterPicker_EnabledOnlyWhileVrChatRuns(bool vrChatRunning)
+    {
+        RunInSta(() =>
+        {
+            using var form = new HealthCheckEditorDialog(
+                new HealthCheckConfig
+                {
+                    Name = "OSCQuery check",
+                    Type = HealthCheckType.Vrcosc,
+                    Notifications = new NotificationConfig { Target = [] }
+                },
+                () => vrChatRunning,
+                _ => Task.FromResult<IReadOnlyList<string>>([])
+            );
+            Button picker = Assert.Single(
+                EnumerateControls(form).OfType<Button>(),
+                button => button.Text == "Pick..."
+            );
+
+            Assert.Equal(vrChatRunning, picker.Enabled);
+        });
+    }
+
+    /// <summary>Confirms configured available parameters are visibly checked in the picker.</summary>
+    [Fact]
+    public void Constructor_ParameterPicker_MarksConfiguredParameters()
+    {
+        RunInSta(() =>
+        {
+            using var picker = new VrcOscParameterPickerDialog(
+                ["EyeLeft", "JawOpen"],
+                ["JawOpen", "UnavailableOnAvatar"]
+            );
+            CheckedListBox list = Assert.Single(
+                EnumerateControls(picker).OfType<CheckedListBox>()
+            );
+
+            Assert.Equal(2, list.Items.Count);
+            Assert.Equal(["JawOpen"], list.CheckedItems.Cast<string>());
+        });
+    }
+
+    /// <summary>Confirms applying current-avatar choices cannot erase configured unavailable names.</summary>
+    [Fact]
+    public void MergeParameterSelections_UnavailableConfiguredName_PreservesIt()
+    {
+        IReadOnlyList<string> merged = HealthCheckEditorDialog.MergeParameterSelections(
+            ["JawOpen", "UnavailableOnAvatar"],
+            ["EyeLeft", "JawOpen"],
+            ["EyeLeft"]
+        );
+
+        Assert.Equal(["UnavailableOnAvatar", "EyeLeft"], merged);
+    }
+
     /// <summary>Confirms VRCOSC guidance describes root structure and strict-majority freshness accurately.</summary>
     [Fact]
     public void Constructor_VrcOscGuidance_UsesCurrentBehavior()
@@ -172,4 +232,25 @@ public sealed class HealthCheckEditorLayoutTests
 
     private static int OuterLeft(Control control) =>
         control.Parent!.PointToScreen(control.Location).X;
+
+    /// <summary>Runs one WinForms assertion on a bounded STA thread.</summary>
+    private static void RunInSta(Action assertion)
+    {
+        Exception? threadException = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                assertion();
+            }
+            catch (Exception exception)
+            {
+                threadException = exception;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WinForms assertion timed out.");
+        Assert.Null(threadException);
+    }
 }

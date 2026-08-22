@@ -1,4 +1,6 @@
 using AppSupervisor.Configuration;
+using AppSupervisor.Core;
+using AppSupervisor.Health;
 
 namespace AppSupervisor.ConfigurationUI;
 
@@ -38,6 +40,20 @@ public sealed partial class HealthCheckEditorDialog : Form
         AcceptsReturn = true,
         Height = 150
     };
+    private readonly Button _pickParametersButton = new()
+    {
+        AutoSize = true,
+        Margin = new Padding(8, 0, 0, 0),
+        Text = "Pick..."
+    };
+    private readonly System.Windows.Forms.Timer _vrcOscAvailabilityTimer = new()
+    {
+        Interval = 1000
+    };
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly Func<bool> _isVrChatRunning;
+    private readonly Func<CancellationToken, Task<IReadOnlyList<string>>> _parameterProvider;
+    private bool _parameterDiscoveryPending;
     private readonly CheckBox _staleEnabledCheckBox = new()
     {
         Text = "Fail when a majority remain unchanged for",
@@ -51,7 +67,25 @@ public sealed partial class HealthCheckEditorDialog : Form
     /// <summary>Creates a detached editor for an existing or newly created health check.</summary>
     /// <param name="configuration">The health check used to initialize the dialog.</param>
     public HealthCheckEditorDialog(HealthCheckConfig configuration)
+        : this(
+            configuration,
+            () => ProcessPathSnapshot.IsProcessNameRunning("VRChat.exe"),
+            DiscoverVrcOscParametersAsync
+        )
     {
+    }
+
+    /// <summary>Creates an editor with injectable VRChat observation sources for deterministic verification.</summary>
+    internal HealthCheckEditorDialog(
+        HealthCheckConfig configuration,
+        Func<bool> isVrChatRunning,
+        Func<CancellationToken, Task<IReadOnlyList<string>>> parameterProvider)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(isVrChatRunning);
+        ArgumentNullException.ThrowIfNull(parameterProvider);
+        _isVrChatRunning = isVrChatRunning;
+        _parameterProvider = parameterProvider;
         Text = "Health check";
         StartPosition = FormStartPosition.CenterParent;
         MinimumSize = new Size(680, 720);
@@ -114,7 +148,10 @@ public sealed partial class HealthCheckEditorDialog : Form
         _protocolComboBox.DataSource = Enum.GetValues<ListenerProtocol>();
         _typeComboBox.SelectedValueChanged += TypeChanged;
         _staleEnabledCheckBox.CheckedChanged += StaleEnabledChanged;
+        _pickParametersButton.Click += PickParametersClicked;
+        _vrcOscAvailabilityTimer.Tick += VrcOscAvailabilityTimerTick;
         LoadConfiguration(configuration);
+        _vrcOscAvailabilityTimer.Start();
     }
 
     /// <summary>Gets the validated detached health check after the dialog is accepted.</summary>
@@ -195,12 +232,24 @@ public sealed partial class HealthCheckEditorDialog : Form
             MaximumSize = new Size(610, 0),
             Text = "Automatic OSCQuery requests wait for the three-minute VRChat startup period. Discovery then finds VRChat's HTTP and OSC endpoints; no address, port, or protocol is configured."
         });
-        AddRow(layout, "Parameter leaf names", _parametersTextBox);
+        var parameterPanel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2,
+            Margin = Padding.Empty
+        };
+        parameterPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        parameterPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _parametersTextBox.Margin = Padding.Empty;
+        parameterPanel.Controls.Add(_parametersTextBox, 0, 0);
+        parameterPanel.Controls.Add(_pickParametersButton, 1, 0);
+        AddRow(layout, "Parameter leaf names", parameterPanel);
         AddSpanningRow(layout, new Label
         {
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
-            Text = "One name per line. Leave empty to check only the OSCQuery service and root address structure."
+            Text = "One name per line. Pick is available while VRChat is running. Leave empty to check only the OSCQuery service and root address structure."
         });
 
         var stalePanel = new FlowLayoutPanel
@@ -293,6 +342,7 @@ public sealed partial class HealthCheckEditorDialog : Form
         bool listener = _typeComboBox.SelectedItem is HealthCheckType.Listener;
         _listenerGroup.Visible = listener;
         _vrcoscGroup.Visible = !listener;
+        UpdateParameterPickerAvailability();
     }
 
     /// <summary>Enables stale duration only while vrcosc freshness detection is selected.</summary>
@@ -310,6 +360,136 @@ public sealed partial class HealthCheckEditorDialog : Form
 
         if (picker.ShowDialog(this) == DialogResult.OK)
             _activeWhenProcessTextBox.Text = picker.SelectedProcessName ?? "";
+    }
+
+    /// <summary>Refreshes whether live VRChat parameter discovery can be requested.</summary>
+    private void VrcOscAvailabilityTimerTick(object? sender, EventArgs e) =>
+        UpdateParameterPickerAvailability();
+
+    /// <summary>Enables the picker only for VRCOSC while a VRChat process is running.</summary>
+    private void UpdateParameterPickerAvailability()
+    {
+        bool isVrcOsc = _typeComboBox.SelectedItem is HealthCheckType.Vrcosc;
+        bool isVrChatRunning = false;
+
+        if (isVrcOsc && !_parameterDiscoveryPending)
+        {
+            try
+            {
+                isVrChatRunning = _isVrChatRunning();
+            }
+            catch
+            {
+                isVrChatRunning = false;
+            }
+        }
+
+        _pickParametersButton.Enabled = isVrcOsc && !_parameterDiscoveryPending &&
+            isVrChatRunning;
+    }
+
+    /// <summary>Discovers the current avatar's parameters and opens the checked multi-select picker.</summary>
+    private async void PickParametersClicked(object? sender, EventArgs e)
+    {
+        _parameterDiscoveryPending = true;
+        _pickParametersButton.Enabled = false;
+        _pickParametersButton.Text = "Loading...";
+
+        try
+        {
+            string[] configured = ReadParameterLines();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(
+                _lifetimeCancellation.Token
+            );
+            timeout.CancelAfter(TimeSpan.FromSeconds(Decimal.ToInt32(_timeoutSeconds.Value)));
+            IReadOnlyList<string> available = await _parameterProvider(
+                timeout.Token
+            );
+
+            if (available.Count == 0)
+            {
+                MessageBox.Show(
+                    this,
+                    "VRChat did not expose any OSC parameter leaves for the current avatar.",
+                    "No parameters found",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information
+                );
+                return;
+            }
+
+            using var picker = new VrcOscParameterPickerDialog(available, configured);
+
+            if (picker.ShowDialog(this) == DialogResult.OK)
+            {
+                _parametersTextBox.Lines = MergeParameterSelections(
+                    configured,
+                    available,
+                    picker.SelectedParameters
+                ).ToArray();
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+            MessageBox.Show(
+                this,
+                "VRChat parameter discovery timed out.",
+                "Could not discover VRChat parameters",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning
+            );
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                this,
+                exception.Message,
+                "Could not discover VRChat parameters",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning
+            );
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                _parameterDiscoveryPending = false;
+                _pickParametersButton.Text = "Pick...";
+                UpdateParameterPickerAvailability();
+            }
+        }
+    }
+
+    /// <summary>Preserves unavailable configured names and replaces selections that the avatar exposed.</summary>
+    internal static IReadOnlyList<string> MergeParameterSelections(
+        IReadOnlyCollection<string> configured,
+        IReadOnlyCollection<string> available,
+        IReadOnlyCollection<string> selected)
+    {
+        var availableSet = available.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return configured
+            .Where(parameter => !availableSet.Contains(parameter))
+            .Concat(selected)
+            .Where(parameter => !string.IsNullOrWhiteSpace(parameter))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>Reads normalized non-empty parameter names from the multiline editor.</summary>
+    private string[] ReadParameterLines() => _parametersTextBox.Lines
+        .Select(line => line.Trim())
+        .Where(line => line.Length > 0)
+        .ToArray();
+
+    /// <summary>Performs one explicit OSCQuery parameter discovery without the automatic uptime gate.</summary>
+    private static async Task<IReadOnlyList<string>> DiscoverVrcOscParametersAsync(
+        CancellationToken cancellationToken)
+    {
+        using var probe = new VrcOscQueryProbe([], null);
+        return await probe.DiscoverParameterLeafNamesAsync(cancellationToken);
     }
 
     /// <summary>Builds, validates, and returns the edited health check.</summary>
@@ -345,10 +525,7 @@ public sealed partial class HealthCheckEditorDialog : Form
     private HealthCheckConfig BuildConfiguration()
     {
         var type = (HealthCheckType)_typeComboBox.SelectedItem!;
-        string[] parameters = _parametersTextBox.Lines
-            .Select(line => line.Trim())
-            .Where(line => line.Length > 0)
-            .ToArray();
+        string[] parameters = ReadParameterLines();
 
         return new HealthCheckConfig
         {
@@ -504,5 +681,19 @@ public sealed partial class HealthCheckEditorDialog : Form
     private static decimal Clamp(int value, NumericUpDown numeric)
     {
         return Math.Clamp((decimal)value, numeric.Minimum, numeric.Maximum);
+    }
+
+    /// <summary>Stops VRChat polling and any active discovery before controls are released.</summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _vrcOscAvailabilityTimer.Stop();
+            _vrcOscAvailabilityTimer.Dispose();
+            _lifetimeCancellation.Cancel();
+            _lifetimeCancellation.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }

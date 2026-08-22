@@ -45,17 +45,8 @@ public sealed class VrcOscQueryProbe : IHealthProbe
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        OSCQueryService service = GetOrCreateDiscoveryService();
-
-        service.RefreshServices();
-        await Task.Delay(DiscoverySettleMilliseconds, cancellationToken)
+        OSCQueryServiceProfile[] profiles = await DiscoverProfilesAsync(cancellationToken)
             .ConfigureAwait(false);
-
-        OSCQueryServiceProfile[] profiles = service
-            .GetOSCQueryServices()
-            .Where(profile => profile.serviceType ==
-                OSCQueryServiceProfile.ServiceType.OSCQuery)
-            .ToArray();
 
         if (profiles.Length == 0)
         {
@@ -92,6 +83,54 @@ public sealed class VrcOscQueryProbe : IHealthProbe
         return HealthProbeResult.Failure(detail);
     }
 
+    /// <summary>Discovers every parameter leaf exposed by VRChat's current avatar.</summary>
+    /// <param name="cancellationToken">Cancels discovery settling and HTTP requests.</param>
+    /// <returns>Unique parameter leaf names sorted without case sensitivity.</returns>
+    internal async Task<IReadOnlyList<string>> DiscoverParameterLeafNamesAsync(
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        OSCQueryServiceProfile[] profiles = await DiscoverProfilesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (profiles.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "VRChat's OSCQuery service was not discovered."
+            );
+        }
+
+        var failures = new List<string>();
+
+        foreach (OSCQueryServiceProfile profile in profiles)
+        {
+            try
+            {
+                if (!await IsVrChatProfileAsync(profile, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    continue;
+                }
+
+                string json = await _httpClient.GetStringAsync(
+                    BuildUri(profile.address, profile.port, "/avatar/parameters"),
+                    cancellationToken
+                ).ConfigureAwait(false);
+                using JsonDocument document = JsonDocument.Parse(json);
+                return CollectParameterLeafNames(document.RootElement);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failures.Add($"{profile.name}: {ex.Message}");
+            }
+        }
+
+        string detail = failures.Count == 0
+            ? "No discovered OSCQuery service identified itself as VRChat."
+            : $"VRChat OSCQuery could not be queried: {string.Join("; ", failures)}";
+        throw new InvalidOperationException(detail);
+    }
+
     /// <summary>Clears parameter history so inactive or unreachable time cannot count toward staleness.</summary>
     public void Reset()
     {
@@ -120,11 +159,41 @@ public sealed class VrcOscQueryProbe : IHealthProbe
             .Build();
     }
 
+    /// <summary>Refreshes mDNS discovery and returns the currently visible OSCQuery HTTP services.</summary>
+    private async Task<OSCQueryServiceProfile[]> DiscoverProfilesAsync(
+        CancellationToken cancellationToken)
+    {
+        OSCQueryService service = GetOrCreateDiscoveryService();
+        service.RefreshServices();
+        await Task.Delay(DiscoverySettleMilliseconds, cancellationToken)
+            .ConfigureAwait(false);
+
+        return service
+            .GetOSCQueryServices()
+            .Where(profile => profile.serviceType ==
+                OSCQueryServiceProfile.ServiceType.OSCQuery)
+            .ToArray();
+    }
+
     /// <summary>Identifies one discovered profile through HOST_INFO and evaluates its root or parameter structure.</summary>
     /// <param name="profile">A discovered OSCQuery HTTP service.</param>
     /// <param name="cancellationToken">Cancels HTTP requests.</param>
     /// <returns>A result for VRChat, or <see langword="null"/> when the profile belongs to another application.</returns>
     private async Task<HealthProbeResult?> TryQueryProfileAsync(
+        OSCQueryServiceProfile profile,
+        CancellationToken cancellationToken)
+    {
+        if (!await IsVrChatProfileAsync(profile, cancellationToken).ConfigureAwait(false))
+            return null;
+
+        if (_parameters.Count == 0)
+            return await CheckRootStructureAsync(profile, cancellationToken).ConfigureAwait(false);
+
+        return await CheckParametersAsync(profile, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Identifies whether one OSCQuery profile belongs to VRChat.</summary>
+    private async Task<bool> IsVrChatProfileAsync(
         OSCQueryServiceProfile profile,
         CancellationToken cancellationToken)
     {
@@ -136,16 +205,8 @@ public sealed class VrcOscQueryProbe : IHealthProbe
         using JsonDocument hostInfo = JsonDocument.Parse(hostInfoJson);
 
         string hostName = ReadStringProperty(hostInfo.RootElement, "NAME") ?? "";
-        bool isVrChat = profile.name.Contains("VRChat", StringComparison.OrdinalIgnoreCase) ||
+        return profile.name.Contains("VRChat", StringComparison.OrdinalIgnoreCase) ||
             hostName.Contains("VRChat", StringComparison.OrdinalIgnoreCase);
-
-        if (!isVrChat)
-            return null;
-
-        if (_parameters.Count == 0)
-            return await CheckRootStructureAsync(profile, cancellationToken).ConfigureAwait(false);
-
-        return await CheckParametersAsync(profile, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Validates that VRChat serves a syntactically valid OSCQuery root node.</summary>
@@ -254,6 +315,16 @@ public sealed class VrcOscQueryProbe : IHealthProbe
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(availableValueCount);
         return (availableValueCount / 2) + 1;
+    }
+
+    /// <summary>Collects the unique VALUE leaf names exposed by one OSCQuery branch.</summary>
+    internal static IReadOnlyList<string> CollectParameterLeafNames(JsonElement root)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        CollectParameterValues(root, "", values);
+        return values.Keys
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     /// <summary>Builds an HTTP URI for IPv4 or IPv6 OSCQuery profiles.</summary>
