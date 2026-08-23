@@ -198,6 +198,7 @@ public sealed partial class ConfigurationEditorForm
     {
         if (disposing)
         {
+            DisposeRuntimeStatus();
             DisposeHelperTesting();
             _addResourceMenu.Dispose();
             foreach (Icon icon in _resourceApplicationIcons.Values)

@@ -253,6 +253,21 @@ internal static class ProcessPathSnapshot
         }
     }
 
+    /// <summary>Gets the current path-scoped transition without inspecting the operating system.</summary>
+    internal static ProcessLifecycleTransitionKind? GetTransition(string executablePath)
+    {
+        string? fullPath = TryNormalizePath(executablePath);
+        if (fullPath is null)
+            return null;
+
+        lock (SyncRoot)
+        {
+            return Transitions.TryGetValue(fullPath, out LifecycleTransition? transition)
+                ? transition.Kind
+                : null;
+        }
+    }
+
     /// <summary>Gets whether any resource owns a transition for the executable.</summary>
     internal static bool HasTransition(string executablePath)
     {

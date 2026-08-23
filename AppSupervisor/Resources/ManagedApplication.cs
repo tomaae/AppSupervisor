@@ -34,6 +34,8 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private bool _disposed;
     private bool _lifecycleErrorActive;
     private bool _startupMacroErrorActive;
+    private bool _hasObservedRunningState;
+    private bool _lastObservedRunning;
 
     /// <summary>
     /// Creates a managed application with fresh restart, close, and minimization state.
@@ -112,6 +114,33 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// <summary>Gets whether the last startup macro run has an uncleared error.</summary>
     internal bool ApiMacroError => _startupMacroErrorActive;
 
+    /// <summary>Gets the latest lifecycle state without performing process discovery.</summary>
+    internal ConfigurationResourceRuntimeStatus CachedRuntimeStatus
+    {
+        get
+        {
+            ProcessLifecycleTransitionKind? transition =
+                ProcessPathSnapshot.GetTransition(_runtimePath);
+
+            if (transition == ProcessLifecycleTransitionKind.Close)
+                return ConfigurationResourceRuntimeStatus.Stopping;
+
+            if (transition == ProcessLifecycleTransitionKind.Start ||
+                _minimizeOperation is not null ||
+                _startupMacro.Pending)
+            {
+                return ConfigurationResourceRuntimeStatus.Starting;
+            }
+
+            if (!_hasObservedRunningState)
+                return ConfigurationResourceRuntimeStatus.Unknown;
+
+            return _lastObservedRunning
+                ? ConfigurationResourceRuntimeStatus.Running
+                : ConfigurationResourceRuntimeStatus.NotRunning;
+        }
+    }
+
     /// <summary>
     /// Rediscovers the application by full executable path.
     /// </summary>
@@ -122,9 +151,13 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     }
 
     /// <summary>Returns exact-path identifiers from the current central supervision snapshot.</summary>
-    internal IReadOnlySet<int> GetRunningProcessIds() =>
-        _processIdProvider?.Invoke() ??
-        ProcessPathSnapshot.FindExactPathProcessIds(_runtimePath);
+    internal IReadOnlySet<int> GetRunningProcessIds()
+    {
+        IReadOnlySet<int> processIds = _processIdProvider?.Invoke() ??
+            ProcessPathSnapshot.FindExactPathProcessIds(_runtimePath);
+        RememberRunningState(processIds.Count > 0);
+        return processIds;
+    }
 
     /// <summary>Checks whether the helper process is started for dependency sequencing.</summary>
     /// <returns><see langword="true"/> when at least one matching helper process is running.</returns>
@@ -1002,7 +1035,19 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             }
         }
 
+        if (matches.Count > 0)
+            RememberRunningState(running: true);
+        else if (authoritative)
+            RememberRunningState(running: false);
+
         return matches;
+    }
+
+    /// <summary>Stores a lifecycle observation for query-free configuration UI display.</summary>
+    private void RememberRunningState(bool running)
+    {
+        _hasObservedRunningState = true;
+        _lastObservedRunning = running;
     }
 
     /// <summary>Counts independent application roots while treating same-executable child processes as one instance.</summary>

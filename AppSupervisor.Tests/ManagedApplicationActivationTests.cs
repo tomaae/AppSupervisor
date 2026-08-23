@@ -1,4 +1,5 @@
 using AppSupervisor.Resources;
+using AppSupervisor.Core;
 
 namespace AppSupervisor.Tests;
 
@@ -29,6 +30,10 @@ public sealed class ManagedApplicationActivationTests
         application.Activate();
 
         Assert.True(application.ApiMacroPending);
+        Assert.Equal(
+            ConfigurationResourceRuntimeStatus.Starting,
+            application.CachedRuntimeStatus
+        );
     }
 
     [Fact]
@@ -44,5 +49,48 @@ public sealed class ManagedApplicationActivationTests
         application.Activate();
 
         Assert.False(application.ApiMacroPending);
+    }
+
+    [Fact]
+    public void CachedRuntimeStatus_ObservationsAndCloseTransition_NeverDiscoverOnRead()
+    {
+        bool running = false;
+        int observations = 0;
+        using var application = new ManagedApplication(
+            new ManagedApplicationConfig { Path = "helper.exe" },
+            TimeSpan.Zero,
+            shouldRemainRunning: null,
+            processIdProvider: () =>
+            {
+                observations++;
+                return running ? new HashSet<int> { 42 } : [];
+            }
+        );
+
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Unknown, application.CachedRuntimeStatus);
+        Assert.Equal(0, observations);
+
+        Assert.False(application.IsRunning());
+        Assert.Equal(
+            ConfigurationResourceRuntimeStatus.NotRunning,
+            application.CachedRuntimeStatus
+        );
+        Assert.Equal(1, observations);
+
+        running = true;
+        Assert.True(application.IsRunning());
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Running, application.CachedRuntimeStatus);
+        Assert.Equal(2, observations);
+
+        ProcessPathSnapshot.RequestTransition(
+            "helper.exe",
+            application,
+            ProcessLifecycleTransitionKind.Close
+        );
+        Assert.Equal(
+            ConfigurationResourceRuntimeStatus.Stopping,
+            application.CachedRuntimeStatus
+        );
+        Assert.Equal(2, observations);
     }
 }

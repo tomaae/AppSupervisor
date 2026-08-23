@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using AppSupervisor.Core;
 using AppSupervisor.Notifications;
 using AppSupervisor.HomeAssistant;
 using AppSupervisor.Obs;
@@ -165,7 +166,8 @@ public sealed partial class ConfigurationEditorForm : Form
         Func<CancellationToken, Task<IReadOnlyList<AudioEndpointSnapshot>>>?
             audioEndpointLoader = null,
         Action<InstalledServiceInfo>? automaticServiceWarning = null,
-        IHelperTestController? helperTestController = null)
+        IHelperTestController? helperTestController = null,
+        Func<ConfigurationRuntimeStatusSnapshot>? runtimeStatusReader = null)
 
     {
 
@@ -184,6 +186,7 @@ public sealed partial class ConfigurationEditorForm : Form
         ));
         _automaticServiceWarning = automaticServiceWarning ?? ShowAutomaticServiceWarning;
         _helperTestController = helperTestController;
+        _runtimeStatusReader = runtimeStatusReader;
         (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
         _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
@@ -203,6 +206,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _tabs.TabPages.Add(BuildIntegrationsPage());
         WireEvents();
         InitializeHelperTesting();
+        InitializeRuntimeStatus();
 
         BeginRefreshInstalledServices(showErrors: false);
 

@@ -1,10 +1,73 @@
 using System.Drawing.Drawing2D;
+using AppSupervisor.Core;
 
 namespace AppSupervisor.ConfigurationUI;
 
 /// <summary>Draws compact configuration-item pictograms that remain legible at 20 pixels.</summary>
 internal static class ConfigurationItemIconRenderer
 {
+    internal static readonly Color StartingColor = Color.FromArgb(22, 137, 216);
+    internal static readonly Color RunningColor = Color.FromArgb(21, 148, 71);
+    internal static readonly Color StoppingColor = Color.FromArgb(217, 119, 6);
+    internal static readonly Color InactiveColor = Color.FromArgb(117, 117, 117);
+    internal static readonly Color UnknownColor = Color.FromArgb(138, 138, 138);
+
+    /// <summary>Draws the approved second-icon runtime status pictogram.</summary>
+    internal static void DrawRuntimeStatus(
+        Graphics graphics,
+        Rectangle bounds,
+        ConfigurationResourceRuntimeStatus status,
+        Color selectionColor,
+        bool selected)
+    {
+        SmoothingMode previousSmoothingMode = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        try
+        {
+            Color color = selected
+                ? selectionColor
+                : status switch
+                {
+                    ConfigurationResourceRuntimeStatus.Starting => StartingColor,
+                    ConfigurationResourceRuntimeStatus.Running => RunningColor,
+                    ConfigurationResourceRuntimeStatus.Stopping => StoppingColor,
+                    ConfigurationResourceRuntimeStatus.NotRunning => InactiveColor,
+                    _ => UnknownColor
+                };
+            float strokeWidth = Math.Max(1.4f, bounds.Width / 10f);
+            using var pen = new Pen(color, strokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            switch (status)
+            {
+                case ConfigurationResourceRuntimeStatus.Starting:
+                    DrawStartingStatus(graphics, pen, bounds);
+                    break;
+                case ConfigurationResourceRuntimeStatus.Running:
+                    DrawRunningStatus(graphics, pen, bounds, selected);
+                    break;
+                case ConfigurationResourceRuntimeStatus.Stopping:
+                    DrawStoppingStatus(graphics, pen, bounds);
+                    break;
+                case ConfigurationResourceRuntimeStatus.NotRunning:
+                    DrawNotRunningStatus(graphics, pen, bounds, selected);
+                    break;
+                default:
+                    DrawUnknownStatus(graphics, pen, bounds);
+                    break;
+            }
+        }
+        finally
+        {
+            graphics.SmoothingMode = previousSmoothingMode;
+        }
+    }
+
     /// <summary>Draws a speaker for output endpoints and a microphone for input endpoints.</summary>
     internal static void DrawAudio(
         Graphics graphics,
@@ -133,6 +196,126 @@ internal static class ConfigurationItemIconRenderer
         PointF center = RelativePoint(bounds, 0.5f, 0.5f);
         graphics.DrawLine(pen, center, RelativePoint(bounds, 0.5f, 0.28f));
         graphics.DrawLine(pen, center, RelativePoint(bounds, 0.7f, 0.5f));
+    }
+
+    private static void DrawStartingStatus(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        RectangleF ring = RelativeRectangle(bounds, 0.14f, 0.14f, 0.72f, 0.72f);
+        graphics.DrawArc(pen, ring, 38, 292);
+        graphics.DrawLines(pen,
+        [
+            RelativePoint(bounds, 0.64f, 0.15f),
+            RelativePoint(bounds, 0.83f, 0.23f),
+            RelativePoint(bounds, 0.76f, 0.42f)
+        ]);
+        using var brush = new SolidBrush(pen.Color);
+        graphics.FillPolygon(brush,
+        [
+            RelativePoint(bounds, 0.41f, 0.34f),
+            RelativePoint(bounds, 0.68f, 0.5f),
+            RelativePoint(bounds, 0.41f, 0.66f)
+        ]);
+    }
+
+    private static void DrawRunningStatus(
+        Graphics graphics,
+        Pen pen,
+        Rectangle bounds,
+        bool selected)
+    {
+        RectangleF circle = RelativeRectangle(bounds, 0.1f, 0.1f, 0.8f, 0.8f);
+
+        if (selected)
+        {
+            graphics.DrawEllipse(pen, circle);
+            graphics.DrawLines(pen,
+            [
+                RelativePoint(bounds, 0.29f, 0.51f),
+                RelativePoint(bounds, 0.44f, 0.66f),
+                RelativePoint(bounds, 0.73f, 0.35f)
+            ]);
+            return;
+        }
+
+        using var brush = new SolidBrush(pen.Color);
+        graphics.FillEllipse(brush, circle);
+        using var checkPen = new Pen(Color.White, Math.Max(1.4f, bounds.Width / 10f))
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round
+        };
+        graphics.DrawLines(checkPen,
+        [
+            RelativePoint(bounds, 0.29f, 0.51f),
+            RelativePoint(bounds, 0.44f, 0.66f),
+            RelativePoint(bounds, 0.73f, 0.35f)
+        ]);
+    }
+
+    private static void DrawStoppingStatus(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        RectangleF ring = RelativeRectangle(bounds, 0.14f, 0.14f, 0.72f, 0.72f);
+        graphics.DrawArc(pen, ring, 210, 292);
+        graphics.DrawLines(pen,
+        [
+            RelativePoint(bounds, 0.36f, 0.15f),
+            RelativePoint(bounds, 0.17f, 0.23f),
+            RelativePoint(bounds, 0.24f, 0.42f)
+        ]);
+        using var brush = new SolidBrush(pen.Color);
+        graphics.FillRectangle(brush, RelativeRectangle(bounds, 0.37f, 0.37f, 0.26f, 0.26f));
+    }
+
+    private static void DrawNotRunningStatus(
+        Graphics graphics,
+        Pen pen,
+        Rectangle bounds,
+        bool selected)
+    {
+        RectangleF outer = RelativeRectangle(bounds, 0.15f, 0.15f, 0.7f, 0.7f);
+        using GraphicsPath path = CreateRoundedRectangle(outer, bounds.Width * 0.14f);
+        using var brush = new SolidBrush(pen.Color);
+        graphics.FillPath(brush, path);
+        Color cutoutColor = selected ? SystemColors.Highlight : SystemColors.Window;
+        using var cutoutBrush = new SolidBrush(cutoutColor);
+        graphics.FillRectangle(
+            cutoutBrush,
+            RelativeRectangle(bounds, 0.35f, 0.35f, 0.3f, 0.3f)
+        );
+    }
+
+    private static void DrawUnknownStatus(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        graphics.DrawLine(
+            pen,
+            RelativePoint(bounds, 0.22f, 0.22f),
+            RelativePoint(bounds, 0.78f, 0.78f)
+        );
+        graphics.DrawLine(
+            pen,
+            RelativePoint(bounds, 0.78f, 0.22f),
+            RelativePoint(bounds, 0.22f, 0.78f)
+        );
+    }
+
+    private static GraphicsPath CreateRoundedRectangle(RectangleF bounds, float radius)
+    {
+        float diameter = Math.Min(radius * 2f, Math.Min(bounds.Width, bounds.Height));
+        var path = new GraphicsPath();
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(
+            bounds.Right - diameter,
+            bounds.Bottom - diameter,
+            diameter,
+            diameter,
+            0,
+            90
+        );
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     private static void DrawSpeaker(Graphics graphics, Pen pen, Rectangle bounds)

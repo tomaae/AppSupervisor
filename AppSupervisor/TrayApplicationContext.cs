@@ -70,7 +70,9 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly record struct ActiveTrayErrorSnapshot(int Count, string? LatestSummary);
     private TrayStateSnapshot? _lastScheduledTrayState;
     private volatile bool _hasValidConfiguration;
-    private bool _configurationEditorOpen;
+    private volatile bool _configurationEditorOpen;
+    private ConfigurationRuntimeStatusSnapshot _configurationRuntimeStatusSnapshot =
+        ConfigurationRuntimeStatusSnapshot.Empty;
     private int _configurationLoadGeneration;
     private volatile bool _exiting;
     private volatile bool _systemSuspended;
@@ -229,6 +231,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         _monitorPreferSharedSnapshot = ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle;
         PublishSupervisorApiSnapshot();
+        PublishConfigurationRuntimeStatusSnapshot();
         ResetLifecycleTimer();
         UpdateTrayState();
     }
@@ -257,6 +260,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         ProcessPathSnapshot.BeginCycle(preferSharedSnapshot: false);
         _applicationUsageRegistry.Sweep();
+        PublishConfigurationRuntimeStatusSnapshot();
         ResetLifecycleTimer();
     }
 
@@ -386,6 +390,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         _applicationUsageRegistry.AdvanceLifecycle(nowUtc);
         _lifecyclePreferSharedSnapshot = ProcessPathSnapshot.ShouldPreferSharedSnapshotNextCycle;
+        PublishConfigurationRuntimeStatusSnapshot();
 
         bool workPending = HasLifecycleWork();
         if (workWasPending != workPending)
@@ -632,6 +637,7 @@ public partial class TrayApplicationContext : ApplicationContext
         ResetLifecycleTimer();
         Volatile.Write(ref _pauseVisualPending, 0);
         PublishSupervisorApiSnapshot();
+        PublishConfigurationRuntimeStatusSnapshot();
         UpdateTrayState();
     }
 
@@ -761,6 +767,7 @@ public partial class TrayApplicationContext : ApplicationContext
                     newProfile.InitializeResources();
 
                 PublishSupervisorApiSnapshot();
+                PublishConfigurationRuntimeStatusSnapshot();
                 try
                 {
                     _supervisorApi.ApplyConfiguration(newConfig.Integrations.SupervisorApi);

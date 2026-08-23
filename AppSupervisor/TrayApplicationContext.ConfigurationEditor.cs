@@ -33,6 +33,7 @@ public partial class TrayApplicationContext
 
         try
         {
+            await ExecuteSupervisionAsync(PublishConfigurationRuntimeStatusSnapshot);
             await using var helperTestController = new ManagedApplicationTestController(
                 ExecuteSupervisionAsync,
                 IsProfileBusyForHelperTest,
@@ -42,7 +43,8 @@ public partial class TrayApplicationContext
                 _configPath,
                 _notificationService.Publish,
                 _steamVrMonitor.DiscoverAsync,
-                helperTestController
+                helperTestController,
+                ReadConfigurationRuntimeStatusSnapshot
             );
             _configurationEditor = editor;
 
@@ -53,7 +55,27 @@ public partial class TrayApplicationContext
         {
             _configurationEditor = null;
             _configurationEditorOpen = false;
+            Volatile.Write(
+                ref _configurationRuntimeStatusSnapshot,
+                ConfigurationRuntimeStatusSnapshot.Empty
+            );
         }
+    }
+
+    /// <summary>Returns the last immutable UI snapshot without entering runtime resources.</summary>
+    private ConfigurationRuntimeStatusSnapshot ReadConfigurationRuntimeStatusSnapshot() =>
+        Volatile.Read(ref _configurationRuntimeStatusSnapshot);
+
+    /// <summary>Publishes cached runtime state only while the configuration window is active.</summary>
+    private void PublishConfigurationRuntimeStatusSnapshot()
+    {
+        if (!_configurationEditorOpen)
+            return;
+
+        Volatile.Write(
+            ref _configurationRuntimeStatusSnapshot,
+            ConfigurationRuntimeStatusSnapshotFactory.Create(_configuration, _profiles)
+        );
     }
 
     /// <summary>Checks the accepted runtime profile state corresponding to one editor profile identifier.</summary>

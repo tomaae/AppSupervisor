@@ -41,6 +41,12 @@ public sealed class ConfigurationEditorResourceListPresentationTests
             Assert.DoesNotContain('[', label);
             Assert.DoesNotContain(']', label);
         });
+
+        Assert.True(ConfigurationEditorForm.UsesRuntimeStatusIcon(resources[0]));
+        Assert.True(ConfigurationEditorForm.UsesRuntimeStatusIcon(resources[1]));
+        Assert.All(resources.Skip(2), resource =>
+            Assert.False(ConfigurationEditorForm.UsesRuntimeStatusIcon(resource))
+        );
     }
 
     /// <summary>Confirms every requested resource mark renders in its expected distinct color.</summary>

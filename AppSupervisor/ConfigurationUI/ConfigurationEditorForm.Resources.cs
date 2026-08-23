@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using AppSupervisor.Core;
 using AppSupervisor.Resources;
 using System.Drawing.Drawing2D;
 
@@ -350,12 +351,35 @@ public sealed partial class ConfigurationEditorForm
             return;
         }
 
+        Action<Graphics, Rectangle, Color, bool> drawResourceIcon =
+            (graphics, bounds, color, selected) =>
+                DrawResourceIcon(graphics, bounds, resource, color, selected);
+
+        if (UsesRuntimeStatusIcon(resource))
+        {
+            ConfigurationResourceRuntimeStatus status = GetRuntimeStatus(resource);
+            ConfigurationIconListRenderer.DrawItem(
+                e,
+                _resourceList.Font,
+                GetResourceListDisplayName(resource),
+                drawResourceIcon,
+                (graphics, bounds, color, selected) =>
+                    ConfigurationItemIconRenderer.DrawRuntimeStatus(
+                        graphics,
+                        bounds,
+                        status,
+                        color,
+                        selected
+                    )
+            );
+            return;
+        }
+
         ConfigurationIconListRenderer.DrawItem(
             e,
             _resourceList.Font,
             GetResourceListDisplayName(resource),
-            (graphics, bounds, color, selected) =>
-                DrawResourceIcon(graphics, bounds, resource, color, selected)
+            drawResourceIcon
         );
     }
 

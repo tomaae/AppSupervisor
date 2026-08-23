@@ -49,6 +49,37 @@ public sealed class ManagedServiceTests
         Assert.Equal(2, controller.StateQueries);
     }
 
+    [Fact]
+    public void CachedRuntimeStatus_UsesObservedStateWithoutAdditionalServiceQueries()
+    {
+        var controller = new FakeServiceController
+        {
+            State = ServiceRuntimeState.Stopped
+        };
+        using var service = CreateService(controller, TimeSpan.FromSeconds(20));
+        service.Initialize();
+
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Unknown, service.CachedRuntimeStatus);
+        Assert.Equal(0, controller.StateQueries);
+
+        service.Activate();
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Starting, service.CachedRuntimeStatus);
+        Assert.Equal(1, controller.StateQueries);
+
+        controller.State = ServiceRuntimeState.Running;
+        service.Supervise();
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Running, service.CachedRuntimeStatus);
+        Assert.Equal(2, controller.StateQueries);
+
+        service.Deactivate();
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Stopping, service.CachedRuntimeStatus);
+        Assert.Equal(3, controller.StateQueries);
+
+        service.SuperviseDeactivation();
+        Assert.Equal(ConfigurationResourceRuntimeStatus.NotRunning, service.CachedRuntimeStatus);
+        Assert.Equal(4, controller.StateQueries);
+    }
+
     /// <summary>
     /// Confirms an unexpectedly stopped service restarts only after its restart timeout has elapsed.
     /// </summary>

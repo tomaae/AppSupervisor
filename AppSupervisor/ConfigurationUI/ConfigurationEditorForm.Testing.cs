@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using AppSupervisor.Core;
 using AppSupervisor.Health;
 using AppSupervisor.Notifications;
 using AppSupervisor.ServiceControl;
@@ -46,7 +47,8 @@ public sealed partial class ConfigurationEditorForm
         string configPath,
         Action<SupervisorNotification> notificationPublisher,
         Func<CancellationToken, Task<SteamVrSnapshot>> steamVrDeviceLoader,
-        IHelperTestController? helperTestController = null)
+        IHelperTestController? helperTestController = null,
+        Func<ConfigurationRuntimeStatusSnapshot>? runtimeStatusReader = null)
         : this(
             configPath,
             cancellationToken => Task.Run(
@@ -55,7 +57,8 @@ public sealed partial class ConfigurationEditorForm
             ),
             notificationPublisher,
             steamVrDeviceLoader,
-            helperTestController: helperTestController
+            helperTestController: helperTestController,
+            runtimeStatusReader: runtimeStatusReader
         )
     {
     }

@@ -18,25 +18,40 @@ internal static class ConfigurationIconListRenderer
         DrawItemEventArgs e,
         Font font,
         string text,
-        Action<Graphics, Rectangle, Color, bool>? drawIcon)
+        Action<Graphics, Rectangle, Color, bool>? drawIcon) =>
+        DrawItem(e, font, text, drawIcon, drawSecondIcon: null);
+
+    /// <summary>Draws two independent icons followed by an ellipsized label.</summary>
+    internal static void DrawItem(
+        DrawItemEventArgs e,
+        Font font,
+        string text,
+        Action<Graphics, Rectangle, Color, bool>? drawIcon,
+        Action<Graphics, Rectangle, Color, bool>? drawSecondIcon)
     {
         e.DrawBackground();
 
         int textLeft = e.Bounds.Left + 3;
+        int preferredIconSize = Math.Max(
+            LogicalIconSize,
+            (int)Math.Round(LogicalIconSize * e.Graphics.DpiX / 96f)
+        );
+        int iconSize = Math.Max(0, Math.Min(preferredIconSize, e.Bounds.Height - 2));
+        int iconTop = e.Bounds.Top + (e.Bounds.Height - iconSize) / 2;
+        bool selected = (e.State & DrawItemState.Selected) != 0;
 
-        if (drawIcon is not null)
+        void DrawNextIcon(Action<Graphics, Rectangle, Color, bool>? iconDrawer)
         {
-            int preferredIconSize = Math.Max(
-                LogicalIconSize,
-                (int)Math.Round(LogicalIconSize * e.Graphics.DpiX / 96f)
-            );
-            int iconSize = Math.Max(0, Math.Min(preferredIconSize, e.Bounds.Height - 2));
-            int iconTop = e.Bounds.Top + (e.Bounds.Height - iconSize) / 2;
-            var iconBounds = new Rectangle(e.Bounds.Left + 3, iconTop, iconSize, iconSize);
-            bool selected = (e.State & DrawItemState.Selected) != 0;
-            drawIcon(e.Graphics, iconBounds, e.ForeColor, selected);
+            if (iconDrawer is null)
+                return;
+
+            var iconBounds = new Rectangle(textLeft, iconTop, iconSize, iconSize);
+            iconDrawer(e.Graphics, iconBounds, e.ForeColor, selected);
             textLeft = iconBounds.Right + 4;
         }
+
+        DrawNextIcon(drawIcon);
+        DrawNextIcon(drawSecondIcon);
 
         var textBounds = new Rectangle(
             textLeft,

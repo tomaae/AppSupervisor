@@ -86,6 +86,22 @@ public sealed class ManagedService :
     /// <summary>Gets whether Windows is still processing the requested service stop.</summary>
     public bool DeactivationPending => _stopPending;
 
+    /// <summary>Gets the latest observed or predicted service state without querying Windows.</summary>
+    internal ConfigurationResourceRuntimeStatus CachedRuntimeStatus =>
+        !_hasObservedState || _lastObservedState is null
+            ? ConfigurationResourceRuntimeStatus.Unknown
+            : _lastObservedState switch
+            {
+                ServiceRuntimeState.StartPending or ServiceRuntimeState.ContinuePending =>
+                    ConfigurationResourceRuntimeStatus.Starting,
+                ServiceRuntimeState.StopPending or ServiceRuntimeState.PausePending =>
+                    ConfigurationResourceRuntimeStatus.Stopping,
+                ServiceRuntimeState.Running => ConfigurationResourceRuntimeStatus.Running,
+                ServiceRuntimeState.Stopped or ServiceRuntimeState.Paused =>
+                    ConfigurationResourceRuntimeStatus.NotRunning,
+                _ => ConfigurationResourceRuntimeStatus.Unknown
+            };
+
     /// <summary>Gets whether Windows is still processing an accepted start, continue, or stop command.</summary>
     bool IManagedResourceLifecycleWork.LifecycleWorkPending =>
         _stopPending || _pendingOperationSince is not null;
