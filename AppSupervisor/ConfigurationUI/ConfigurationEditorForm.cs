@@ -460,6 +460,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _restartTimeout.ValueChanged += ProfileFieldChanged;
 
         _resourceDependency.SelectedIndexChanged += ResourceStartupFieldChanged;
+        _resourceDependency.DrawItem += ResourceDependencyDrawItem;
 
         _applicationEnabled.CheckedChanged += ApplicationFieldChanged;
         _applicationPath.TextChanged += ApplicationFieldChanged;

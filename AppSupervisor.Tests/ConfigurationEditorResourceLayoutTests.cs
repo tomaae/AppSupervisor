@@ -140,6 +140,17 @@ public sealed class ConfigurationEditorResourceLayoutTests
                         Math.Max(resourceList.Font.Height + 2, standardIconSize + 2),
                         resourceList.ItemHeight
                     );
+                    ComboBox dependency = Assert.Single(
+                        controls.OfType<ComboBox>(),
+                        comboBox => comboBox.DisplayMember == "DisplayName" &&
+                            comboBox.Items.Count == 1 &&
+                            comboBox.GetItemText(comboBox.Items[0]) == "(none)"
+                    );
+                    Assert.Equal(DrawMode.OwnerDrawFixed, dependency.DrawMode);
+                    Assert.Equal(
+                        ConfigurationIconListRenderer.GetItemHeight(dependency),
+                        dependency.ItemHeight
+                    );
                     CheckBox leaveRunning = Assert.Single(
                         controls.OfType<CheckBox>(),
                         checkBox => checkBox.Visible &&
@@ -222,6 +233,13 @@ public sealed class ConfigurationEditorResourceLayoutTests
                     resourceList.SelectedIndex = 1;
                     Application.DoEvents();
                     form.PerformLayout();
+
+                    Assert.Equal(2, dependency.Items.Count);
+                    string resourceChoice = Assert.IsType<string>(
+                        dependency.GetItemText(dependency.Items[1])
+                    );
+                    Assert.DoesNotContain('[', resourceChoice);
+                    Assert.DoesNotContain("Application", resourceChoice);
 
                     CheckBox serviceRestart = Assert.Single(
                         controls.OfType<CheckBox>(),

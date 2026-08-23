@@ -27,6 +27,7 @@ public sealed partial class ConfigurationEditorForm
     {
         Dock = DockStyle.Fill,
         DropDownStyle = ComboBoxStyle.DropDownList,
+        DrawMode = DrawMode.OwnerDrawFixed,
         DisplayMember = nameof(ResourceDependencyChoice.DisplayName)
     };
     private Button _moveResourceUpButton = null!;
@@ -52,8 +53,7 @@ public sealed partial class ConfigurationEditorForm
     private Control BuildResourceListPanel()
     {
         var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
-        int iconSize = Math.Max(20, 20 * DeviceDpi / 96);
-        _resourceList.ItemHeight = Math.Max(_resourceList.Font.Height + 2, iconSize + 2);
+        _resourceList.ItemHeight = ConfigurationIconListRenderer.GetItemHeight(_resourceList);
         var buttons = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -99,6 +99,8 @@ public sealed partial class ConfigurationEditorForm
     /// <returns>The complete right-side resource editor.</returns>
     private Control BuildResourceEditor()
     {
+        _resourceDependency.ItemHeight =
+            ConfigurationIconListRenderer.GetItemHeight(_resourceDependency);
         var startupPanel = new Panel
         {
             Dock = DockStyle.Top,
@@ -278,7 +280,7 @@ public sealed partial class ConfigurationEditorForm
     private void BindResourceDependency(ManagedResourceConfig? resource)
     {
         _resourceDependency.Items.Clear();
-        _resourceDependency.Items.Add(new ResourceDependencyChoice("", "(none)"));
+        _resourceDependency.Items.Add(new ResourceDependencyChoice("", "(none)", null));
 
         if (resource is not null && SelectedProfile is SupervisorProfileConfig profile)
         {
@@ -287,7 +289,8 @@ public sealed partial class ConfigurationEditorForm
             {
                 _resourceDependency.Items.Add(new ResourceDependencyChoice(
                     earlierResource.ResourceId,
-                    GetResourceDisplayName(earlierResource)
+                    GetResourceListDisplayName(earlierResource),
+                    earlierResource
                 ));
             }
         }
@@ -340,39 +343,45 @@ public sealed partial class ConfigurationEditorForm
     /// <param name="e">The row drawing surface and state.</param>
     private void ResourceListDrawItem(object? sender, DrawItemEventArgs e)
     {
-        e.DrawBackground();
-
         if (e.Index < 0 || e.Index >= _resourceList.Items.Count ||
             _resourceList.Items[e.Index] is not ManagedResourceConfig resource)
         {
+            e.DrawBackground();
             return;
         }
 
-        int preferredIconSize = Math.Max(20, 20 * DeviceDpi / 96);
-        int iconSize = Math.Min(preferredIconSize, e.Bounds.Height - 2);
-        int iconTop = e.Bounds.Top + (e.Bounds.Height - iconSize) / 2;
-        var iconBounds = new Rectangle(e.Bounds.Left + 3, iconTop, iconSize, iconSize);
-        bool selected = (e.State & DrawItemState.Selected) != 0;
-        DrawResourceIcon(e.Graphics, iconBounds, resource, e.ForeColor, selected);
-
-        var textBounds = new Rectangle(
-            iconBounds.Right + 4,
-            e.Bounds.Top,
-            Math.Max(0, e.Bounds.Right - iconBounds.Right - 7),
-            e.Bounds.Height
-        );
-        TextRenderer.DrawText(
-            e.Graphics,
-            GetResourceListDisplayName(resource),
+        ConfigurationIconListRenderer.DrawItem(
+            e,
             _resourceList.Font,
-            textBounds,
-            e.ForeColor,
-            TextFormatFlags.Left |
-                TextFormatFlags.VerticalCenter |
-                TextFormatFlags.EndEllipsis |
-                TextFormatFlags.NoPrefix
+            GetResourceListDisplayName(resource),
+            (graphics, bounds, color, selected) =>
+                DrawResourceIcon(graphics, bounds, resource, color, selected)
         );
-        e.DrawFocusRectangle();
+    }
+
+    /// <summary>Draws a dependency choice with the same icon and label as its resource-list row.</summary>
+    private void ResourceDependencyDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        ResourceDependencyChoice? choice = e.Index >= 0 && e.Index < _resourceDependency.Items.Count
+            ? _resourceDependency.Items[e.Index] as ResourceDependencyChoice
+            : _resourceDependency.SelectedItem as ResourceDependencyChoice;
+
+        if (choice is null)
+        {
+            e.DrawBackground();
+            return;
+        }
+
+        Action<Graphics, Rectangle, Color, bool>? drawIcon = choice.Resource is null
+            ? null
+            : (graphics, bounds, color, selected) =>
+                DrawResourceIcon(graphics, bounds, choice.Resource, color, selected);
+        ConfigurationIconListRenderer.DrawItem(
+            e,
+            _resourceDependency.Font,
+            choice.DisplayName,
+            drawIcon
+        );
     }
 
     /// <summary>Draws an executable icon when available, otherwise a compact type pictogram.</summary>
@@ -630,33 +639,6 @@ public sealed partial class ConfigurationEditorForm
         LoadSelectedResource();
         UpdateStatus();
     }
-    /// <summary>Returns one application or service display label for lists and dependency choices.</summary>
-    /// <param name="resource">The application or service configuration.</param>
-    /// <returns>A type-qualified name with disabled state when applicable.</returns>
-    private static string GetResourceDisplayName(ManagedResourceConfig resource)
-    {
-        string name = resource switch
-        {
-            ManagedApplicationConfig application =>
-                $"[Application] {SafeFileName(application.Path, "New application")}",
-            ManagedServiceConfig service =>
-                $"[Service] {DisplayName(service.ServiceName, "New service")}",
-            DelayResourceConfig delay =>
-                $"[Delay] {delay.DurationMilliseconds:N0} ms",
-            HomeAssistantResourceConfig homeAssistant =>
-                $"[Home Assistant] {DisplayName(
-                    homeAssistant.EntityName,
-                    DisplayName(homeAssistant.EntityId, "New action")
-                )}",
-            ObsResourceConfig obs => $"[OBS] {ObsResource.GetDisplayName(obs)}",
-            TwitchResourceConfig twitch => $"[Twitch] {TwitchResource.GetDisplayName(twitch)}",
-            AudioInterfaceResourceConfig audio =>
-                $"[Audio] {AudioInterfaceResource.GetDisplayName(audio)}",
-            _ => "[Resource]"
-        };
-        return name + (resource.Enabled ? "" : " (disabled)");
-    }
-
     /// <summary>Returns the concise label used beside a recognizable icon in the resource list.</summary>
     /// <param name="resource">The resource configuration to label.</param>
     /// <returns>A name without a redundant bracketed type prefix.</returns>
@@ -799,7 +781,10 @@ public sealed partial class ConfigurationEditorForm
     }
 
     /// <summary>Represents one dependency dropdown choice.</summary>
-    private sealed record ResourceDependencyChoice(string ResourceId, string DisplayName);
+    private sealed record ResourceDependencyChoice(
+        string ResourceId,
+        string DisplayName,
+        ManagedResourceConfig? Resource);
 
     /// <summary>Populates the form-owned resource menu once with every supported resource type.</summary>
     private void ConfigureAddResourceMenu()
