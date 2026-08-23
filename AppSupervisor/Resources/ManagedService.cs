@@ -478,8 +478,11 @@ public sealed class ManagedService :
     /// Reads service state while suppressing repeated identical access failures on every supervisor tick.
     /// </summary>
     /// <returns>The current state, or <see langword="null"/> when querying fails.</returns>
-    private ServiceRuntimeState? TryGetState()
+    internal ServiceRuntimeState? TryGetState()
     {
+        if (!_available || _disposed)
+            return null;
+
         try
         {
             ServiceRuntimeState state = _controller!.GetState();

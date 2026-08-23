@@ -191,7 +191,9 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             try
             {
-                bool stateChanged = profile.Update();
+                bool stateChanged = profile.Update(
+                    observeInactiveRuntimeStatus: _configurationEditorOpen
+                );
                 lock (_runtimeStateLock)
                     _reportedProfileTickErrors.Remove(profile);
 

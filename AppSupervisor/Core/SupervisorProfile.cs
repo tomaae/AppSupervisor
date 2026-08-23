@@ -1,3 +1,5 @@
+using AppSupervisor.Resources;
+
 namespace AppSupervisor.Core;
 
 /// <summary>
@@ -196,12 +198,49 @@ public sealed class SupervisorProfile : IDisposable
     /// Evaluates the trigger and performs one supervision or graceful-deactivation cycle for the profile's resources.
     /// </summary>
     /// <returns><see langword="true"/> when the trigger changed between active and inactive states.</returns>
-    public bool Update()
+    public bool Update() => Update(observeInactiveRuntimeStatus: false);
+
+    /// <summary>Runs the normal update with optional inactive-helper observation for the open editor.</summary>
+    /// <param name="observeInactiveRuntimeStatus">
+    /// Whether to reuse application and service state observations for configuration UI display
+    /// while this profile is inactive.
+    /// </param>
+    /// <returns><see langword="true"/> when the trigger changed between active and inactive states.</returns>
+    internal bool Update(bool observeInactiveRuntimeStatus)
     {
         if (_disposed)
             return false;
 
         bool isActive = _trigger.IsActive();
+
+        if (observeInactiveRuntimeStatus && !isActive)
+        {
+            foreach (IManagedResource resource in _resources)
+            {
+                try
+                {
+                    switch (resource)
+                    {
+                        case ManagedApplication application:
+                            _ = application.IsRunning();
+                            break;
+                        case HealthCheckedApplication healthCheckedApplication:
+                            _ = healthCheckedApplication.ApiApplication.IsRunning();
+                            break;
+                        case ManagedService service:
+                            _ = service.TryGetState();
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    OnResourceError(
+                        resource,
+                        $"Unexpected runtime-status observation failure: {ex.Message}"
+                    );
+                }
+            }
+        }
 
         if (!_initialized)
         {

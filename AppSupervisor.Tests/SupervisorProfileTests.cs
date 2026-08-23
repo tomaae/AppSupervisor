@@ -1,5 +1,7 @@
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
+using AppSupervisor.Resources;
+using AppSupervisor.ServiceControl;
 
 namespace AppSupervisor.Tests;
 
@@ -8,6 +10,61 @@ namespace AppSupervisor.Tests;
 /// </summary>
 public sealed class SupervisorProfileTests
 {
+    [Fact]
+    public void Update_InactiveProfile_ObservesHelpersOnlyWhileConfigurationIsOpen()
+    {
+        int observations = 0;
+        var application = new ManagedApplication(
+            new ManagedApplicationConfig { Path = "inactive-helper.exe" },
+            TimeSpan.Zero,
+            shouldRemainRunning: null,
+            processIdProvider: () =>
+            {
+                observations++;
+                return new HashSet<int>();
+            }
+        );
+        var serviceController = new RuntimeStatusServiceController
+        {
+            State = ServiceRuntimeState.Running
+        };
+        var service = new ManagedService(
+            new ManagedServiceConfig { ServiceName = "InactiveService" },
+            TimeSpan.Zero,
+            _ => serviceController
+        );
+        using var profile = new SupervisorProfile(
+            "Inactive",
+            "root.exe",
+            new FakeTrigger { Active = false },
+            [application, service],
+            TimeSpan.Zero
+        );
+        profile.InitializeResources();
+
+        Assert.False(profile.Update(observeInactiveRuntimeStatus: false));
+        Assert.Equal(0, observations);
+        Assert.Equal(0, serviceController.StateQueries);
+        Assert.Equal(
+            ConfigurationResourceRuntimeStatus.Unknown,
+            application.CachedRuntimeStatus
+        );
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Unknown, service.CachedRuntimeStatus);
+
+        Assert.False(profile.Update(observeInactiveRuntimeStatus: true));
+        Assert.Equal(1, observations);
+        Assert.Equal(1, serviceController.StateQueries);
+        Assert.Equal(
+            ConfigurationResourceRuntimeStatus.NotRunning,
+            application.CachedRuntimeStatus
+        );
+        Assert.Equal(ConfigurationResourceRuntimeStatus.Running, service.CachedRuntimeStatus);
+
+        Assert.False(profile.Update(observeInactiveRuntimeStatus: false));
+        Assert.Equal(1, observations);
+        Assert.Equal(1, serviceController.StateQueries);
+    }
+
     /// <summary>
     /// Confirms activation, restart reporting, immediate recovery cancellation, and graceful deactivation sequencing.
     /// </summary>
@@ -128,6 +185,39 @@ public sealed class SupervisorProfileTests
         /// </summary>
         /// <returns>The current value of <see cref="Active"/>.</returns>
         public bool IsActive() => Active;
+    }
+
+    private sealed class RuntimeStatusServiceController : IWindowsServiceController
+    {
+        public ServiceRuntimeState State { get; set; }
+
+        public int StateQueries { get; private set; }
+
+        public void EnsureManualStartAndRequiredAccess()
+        {
+        }
+
+        public ServiceRuntimeState GetState()
+        {
+            StateQueries++;
+            return State;
+        }
+
+        public void Start()
+        {
+        }
+
+        public void Stop()
+        {
+        }
+
+        public void Continue()
+        {
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     /// <summary>
