@@ -97,6 +97,41 @@ public sealed class TwitchAuthorizationServiceTests
     }
 
     [Fact]
+    public async Task GetAccess_RefreshRejectedAfterExternalRotation_ReusesPersistedReplacement()
+    {
+        var store = CreateExpiredStore();
+        using var httpClient = new HttpClient(new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/token", StringComparison.Ordinal))
+            {
+                store.Replace(new TwitchStoredAuthorization
+                {
+                    ClientId = TwitchApplication.ClientId,
+                    AccessToken = "externally-rotated-access",
+                    RefreshToken = "externally-rotated-refresh",
+                    UserId = "123",
+                    Login = "broadcaster",
+                    ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(4)
+                });
+                return Json(HttpStatusCode.BadRequest, "{\"message\":\"Invalid refresh token\"}");
+            }
+
+            return Json(HttpStatusCode.OK,
+                $"{{\"client_id\":\"{TwitchApplication.ClientId}\",\"login\":\"broadcaster\",\"user_id\":\"123\",\"scopes\":[\"moderator:manage:chat_settings\",\"user:write:chat\",\"channel:edit:commercial\"],\"expires_in\":14000}}");
+        }));
+        using var service = new TwitchAuthorizationService(
+            new TwitchIntegrationConfig(),
+            store,
+            httpClient
+        );
+
+        TwitchAccess access = await service.GetAccessAsync(CancellationToken.None);
+
+        Assert.Equal("externally-rotated-access", access.AccessToken);
+        Assert.Equal("externally-rotated-refresh", store.Authorization!.RefreshToken);
+    }
+
+    [Fact]
     public async Task GetStatus_MissingCredential_ReturnsDisconnected()
     {
         var store = new MemoryCredentialStore();
@@ -258,6 +293,11 @@ public sealed class TwitchAuthorizationServiceTests
                 Authorization = authorization;
                 SaveCount++;
             }
+        }
+        public void Replace(TwitchStoredAuthorization authorization)
+        {
+            lock (_sync)
+                Authorization = authorization;
         }
         public void Delete()
         {

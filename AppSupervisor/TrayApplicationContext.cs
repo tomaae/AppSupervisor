@@ -1022,6 +1022,10 @@ public partial class TrayApplicationContext : ApplicationContext
 
         await LoadConfigurationAsync(showNotification: false);
 
+        // Twitch public-client refresh tokens are rotating, one-time credentials. Keep
+        // validation active even when no Twitch profile action happens for a long time.
+        ResetTwitchAuthorizationTimer();
+
         if (!_exiting)
             CheckStartupRegistration();
     }
