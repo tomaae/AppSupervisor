@@ -215,6 +215,15 @@ public sealed partial class ConfigurationEditorForm : Form
         UpdateStatus();
     }
 
+    /// <summary>Selects the global integrations page for an external reconnect prompt.</summary>
+    internal void SelectIntegrationsTab()
+    {
+        TabPage integrations = _tabs.TabPages.Cast<TabPage>().Single(page =>
+            string.Equals(page.Text, "Integrations", StringComparison.Ordinal)
+        );
+        _tabs.SelectedTab = integrations;
+    }
+
     /// <summary>Builds the supervisor-profile selector and add, duplicate, and remove commands.</summary>
     /// <returns>The docked editor header.</returns>
     private Control BuildHeader()

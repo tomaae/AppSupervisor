@@ -220,11 +220,15 @@ internal sealed class TwitchAuthorizationService : IDisposable
         if (stored is null)
             throw new TwitchNotConnectedException();
         if (!string.Equals(stored.ClientId, clientId, StringComparison.Ordinal))
-            throw new InvalidOperationException(
+            throw new TwitchReauthorizationRequiredException(
                 "The stored Twitch authorization belongs to a different AppSupervisor application identity. Reconnect Twitch."
             );
         if (string.IsNullOrWhiteSpace(stored.RefreshToken))
-            throw new InvalidOperationException("The stored Twitch authorization cannot be refreshed. Reconnect Twitch.");
+        {
+            throw new TwitchReauthorizationRequiredException(
+                "The stored Twitch authorization cannot be refreshed. Reconnect Twitch."
+            );
+        }
         return stored;
     }
 
@@ -301,7 +305,7 @@ internal sealed class TwitchAuthorizationService : IDisposable
                 if (!IsSameCredentialVersion(replacement, stored))
                     return replacement;
 
-                throw new InvalidOperationException(
+                throw new TwitchReauthorizationRequiredException(
                     "The stored Twitch authorization can no longer be refreshed. Reconnect Twitch once."
                 );
             }
@@ -362,7 +366,7 @@ internal sealed class TwitchAuthorizationService : IDisposable
             .ToArray();
         if (missingScopes.Length > 0)
         {
-            throw new InvalidOperationException(
+            throw new TwitchReauthorizationRequiredException(
                 "The Twitch authorization is missing required permissions. Reconnect Twitch. Missing: " +
                 string.Join(", ", missingScopes)
             );

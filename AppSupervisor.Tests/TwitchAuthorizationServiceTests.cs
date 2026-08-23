@@ -89,7 +89,8 @@ public sealed class TwitchAuthorizationServiceTests
             httpClient
         );
 
-        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        TwitchReauthorizationRequiredException exception =
+            await Assert.ThrowsAsync<TwitchReauthorizationRequiredException>(
             () => service.GetStatusAsync(CancellationToken.None)
         );
 

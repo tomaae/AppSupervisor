@@ -39,6 +39,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private int _lifecycleWorkPending;
     private int _cleanupWorkPending;
     private int _twitchValidationPending;
+    private int _twitchReauthorizationPromptShown;
     private int _pauseVisualPending;
     private bool _monitorPreferSharedSnapshot;
     private bool _lifecyclePreferSharedSnapshot;
@@ -288,7 +289,8 @@ public partial class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _twitchAuthorizationTimer.Change(TimeSpan.Zero, TimeSpan.FromHours(1));
+        _twitchAuthorizationTimer.Change(TimeSpan.FromHours(1), TimeSpan.FromHours(1));
+        TwitchAuthorizationTimerTick(null);
     }
 
     private void TwitchAuthorizationTimerTick(object? state)
@@ -312,6 +314,11 @@ public partial class TrayApplicationContext : ApplicationContext
         catch (OperationCanceledException) when (_exiting)
         {
         }
+        catch (TwitchReauthorizationRequiredException ex)
+        {
+            SupervisorLog.WriteError("The stored Twitch authorization requires renewed consent.", ex);
+            ShowTwitchReauthorizationPrompt(ex.Message);
+        }
         catch (Exception ex)
         {
             SupervisorLog.WriteError("The stored Twitch authorization could not be validated.", ex);
@@ -320,6 +327,23 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             Volatile.Write(ref _twitchValidationPending, 0);
         }
+    }
+
+    /// <summary>Shows one actionable reconnect window per process before a Twitch action fails.</summary>
+    private void ShowTwitchReauthorizationPrompt(string detail)
+    {
+        if (Interlocked.Exchange(ref _twitchReauthorizationPromptShown, 1) != 0)
+            return;
+
+        RunOnUiThread(() =>
+        {
+            if (_exiting)
+                return;
+
+            using var dialog = new TwitchReauthorizationDialog(detail);
+            if (dialog.ShowDialog(_dialogOwner) == DialogResult.OK && !_exiting)
+                OpenTwitchIntegrationEditor();
+        });
     }
 
     /// <summary>Coalesces the demand-driven lifecycle timer into the serialized worker.</summary>
@@ -1020,11 +1044,12 @@ public partial class TrayApplicationContext : ApplicationContext
         if (_exiting)
             return;
 
-        await LoadConfigurationAsync(showNotification: false);
-
         // Twitch public-client refresh tokens are rotating, one-time credentials. Keep
-        // validation active even when no Twitch profile action happens for a long time.
+        // validation active before profiles can attempt a Twitch action and even when no
+        // Twitch profile action happens for a long time.
         ResetTwitchAuthorizationTimer();
+
+        await LoadConfigurationAsync(showNotification: false);
 
         if (!_exiting)
             CheckStartupRegistration();
