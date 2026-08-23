@@ -87,12 +87,11 @@ public sealed class StartupMacroExecutorTests
     }
 
     [Fact]
-    public void Advance_MoveAndResizeWithoutWindow_ShareTwoMinuteMaximumWait()
+    public void Advance_WindowUnavailableAfterArbitraryElapsedTime_RemainsPending()
     {
         List<StartupMacroActionConfig> actions =
         [
-            new() { Type = StartupMacroActionType.MoveWindow, X = 0, Y = 0 },
-            new() { Type = StartupMacroActionType.ResizeWindow, Width = 800, Height = 600 }
+            new() { Type = StartupMacroActionType.MoveWindow, X = 0, Y = 0 }
         ];
         var failures = new List<string>();
         int attempts = 0;
@@ -114,37 +113,57 @@ public sealed class StartupMacroExecutorTests
 
         executor.Start();
         executor.Advance(started);
-        executor.Advance(started.AddMinutes(2).AddTicks(-1));
+        executor.Advance(started.AddDays(1));
 
         Assert.True(executor.Pending);
+        Assert.Null(completed);
+        Assert.Equal(2, attempts);
         Assert.Empty(failures);
-
-        executor.Advance(started.AddMinutes(2));
-
-        Assert.False(executor.Pending);
-        Assert.False(completed);
-        Assert.Equal(4, attempts);
-        Assert.Collection(
-            failures,
-            failure =>
-            {
-                Assert.Contains("action 1 (MoveWindow)", failure);
-                Assert.Contains("within 2 minutes", failure);
-            },
-            failure =>
-            {
-                Assert.Contains("action 2 (ResizeWindow)", failure);
-                Assert.Contains("within 2 minutes", failure);
-            }
-        );
     }
 
     [Fact]
-    public void Advance_ResizeWindowAppearsBeforeTwoMinutes_CompletesSuccessfully()
+    public void Advance_GeometryAdjustment_WaitsForRepeatedStableObservations()
     {
         List<StartupMacroActionConfig> actions =
         [
             new() { Type = StartupMacroActionType.ResizeWindow, Width = 800, Height = 600 }
+        ];
+        var failures = new List<string>();
+        int attempts = 0;
+        bool? completed = null;
+        var executor = new StartupMacroExecutor(
+            actions,
+            () => new HashSet<int> { 42 },
+            failures.Add,
+            succeeded => completed = succeeded,
+            (_, _) => ++attempts == 1
+                ? StartupMacroWindowActions.ExecutionResult.Adjusted("resized")
+                : StartupMacroWindowActions.ExecutionResult.Success("stable")
+        );
+        DateTime started = new(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc);
+
+        executor.Start();
+        executor.Advance(started);
+        executor.Advance(started.AddHours(1));
+        executor.Advance(started.AddHours(1).AddSeconds(2));
+
+        Assert.True(executor.Pending);
+        Assert.Null(completed);
+
+        executor.Advance(started.AddHours(1).AddSeconds(3));
+
+        Assert.False(executor.Pending);
+        Assert.True(completed);
+        Assert.Equal(4, attempts);
+        Assert.Empty(failures);
+    }
+
+    [Fact]
+    public void Advance_OtherWindowAction_RetriesUntilWindowAppears()
+    {
+        List<StartupMacroActionConfig> actions =
+        [
+            new() { Type = StartupMacroActionType.Minimize }
         ];
         var failures = new List<string>();
         bool windowAvailable = false;
@@ -155,48 +174,23 @@ public sealed class StartupMacroExecutorTests
             failures.Add,
             succeeded => completed = succeeded,
             (_, _) => windowAvailable
-                ? StartupMacroWindowActions.ExecutionResult.Success("resized")
+                ? StartupMacroWindowActions.ExecutionResult.Success("minimized")
                 : StartupMacroWindowActions.ExecutionResult.Unavailable("not ready")
         );
         DateTime started = new(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc);
 
         executor.Start();
         executor.Advance(started);
-        executor.Advance(started.AddSeconds(119));
+        executor.Advance(started.AddDays(1));
+        Assert.True(executor.Pending);
+        Assert.Null(completed);
+        Assert.Empty(failures);
+
         windowAvailable = true;
-        executor.Advance(started.AddSeconds(119.5));
+        executor.Advance(started.AddDays(1).AddSeconds(1));
 
         Assert.False(executor.Pending);
         Assert.True(completed);
         Assert.Empty(failures);
-    }
-
-    [Fact]
-    public void Advance_OtherWindowAction_KeepsTenSecondWindowWait()
-    {
-        List<StartupMacroActionConfig> actions =
-        [
-            new() { Type = StartupMacroActionType.Minimize }
-        ];
-        var failures = new List<string>();
-        var executor = new StartupMacroExecutor(
-            actions,
-            () => new HashSet<int> { 42 },
-            failures.Add,
-            _ => { },
-            (_, _) => StartupMacroWindowActions.ExecutionResult.Unavailable("not ready")
-        );
-        DateTime started = new(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc);
-
-        executor.Start();
-        executor.Advance(started);
-        executor.Advance(started.AddSeconds(9.999));
-        Assert.True(executor.Pending);
-
-        executor.Advance(started.AddSeconds(10));
-
-        Assert.False(executor.Pending);
-        Assert.Single(failures);
-        Assert.Contains("within 10 seconds", failures[0]);
     }
 }

@@ -52,6 +52,43 @@ public sealed class ManagedApplicationActivationTests
     }
 
     [Fact]
+    public void Supervise_ProcessAppearsAfterReleasedStartTransition_StartsConfiguredMacro()
+    {
+        bool running = false;
+        using var application = new ManagedApplication(
+            new ManagedApplicationConfig
+            {
+                Path = "slow-helper.exe",
+                StartupMacros =
+                [
+                    new StartupMacroActionConfig
+                    {
+                        Type = StartupMacroActionType.Delay,
+                        DelayMilliseconds = 100
+                    }
+                ]
+            },
+            TimeSpan.Zero,
+            shouldRemainRunning: null,
+            processIdProvider: () => running ? new HashSet<int> { 42 } : []
+        );
+
+        application.Activate();
+        Assert.False(application.ApiMacroPending);
+
+        ProcessPathSnapshot.CompleteTransition(
+            application.RuntimePath,
+            application,
+            succeeded: false
+        );
+        running = true;
+
+        application.Supervise();
+
+        Assert.True(application.ApiMacroPending);
+    }
+
+    [Fact]
     public void CachedRuntimeStatus_ObservationsAndCloseTransition_NeverDiscoverOnRead()
     {
         bool running = false;

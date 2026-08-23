@@ -30,6 +30,8 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private DateTime? _closeObservationStartedUtc;
     private DateTime? _startRequestedUtc;
     private bool _launchIssued;
+    private bool _activeDemand;
+    private bool _startWaitReported;
     private bool _reportPendingStartAsRestart;
     private bool _disposed;
     private bool _lifecycleErrorActive;
@@ -172,6 +174,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (_disposed)
             return;
 
+        _activeDemand = true;
         _missingSince = null;
         _failedMultipleProcessIds = null;
 
@@ -209,6 +212,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (ProcessPathSnapshot.HasTransition(_runtimePath))
             return ManagedResourceUpdate.None;
 
+        bool wasRunning = _hasObservedRunningState && _lastObservedRunning;
         IReadOnlySet<int> processIds = GetRunningProcessIds();
 
         if (CountIndependentInstances(processIds) > 1)
@@ -227,6 +231,10 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         {
             _missingSince = null;
             ClearError();
+
+            if (!wasRunning)
+                _startupMacro.Start();
+
             return ManagedResourceUpdate.None;
         }
 
@@ -255,6 +263,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         SupervisorLog.WriteTrace(
             $"Application '{DisplayName}': cancelling queued restart and minimize state."
         );
+        _activeDemand = false;
         _missingSince = null;
         ProcessLifecycleTransitionKind? transition =
             ProcessPathSnapshot.GetOwnedTransition(_runtimePath, this);
@@ -296,6 +305,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (_disposed)
             return;
 
+        _activeDemand = false;
         _missingSince = null;
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
@@ -488,11 +498,21 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             if (nowUtc - _startRequestedUtc >=
                 TimeSpan.FromSeconds(StartConfirmationTimeoutSeconds))
             {
-                ReportError(
-                    $"Could not safely verify whether {DisplayName} was already running. No launch was attempted."
-                );
-                ResetStartOperation();
-                CompleteOwnedTransition(succeeded: false);
+                if (_activeDemand)
+                {
+                    ReportStartWait(
+                        $"AppSupervisor still cannot safely verify whether {DisplayName} is already running. " +
+                        "No duplicate launch will be attempted; startup monitoring will continue."
+                    );
+                }
+                else
+                {
+                    ReportError(
+                        $"Could not safely verify whether {DisplayName} was already running. No launch was attempted."
+                    );
+                    ResetStartOperation();
+                    CompleteOwnedTransition(succeeded: false);
+                }
             }
 
             return ManagedResourceUpdate.None;
@@ -523,11 +543,21 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (_startRequestedUtc is DateTime requestedUtc &&
             nowUtc - requestedUtc >= TimeSpan.FromSeconds(StartConfirmationTimeoutSeconds))
         {
-            ReportError(
-                $"Could not confirm that {DisplayName} started within {StartConfirmationTimeoutSeconds} seconds."
-            );
-            ResetStartOperation();
-            CompleteOwnedTransition(succeeded: false);
+            if (_activeDemand)
+            {
+                ReportStartWait(
+                    $"{DisplayName} has not appeared yet after Windows accepted its launch. " +
+                    "Startup monitoring will continue without issuing a duplicate launch."
+                );
+            }
+            else
+            {
+                ReportError(
+                    $"Could not confirm that {DisplayName} started within {StartConfirmationTimeoutSeconds} seconds."
+                );
+                ResetStartOperation();
+                CompleteOwnedTransition(succeeded: false);
+            }
         }
 
         return ManagedResourceUpdate.None;
@@ -1086,7 +1116,18 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     {
         _launchIssued = false;
         _startRequestedUtc = null;
+        _startWaitReported = false;
         _reportPendingStartAsRestart = false;
+    }
+
+    /// <summary>Reports one delayed-start diagnostic while retaining the accepted start transition.</summary>
+    private void ReportStartWait(string message)
+    {
+        if (_startWaitReported)
+            return;
+
+        _startWaitReported = true;
+        ReportError(message);
     }
 
     /// <summary>Completes this instance's current central transition.</summary>

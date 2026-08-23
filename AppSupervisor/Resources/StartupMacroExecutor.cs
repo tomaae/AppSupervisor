@@ -3,8 +3,8 @@ namespace AppSupervisor.Resources;
 /// <summary>Advances a helper's ordered startup macro without blocking the lifecycle timer.</summary>
 internal sealed class StartupMacroExecutor
 {
-    private static readonly TimeSpan DefaultWindowDiscoveryTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan MoveResizeWindowDiscoveryTimeout = TimeSpan.FromMinutes(2);
+    private const int RequiredGeometryStableObservations = 3;
+    private static readonly TimeSpan RequiredGeometryStableDuration = TimeSpan.FromSeconds(2);
 
     private readonly IReadOnlyList<StartupMacroActionConfig> _actions;
     private readonly Func<IReadOnlySet<int>> _processIdProvider;
@@ -14,9 +14,9 @@ internal sealed class StartupMacroExecutor
         StartupMacroWindowActions.ExecutionResult> _execute;
 
     private int _actionIndex;
-    private DateTime? _actionStartedUtc;
     private DateTime? _delayUntilUtc;
-    private DateTime? _moveResizeWindowWaitStartedUtc;
+    private DateTime? _geometryStableSinceUtc;
+    private int _geometryStableObservations;
     private bool _failed;
 
     public StartupMacroExecutor(
@@ -55,9 +55,8 @@ internal sealed class StartupMacroExecutor
     {
         Pending = false;
         _actionIndex = 0;
-        _actionStartedUtc = null;
         _delayUntilUtc = null;
-        _moveResizeWindowWaitStartedUtc = null;
+        ResetGeometryStability();
         _failed = false;
     }
 
@@ -67,7 +66,6 @@ internal sealed class StartupMacroExecutor
         while (Pending && _actionIndex < _actions.Count)
         {
             StartupMacroActionConfig action = _actions[_actionIndex];
-            _actionStartedUtc ??= nowUtc;
 
             if (action.Type == StartupMacroActionType.Delay)
             {
@@ -83,37 +81,42 @@ internal sealed class StartupMacroExecutor
             StartupMacroWindowActions.ExecutionResult result =
                 _execute(action, _processIdProvider());
             bool moveOrResize = IsMoveOrResize(action);
-            DateTime windowWaitStartedUtc = moveOrResize
-                ? _moveResizeWindowWaitStartedUtc ??= nowUtc
-                : _actionStartedUtc.Value;
-            TimeSpan windowDiscoveryTimeout = moveOrResize
-                ? MoveResizeWindowDiscoveryTimeout
-                : DefaultWindowDiscoveryTimeout;
 
-            if (result.Status == StartupMacroWindowActions.ExecutionStatus.WindowUnavailable &&
-                nowUtc - windowWaitStartedUtc < windowDiscoveryTimeout)
+            if (result.Status == StartupMacroWindowActions.ExecutionStatus.WindowUnavailable)
             {
+                ResetGeometryStability();
                 return;
+            }
+
+            if (moveOrResize &&
+                result.Status == StartupMacroWindowActions.ExecutionStatus.WindowAdjusted)
+            {
+                ResetGeometryStability();
+                return;
+            }
+
+            if (moveOrResize &&
+                result.Status == StartupMacroWindowActions.ExecutionStatus.Succeeded)
+            {
+                _geometryStableSinceUtc ??= nowUtc;
+                _geometryStableObservations++;
+
+                if (_geometryStableObservations < RequiredGeometryStableObservations ||
+                    nowUtc - _geometryStableSinceUtc < RequiredGeometryStableDuration)
+                {
+                    return;
+                }
             }
 
             if (result.Status != StartupMacroWindowActions.ExecutionStatus.Succeeded)
             {
                 _failed = true;
-                string detail = result.Status ==
-                    StartupMacroWindowActions.ExecutionStatus.WindowUnavailable
-                    ? $"{result.Detail} The window did not become available within " +
-                        FormatTimeout(windowDiscoveryTimeout) + "."
-                    : result.Detail;
                 _failureReporter(
-                    $"Startup macro action {_actionIndex + 1} ({action.Type}) failed: {detail}"
+                    $"Startup macro action {_actionIndex + 1} ({action.Type}) failed: {result.Detail}"
                 );
             }
 
-            bool preserveMoveResizeWait =
-                moveOrResize &&
-                result.Status == StartupMacroWindowActions.ExecutionStatus.WindowUnavailable &&
-                NextActionIsMoveOrResize();
-            CompleteAction(preserveMoveResizeWait);
+            CompleteAction();
         }
 
         if (!Pending)
@@ -123,24 +126,19 @@ internal sealed class StartupMacroExecutor
         _completed(!_failed);
     }
 
-    private void CompleteAction(bool preserveMoveResizeWait = false)
+    private void CompleteAction()
     {
         _actionIndex++;
-        _actionStartedUtc = null;
         _delayUntilUtc = null;
-
-        if (!preserveMoveResizeWait)
-            _moveResizeWindowWaitStartedUtc = null;
+        ResetGeometryStability();
     }
-
-    private bool NextActionIsMoveOrResize() =>
-        _actionIndex + 1 < _actions.Count && IsMoveOrResize(_actions[_actionIndex + 1]);
 
     private static bool IsMoveOrResize(StartupMacroActionConfig action) =>
         action.Type is StartupMacroActionType.MoveWindow or StartupMacroActionType.ResizeWindow;
 
-    private static string FormatTimeout(TimeSpan timeout) =>
-        timeout.TotalMinutes >= 1
-            ? $"{timeout.TotalMinutes:0} minutes"
-            : $"{timeout.TotalSeconds:0} seconds";
+    private void ResetGeometryStability()
+    {
+        _geometryStableSinceUtc = null;
+        _geometryStableObservations = 0;
+    }
 }

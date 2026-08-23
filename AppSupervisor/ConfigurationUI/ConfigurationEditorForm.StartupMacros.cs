@@ -250,7 +250,7 @@ public sealed partial class ConfigurationEditorForm
                 StartupMacroWindowActions.ExecutionResult result =
                     StartupMacroWindowActions.Execute(action, processIds);
 
-                if (result.Status != StartupMacroWindowActions.ExecutionStatus.Succeeded)
+                if (!result.AppliedSuccessfully)
                 {
                     MessageBox.Show(
                         this,

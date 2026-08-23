@@ -10,14 +10,21 @@ internal static class StartupMacroWindowActions
     internal enum ExecutionStatus
     {
         Succeeded,
+        WindowAdjusted,
         WindowUnavailable,
         Failed
     }
 
     internal readonly record struct ExecutionResult(ExecutionStatus Status, string Detail)
     {
+        public bool AppliedSuccessfully =>
+            Status is ExecutionStatus.Succeeded or ExecutionStatus.WindowAdjusted;
+
         public static ExecutionResult Success(string detail) =>
             new(ExecutionStatus.Succeeded, detail);
+
+        public static ExecutionResult Adjusted(string detail) =>
+            new(ExecutionStatus.WindowAdjusted, detail);
 
         public static ExecutionResult Unavailable(string detail) =>
             new(ExecutionStatus.WindowUnavailable, detail);
@@ -168,11 +175,24 @@ internal static class StartupMacroWindowActions
         if (screen is null)
             return ExecutionResult.Failure($"Monitor '{action.Monitor}' is not connected.");
 
+        int targetX = screen.WorkingArea.X + x;
+        int targetY = screen.WorkingArea.Y + y;
+
+        if (!NativeMethods.GetWindowRect(window, out NativeMethods.RECT rectangle))
+            return ExecutionResult.Failure(new Win32Exception().Message);
+
+        if (rectangle.Left == targetX && rectangle.Top == targetY)
+        {
+            return ExecutionResult.Success(
+                $"Window remains at {screen.DeviceName} position {x}, {y}."
+            );
+        }
+
         bool moved = NativeMethods.SetWindowPos(
             window,
             IntPtr.Zero,
-            screen.WorkingArea.X + x,
-            screen.WorkingArea.Y + y,
+            targetX,
+            targetY,
             0,
             0,
             NativeMethods.SWP_NOSIZE |
@@ -181,7 +201,7 @@ internal static class StartupMacroWindowActions
         );
 
         return moved
-            ? ExecutionResult.Success($"Window moved to {screen.DeviceName} at {x}, {y}.")
+            ? ExecutionResult.Adjusted($"Window moved to {screen.DeviceName} at {x}, {y}.")
             : ExecutionResult.Failure(new Win32Exception().Message);
     }
 
@@ -191,6 +211,15 @@ internal static class StartupMacroWindowActions
             width <= 0 || height <= 0)
         {
             return ExecutionResult.Failure("Positive width and height values are required.");
+        }
+
+        if (!NativeMethods.GetWindowRect(window, out NativeMethods.RECT rectangle))
+            return ExecutionResult.Failure(new Win32Exception().Message);
+
+        if (rectangle.Right - rectangle.Left == width &&
+            rectangle.Bottom - rectangle.Top == height)
+        {
+            return ExecutionResult.Success($"Window remains at {width} x {height}.");
         }
 
         bool resized = NativeMethods.SetWindowPos(
@@ -206,7 +235,7 @@ internal static class StartupMacroWindowActions
         );
 
         return resized
-            ? ExecutionResult.Success($"Window resized to {width} x {height}.")
+            ? ExecutionResult.Adjusted($"Window resized to {width} x {height}.")
             : ExecutionResult.Failure(new Win32Exception().Message);
     }
 
