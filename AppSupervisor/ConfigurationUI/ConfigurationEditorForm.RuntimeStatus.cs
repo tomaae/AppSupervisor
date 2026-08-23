@@ -55,8 +55,47 @@ public sealed partial class ConfigurationEditorForm
         if (ReferenceEquals(snapshot, _runtimeStatusSnapshot))
             return;
 
+        ConfigurationRuntimeStatusSnapshot previous = _runtimeStatusSnapshot;
         _runtimeStatusSnapshot = snapshot;
-        _resourceList.Invalidate();
+        InvalidateChangedRuntimeStatusRows(previous, snapshot);
+    }
+
+    /// <summary>Repaints only application or service rows whose displayed state changed.</summary>
+    private void InvalidateChangedRuntimeStatusRows(
+        ConfigurationRuntimeStatusSnapshot previous,
+        ConfigurationRuntimeStatusSnapshot current)
+    {
+        if (SelectedProfile is not SupervisorProfileConfig profile)
+            return;
+
+        for (int index = 0; index < _resourceList.Items.Count; index++)
+        {
+            if (_resourceList.Items[index] is not ManagedResourceConfig resource ||
+                !UsesRuntimeStatusIcon(resource))
+            {
+                continue;
+            }
+
+            ConfigurationResourceRuntimeStatus previousStatus = previous.GetStatus(
+                profile.ProfileId,
+                resource.ResourceId
+            );
+            ConfigurationResourceRuntimeStatus currentStatus = current.GetStatus(
+                profile.ProfileId,
+                resource.ResourceId
+            );
+
+            if (previousStatus != currentStatus)
+            {
+                Rectangle itemBounds = _resourceList.GetItemRectangle(index);
+                Rectangle statusIconBounds = ConfigurationIconListRenderer.GetIconBounds(
+                    _resourceList,
+                    itemBounds,
+                    iconIndex: 1
+                );
+                _resourceList.Invalidate(statusIconBounds);
+            }
+        }
     }
 
     /// <summary>Returns cached status for an application or service in the selected profile.</summary>

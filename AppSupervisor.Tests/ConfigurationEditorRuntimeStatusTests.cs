@@ -2,6 +2,7 @@ using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Core;
 using AppSupervisor.ServiceControl;
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace AppSupervisor.Tests;
@@ -81,6 +82,9 @@ public sealed class ConfigurationEditorRuntimeStatusTests
                     resourceList.SelectedIndex = 1;
                     object selected = resourceList.SelectedItem!;
                     object[] items = resourceList.Items.Cast<object>().ToArray();
+                    var invalidatedRectangles = new List<Rectangle>();
+                    resourceList.Invalidated += (_, e) =>
+                        invalidatedRectangles.Add(e.InvalidRect);
 
                     current = new ConfigurationRuntimeStatusSnapshot(
                         new Dictionary<
@@ -98,6 +102,25 @@ public sealed class ConfigurationEditorRuntimeStatusTests
                     Assert.Same(selected, resourceList.SelectedItem);
                     Assert.Equal(1, resourceList.SelectedIndex);
                     Assert.Equal(items, resourceList.Items.Cast<object>());
+                    Assert.Equal(2, invalidatedRectangles.Count);
+                    Assert.All(invalidatedRectangles, rectangle =>
+                    {
+                        Assert.Equal(
+                            ConfigurationIconListRenderer.GetIconSize(resourceList),
+                            rectangle.Width
+                        );
+                        Assert.Equal(
+                            ConfigurationIconListRenderer.GetIconSize(resourceList),
+                            rectangle.Height
+                        );
+                    });
+
+                    current = new ConfigurationRuntimeStatusSnapshot(
+                        current.Resources.ToDictionary(entry => entry.Key, entry => entry.Value)
+                    );
+                    form.RefreshRuntimeStatusSnapshot();
+
+                    Assert.Equal(2, invalidatedRectangles.Count);
 
                     form.Close();
                     Application.DoEvents();

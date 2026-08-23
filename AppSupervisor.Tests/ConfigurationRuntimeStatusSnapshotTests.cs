@@ -69,6 +69,21 @@ public sealed class ConfigurationRuntimeStatusSnapshotTests
                 homeAssistant.ResourceId
             )
         ));
+
+        var sameStatuses = new ConfigurationRuntimeStatusSnapshot(
+            snapshot.Resources.ToDictionary(entry => entry.Key, entry => entry.Value)
+        );
+        Assert.True(snapshot.HasSameStatuses(sameStatuses));
+
+        var changedStatuses = new ConfigurationRuntimeStatusSnapshot(
+            snapshot.Resources.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Key.ResourceId == application.ResourceId
+                    ? ConfigurationResourceRuntimeStatus.Stopping
+                    : entry.Value
+            )
+        );
+        Assert.False(snapshot.HasSameStatuses(changedStatuses));
     }
 
     private sealed class StubTrigger : ITrigger

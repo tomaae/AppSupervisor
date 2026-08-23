@@ -33,6 +33,28 @@ internal sealed record ConfigurationRuntimeStatusSnapshot(
             out ConfigurationResourceRuntimeStatus status)
                 ? status
                 : ConfigurationResourceRuntimeStatus.Unknown;
+
+    /// <summary>Compares status values rather than snapshot or dictionary identities.</summary>
+    internal bool HasSameStatuses(ConfigurationRuntimeStatusSnapshot other)
+    {
+        if (ReferenceEquals(this, other))
+            return true;
+
+        if (Resources.Count != other.Resources.Count)
+            return false;
+
+        foreach ((ConfigurationResourceRuntimeStatusKey key,
+            ConfigurationResourceRuntimeStatus status) in Resources)
+        {
+            if (!other.Resources.TryGetValue(key, out ConfigurationResourceRuntimeStatus otherStatus) ||
+                status != otherStatus)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
 
 /// <summary>Builds UI status snapshots exclusively from runtime-owned cached fields.</summary>

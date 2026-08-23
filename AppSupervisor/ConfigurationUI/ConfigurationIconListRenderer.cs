@@ -13,6 +13,17 @@ internal static class ConfigurationIconListRenderer
     internal static int GetItemHeight(Control control) =>
         Math.Max(control.Font.Height + 2, GetIconSize(control) + 2);
 
+    /// <summary>Returns one icon slot within an owner-drawn list item.</summary>
+    internal static Rectangle GetIconBounds(
+        Control control,
+        Rectangle itemBounds,
+        int iconIndex)
+    {
+        int preferredIconSize = GetIconSize(control);
+        int iconSize = Math.Max(0, Math.Min(preferredIconSize, itemBounds.Height - 2));
+        return GetIconBounds(itemBounds, iconSize, iconIndex);
+    }
+
     /// <summary>Draws an icon, an ellipsized label, and the standard selection and focus states.</summary>
     internal static void DrawItem(
         DrawItemEventArgs e,
@@ -37,15 +48,19 @@ internal static class ConfigurationIconListRenderer
             (int)Math.Round(LogicalIconSize * e.Graphics.DpiX / 96f)
         );
         int iconSize = Math.Max(0, Math.Min(preferredIconSize, e.Bounds.Height - 2));
-        int iconTop = e.Bounds.Top + (e.Bounds.Height - iconSize) / 2;
         bool selected = (e.State & DrawItemState.Selected) != 0;
+        int iconIndex = 0;
 
         void DrawNextIcon(Action<Graphics, Rectangle, Color, bool>? iconDrawer)
         {
             if (iconDrawer is null)
                 return;
 
-            var iconBounds = new Rectangle(textLeft, iconTop, iconSize, iconSize);
+            Rectangle iconBounds = GetIconBounds(
+                e.Bounds,
+                iconSize,
+                iconIndex++
+            );
             iconDrawer(e.Graphics, iconBounds, e.ForeColor, selected);
             textLeft = iconBounds.Right + 4;
         }
@@ -71,5 +86,15 @@ internal static class ConfigurationIconListRenderer
                 TextFormatFlags.NoPrefix
         );
         e.DrawFocusRectangle();
+    }
+
+    private static Rectangle GetIconBounds(
+        Rectangle itemBounds,
+        int iconSize,
+        int iconIndex)
+    {
+        int iconLeft = itemBounds.Left + 3 + Math.Max(0, iconIndex) * (iconSize + 4);
+        int iconTop = itemBounds.Top + (itemBounds.Height - iconSize) / 2;
+        return new Rectangle(iconLeft, iconTop, iconSize, iconSize);
     }
 }

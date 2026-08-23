@@ -72,10 +72,15 @@ public partial class TrayApplicationContext
         if (!_configurationEditorOpen)
             return;
 
-        Volatile.Write(
-            ref _configurationRuntimeStatusSnapshot,
-            ConfigurationRuntimeStatusSnapshotFactory.Create(_configuration, _profiles)
-        );
+        ConfigurationRuntimeStatusSnapshot snapshot =
+            ConfigurationRuntimeStatusSnapshotFactory.Create(_configuration, _profiles);
+        ConfigurationRuntimeStatusSnapshot previous =
+            Volatile.Read(ref _configurationRuntimeStatusSnapshot);
+
+        if (previous.HasSameStatuses(snapshot))
+            return;
+
+        Volatile.Write(ref _configurationRuntimeStatusSnapshot, snapshot);
     }
 
     /// <summary>Checks the accepted runtime profile state corresponding to one editor profile identifier.</summary>
