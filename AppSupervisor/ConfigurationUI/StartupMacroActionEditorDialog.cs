@@ -12,6 +12,7 @@ public sealed class StartupMacroActionEditorDialog : Form
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
         Dock = DockStyle.Fill,
+        DrawMode = DrawMode.OwnerDrawFixed,
         FormattingEnabled = true
     };
     private readonly NumericUpDown _delay = CreateNumeric(0, 86_400_000);
@@ -102,11 +103,13 @@ public sealed class StartupMacroActionEditorDialog : Form
         CancelButton = cancel;
 
         _type.DataSource = Enum.GetValues<StartupMacroActionType>();
+        _type.ItemHeight = ConfigurationIconListRenderer.GetItemHeight(_type);
         _type.Format += (_, args) =>
         {
             if (args.ListItem is StartupMacroActionType type)
                 args.Value = StartupMacroDisplay.ActionType(type);
         };
+        _type.DrawItem += TypeDrawItem;
         _type.SelectedValueChanged += (_, _) => UpdateVisibleFields();
         _readPosition.Click += ReadCurrentPositionClicked;
         _readSize.Click += ReadCurrentSizeClicked;
@@ -119,6 +122,20 @@ public sealed class StartupMacroActionEditorDialog : Form
     }
 
     public StartupMacroActionConfig? Result { get; private set; }
+
+    private void TypeDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        StartupMacroActionType? type = e.Index >= 0 && e.Index < _type.Items.Count
+            ? _type.Items[e.Index] as StartupMacroActionType?
+            : _type.SelectedItem as StartupMacroActionType?;
+        ConfigurationIconListRenderer.DrawItem(
+            e,
+            _type.Font,
+            StartupMacroDisplay.ActionType(type),
+            (graphics, bounds, color, _) =>
+                ConfigurationItemIconRenderer.DrawStartupMacro(graphics, bounds, type, color)
+        );
+    }
 
     private Control BuildHotkeyPanel()
     {

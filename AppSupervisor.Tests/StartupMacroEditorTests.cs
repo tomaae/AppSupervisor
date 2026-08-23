@@ -66,6 +66,11 @@ public sealed class StartupMacroEditorTests
                         controls.OfType<ListBox>(),
                         list => list.Items.Cast<object>().OfType<StartupMacroActionConfig>().Any()
                     );
+                    Assert.Equal(DrawMode.OwnerDrawFixed, macroList.DrawMode);
+                    Assert.Equal(
+                        ConfigurationIconListRenderer.GetItemHeight(macroList),
+                        macroList.ItemHeight
+                    );
                     Button testAction = Assert.Single(
                         EnumerateControls(macroList.Parent!),
                         control => control is Button button && button.Text == "Test action"

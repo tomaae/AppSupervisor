@@ -37,6 +37,11 @@ public sealed class StartupMacroActionEditorTests
                     controls.OfType<ComboBox>(),
                     combo => combo.Items.Cast<object>().OfType<StartupMacroActionType>().Any()
                 );
+                Assert.Equal(DrawMode.OwnerDrawFixed, action.DrawMode);
+                Assert.Equal(
+                    ConfigurationIconListRenderer.GetItemHeight(action),
+                    action.ItemHeight
+                );
                 IEnumerable<Control> visibleEditors = controls.Where(control =>
                     control.Visible && control != action &&
                     (control is NumericUpDown ||

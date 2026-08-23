@@ -6,12 +6,20 @@ namespace AppSupervisor.ConfigurationUI;
 /// <summary>Adds ordered helper startup macro editing and one-shot diagnostics.</summary>
 public sealed partial class ConfigurationEditorForm
 {
-    private readonly ListBox _startupMacroList = new() { Dock = DockStyle.Fill, FormattingEnabled = true };
+    private readonly ListBox _startupMacroList = new()
+    {
+        Dock = DockStyle.Fill,
+        DrawMode = DrawMode.OwnerDrawFixed,
+        FormattingEnabled = true,
+        IntegralHeight = false
+    };
     private Button _testStartupActionButton = null!;
     private Button _testStartupMacroButton = null!;
 
     private Control BuildStartupMacroPanel()
     {
+        _startupMacroList.ItemHeight =
+            ConfigurationIconListRenderer.GetItemHeight(_startupMacroList);
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -41,6 +49,7 @@ public sealed partial class ConfigurationEditorForm
         panel.Controls.Add(buttons, 0, 1);
 
         _startupMacroList.Format += StartupMacroListFormat;
+        _startupMacroList.DrawItem += StartupMacroListDrawItem;
         _startupMacroList.DoubleClick += EditStartupActionClicked;
         _startupMacroList.SelectedIndexChanged += (_, _) => UpdateStartupMacroControls();
         return panel;
@@ -83,6 +92,29 @@ public sealed partial class ConfigurationEditorForm
     {
         if (e.ListItem is StartupMacroActionConfig action)
             e.Value = StartupMacroDisplay.Action(action);
+    }
+
+    private void StartupMacroListDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || e.Index >= _startupMacroList.Items.Count ||
+            _startupMacroList.Items[e.Index] is not StartupMacroActionConfig action)
+        {
+            e.DrawBackground();
+            return;
+        }
+
+        ConfigurationIconListRenderer.DrawItem(
+            e,
+            _startupMacroList.Font,
+            StartupMacroDisplay.Action(action),
+            (graphics, bounds, color, _) =>
+                ConfigurationItemIconRenderer.DrawStartupMacro(
+                    graphics,
+                    bounds,
+                    action.Type,
+                    color
+                )
+        );
     }
 
     private void AddStartupActionClicked(object? sender, EventArgs e)
