@@ -29,6 +29,7 @@ public sealed class ManagedService :
     private bool _startAfterStop;
     private bool _stopCommandSent;
     private bool _stopPending;
+    private Task? _stopCommandTask;
     private bool _statusErrorReported;
     private bool _errorActive;
     private bool _hasObservedState;
@@ -88,19 +89,21 @@ public sealed class ManagedService :
 
     /// <summary>Gets the latest observed or predicted service state without querying Windows.</summary>
     internal ConfigurationResourceRuntimeStatus CachedRuntimeStatus =>
-        !_hasObservedState || _lastObservedState is null
-            ? ConfigurationResourceRuntimeStatus.Unknown
-            : _lastObservedState switch
-            {
-                ServiceRuntimeState.StartPending or ServiceRuntimeState.ContinuePending =>
-                    ConfigurationResourceRuntimeStatus.Starting,
-                ServiceRuntimeState.StopPending or ServiceRuntimeState.PausePending =>
-                    ConfigurationResourceRuntimeStatus.Stopping,
-                ServiceRuntimeState.Running => ConfigurationResourceRuntimeStatus.Running,
-                ServiceRuntimeState.Stopped or ServiceRuntimeState.Paused =>
-                    ConfigurationResourceRuntimeStatus.NotRunning,
-                _ => ConfigurationResourceRuntimeStatus.Unknown
-            };
+        _stopPending
+            ? ConfigurationResourceRuntimeStatus.Stopping
+            : (!_hasObservedState || _lastObservedState is null
+                ? ConfigurationResourceRuntimeStatus.Unknown
+                : _lastObservedState switch
+                {
+                    ServiceRuntimeState.StartPending or ServiceRuntimeState.ContinuePending =>
+                        ConfigurationResourceRuntimeStatus.Starting,
+                    ServiceRuntimeState.StopPending or ServiceRuntimeState.PausePending =>
+                        ConfigurationResourceRuntimeStatus.Stopping,
+                    ServiceRuntimeState.Running => ConfigurationResourceRuntimeStatus.Running,
+                    ServiceRuntimeState.Stopped or ServiceRuntimeState.Paused =>
+                        ConfigurationResourceRuntimeStatus.NotRunning,
+                    _ => ConfigurationResourceRuntimeStatus.Unknown
+                });
 
     /// <summary>Gets whether Windows is still processing an accepted start, continue, or stop command.</summary>
     bool IManagedResourceLifecycleWork.LifecycleWorkPending =>
@@ -333,8 +336,30 @@ public sealed class ManagedService :
             return;
 
         _disposed = true;
-        _controller?.Dispose();
+        IWindowsServiceController? controller = _controller;
+        Task? stopCommandTask = _stopCommandTask;
         _controller = null;
+        _stopCommandTask = null;
+
+        if (stopCommandTask is { IsCompleted: false })
+        {
+            _ = stopCommandTask.ContinueWith(
+                completedTask =>
+                {
+                    _ = completedTask.Exception;
+                    controller?.Dispose();
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
+            );
+        }
+        else
+        {
+            _ = stopCommandTask?.Exception;
+            controller?.Dispose();
+        }
+
         ErrorOccurred = null;
         ErrorCleared = null;
     }
@@ -371,6 +396,9 @@ public sealed class ManagedService :
     /// <returns><see cref="ManagedResourceUpdate.Restarted"/> when a replacement start request is sent.</returns>
     private ManagedResourceUpdate AdvanceStop(bool profileActive)
     {
+        if (!FinishStopCommandIfReady())
+            return ManagedResourceUpdate.None;
+
         ServiceRuntimeState? state = TryGetState();
 
         if (state is null)
@@ -446,14 +474,52 @@ public sealed class ManagedService :
     {
         try
         {
-            _controller!.Stop();
-            _stopCommandSent = true;
-            RememberState(ServiceRuntimeState.StopPending);
+            IWindowsServiceController controller = _controller!;
+            _stopCommandTask = Task.Factory.StartNew(
+                controller.Stop,
+                CancellationToken.None,
+                TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+                TaskScheduler.Default
+            );
         }
         catch (Exception ex)
         {
             ReportError(ServiceErrorRecovery.Stopped, $"Could not stop service '{Config.ServiceName}'. {ex.Message}");
             ClearStopState();
+        }
+    }
+
+    /// <summary>Consumes a completed stop request without letting its native wait block supervision.</summary>
+    /// <returns>
+    /// <see langword="true"/> when state polling may continue; otherwise the request is still
+    /// running or failed and this lifecycle pass is complete.
+    /// </returns>
+    private bool FinishStopCommandIfReady()
+    {
+        if (_stopCommandTask is null)
+            return true;
+
+        if (!_stopCommandTask.IsCompleted)
+            return false;
+
+        Task completedTask = _stopCommandTask;
+        _stopCommandTask = null;
+
+        try
+        {
+            completedTask.GetAwaiter().GetResult();
+            _stopCommandSent = true;
+            RememberState(ServiceRuntimeState.StopPending);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ReportError(
+                ServiceErrorRecovery.Stopped,
+                $"Could not stop service '{Config.ServiceName}'. {ex.Message}"
+            );
+            ClearStopState();
+            return false;
         }
     }
 
@@ -482,6 +548,9 @@ public sealed class ManagedService :
     {
         if (!_available || _disposed)
             return null;
+
+        if (_stopCommandTask is { IsCompleted: false })
+            return _lastObservedState;
 
         try
         {

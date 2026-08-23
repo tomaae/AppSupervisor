@@ -75,9 +75,94 @@ public sealed class ManagedServiceTests
         Assert.Equal(ConfigurationResourceRuntimeStatus.Stopping, service.CachedRuntimeStatus);
         Assert.Equal(3, controller.StateQueries);
 
-        service.SuperviseDeactivation();
+        Assert.True(AdvanceUntilSettled(service));
         Assert.Equal(ConfigurationResourceRuntimeStatus.NotRunning, service.CachedRuntimeStatus);
         Assert.Equal(4, controller.StateQueries);
+    }
+
+    /// <summary>Confirms a service control handler cannot block the serialized supervisor worker.</summary>
+    [Fact]
+    public void Deactivate_SlowStopControl_ReturnsAndAdvancesWithoutWaiting()
+    {
+        using var stopEntered = new ManualResetEventSlim();
+        using var releaseStop = new ManualResetEventSlim();
+        var controller = new FakeServiceController
+        {
+            State = ServiceRuntimeState.Running,
+            StopBehavior = () =>
+            {
+                stopEntered.Set();
+                releaseStop.Wait();
+            }
+        };
+        using var service = CreateService(controller, TimeSpan.FromSeconds(20));
+        service.Initialize();
+
+        service.Deactivate();
+
+        Assert.True(stopEntered.Wait(TimeSpan.FromSeconds(2)));
+        Assert.True(((IManagedResourceLifecycleWork)service).LifecycleWorkPending);
+        Assert.Equal(
+            ManagedResourceUpdate.None,
+            ((IManagedResourceLifecycleWork)service).AdvanceLifecycle(DateTime.UtcNow)
+        );
+        Assert.Equal(1, controller.StateQueries);
+
+        controller.State = ServiceRuntimeState.Stopped;
+        releaseStop.Set();
+
+        Assert.True(AdvanceUntilSettled(service));
+        Assert.Equal(ConfigurationResourceRuntimeStatus.NotRunning, service.CachedRuntimeStatus);
+    }
+
+    /// <summary>Confirms disposal defers the native controller handle until a blocked stop returns.</summary>
+    [Fact]
+    public void Dispose_StopControlStillRunning_DefersControllerDisposal()
+    {
+        using var stopEntered = new ManualResetEventSlim();
+        using var releaseStop = new ManualResetEventSlim();
+        var controller = new FakeServiceController
+        {
+            State = ServiceRuntimeState.Running,
+            StopBehavior = () =>
+            {
+                stopEntered.Set();
+                releaseStop.Wait();
+            }
+        };
+        var service = CreateService(controller, TimeSpan.FromSeconds(20));
+        service.Initialize();
+        service.Deactivate();
+        Assert.True(stopEntered.Wait(TimeSpan.FromSeconds(2)));
+
+        service.Dispose();
+
+        Assert.False(controller.Disposed);
+        releaseStop.Set();
+        Assert.True(SpinWait.SpinUntil(
+            () => controller.Disposed,
+            TimeSpan.FromSeconds(2)
+        ));
+    }
+
+    /// <summary>Confirms a delayed native stop failure is reported from a later lifecycle pass.</summary>
+    [Fact]
+    public void AdvanceLifecycle_StopControlFails_ReportsServiceError()
+    {
+        var controller = new FakeServiceController
+        {
+            State = ServiceRuntimeState.Running,
+            StopBehavior = () => throw new TimeoutException("Simulated service timeout.")
+        };
+        using var service = CreateService(controller, TimeSpan.FromSeconds(20));
+        string? error = null;
+        service.ErrorOccurred += (_, message) => error = message;
+        service.Initialize();
+        service.Deactivate();
+
+        Assert.True(AdvanceUntilSettled(service));
+        Assert.Contains("Could not stop service 'Test Service'", error);
+        Assert.Contains("Simulated service timeout", error);
     }
 
     /// <summary>
@@ -123,12 +208,32 @@ public sealed class ManagedServiceTests
         );
     }
 
+    /// <summary>Advances the service lifecycle until no asynchronous command or transition remains.</summary>
+    private static bool AdvanceUntilSettled(ManagedService service)
+    {
+        var lifecycle = (IManagedResourceLifecycleWork)service;
+        return SpinWait.SpinUntil(
+            () =>
+            {
+                lifecycle.AdvanceLifecycle(DateTime.UtcNow);
+                return !lifecycle.LifecycleWorkPending;
+            },
+            TimeSpan.FromSeconds(2)
+        );
+    }
+
     /// <summary>
     /// Records Windows service operations while exposing a test-controlled state.
     /// </summary>
     private sealed class FakeServiceController : IWindowsServiceController
     {
+        private int _disposed;
+
         public ServiceRuntimeState State { get; set; }
+
+        public Action? StopBehavior { get; set; }
+
+        public bool Disposed => Volatile.Read(ref _disposed) != 0;
 
         public int EnsureManualCalls { get; private set; }
 
@@ -159,7 +264,16 @@ public sealed class ManagedServiceTests
         /// <summary>
         /// Changes the fake service to stopped.
         /// </summary>
-        public void Stop() => State = ServiceRuntimeState.Stopped;
+        public void Stop()
+        {
+            if (StopBehavior is not null)
+            {
+                StopBehavior();
+                return;
+            }
+
+            State = ServiceRuntimeState.Stopped;
+        }
 
         /// <summary>
         /// Changes the fake service to running.
@@ -171,6 +285,7 @@ public sealed class ManagedServiceTests
         /// </summary>
         public void Dispose()
         {
+            Volatile.Write(ref _disposed, 1);
         }
     }
 }

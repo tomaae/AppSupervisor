@@ -33,7 +33,6 @@ public partial class TrayApplicationContext
 
         try
         {
-            await ExecuteSupervisionAsync(PublishConfigurationRuntimeStatusSnapshot);
             await using var helperTestController = new ManagedApplicationTestController(
                 ExecuteSupervisionAsync,
                 IsProfileBusyForHelperTest,
