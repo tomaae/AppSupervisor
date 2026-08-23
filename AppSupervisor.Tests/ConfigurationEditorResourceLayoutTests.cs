@@ -189,6 +189,11 @@ public sealed class ConfigurationEditorResourceLayoutTests
                     ListBox healthList = Assert.Single(
                         EnumerateControls(healthPanel).OfType<ListBox>()
                     );
+                    Assert.Equal(DrawMode.OwnerDrawFixed, healthList.DrawMode);
+                    Assert.Equal(
+                        ConfigurationIconListRenderer.GetItemHeight(healthList),
+                        healthList.ItemHeight
+                    );
                     Assert.InRange(Math.Abs(ScreenTop(startupMacros) - ScreenTop(startupList)), 0, 8);
                     Assert.InRange(Math.Abs(ScreenTop(healthChecks) - ScreenTop(healthList)), 0, 8);
 

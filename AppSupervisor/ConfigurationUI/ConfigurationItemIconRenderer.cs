@@ -5,6 +5,39 @@ namespace AppSupervisor.ConfigurationUI;
 /// <summary>Draws compact configuration-item pictograms that remain legible at 20 pixels.</summary>
 internal static class ConfigurationItemIconRenderer
 {
+    /// <summary>Draws a network-listener or OSCQuery pictogram for one health-check type.</summary>
+    internal static void DrawHealthCheck(
+        Graphics graphics,
+        Rectangle bounds,
+        HealthCheckType? type,
+        Color color)
+    {
+        SmoothingMode previousSmoothingMode = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        try
+        {
+            float strokeWidth = Math.Max(1.35f, bounds.Width / 12f);
+            using var pen = new Pen(color, strokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            if (type == HealthCheckType.Listener)
+                DrawListener(graphics, pen, bounds);
+            else if (type == HealthCheckType.Vrcosc)
+                DrawOscQuery(graphics, pen, bounds);
+            else
+                DrawQuestionMark(graphics, pen, bounds);
+        }
+        finally
+        {
+            graphics.SmoothingMode = previousSmoothingMode;
+        }
+    }
+
     /// <summary>Draws a pictogram for one startup macro action type.</summary>
     internal static void DrawStartupMacro(
         Graphics graphics,
@@ -69,6 +102,50 @@ internal static class ConfigurationItemIconRenderer
         PointF center = RelativePoint(bounds, 0.5f, 0.5f);
         graphics.DrawLine(pen, center, RelativePoint(bounds, 0.5f, 0.28f));
         graphics.DrawLine(pen, center, RelativePoint(bounds, 0.7f, 0.5f));
+    }
+
+    private static void DrawListener(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        graphics.DrawEllipse(pen, RelativeRectangle(bounds, 0.4f, 0.4f, 0.2f, 0.2f));
+        graphics.DrawArc(
+            pen,
+            RelativeRectangle(bounds, 0.23f, 0.23f, 0.54f, 0.54f),
+            215,
+            110
+        );
+        graphics.DrawArc(
+            pen,
+            RelativeRectangle(bounds, 0.08f, 0.08f, 0.84f, 0.84f),
+            215,
+            110
+        );
+        graphics.DrawLine(
+            pen,
+            RelativePoint(bounds, 0.5f, 0.59f),
+            RelativePoint(bounds, 0.5f, 0.9f)
+        );
+    }
+
+    private static void DrawOscQuery(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        PointF top = RelativePoint(bounds, 0.5f, 0.16f);
+        PointF left = RelativePoint(bounds, 0.2f, 0.76f);
+        PointF right = RelativePoint(bounds, 0.8f, 0.76f);
+        graphics.DrawLine(pen, top, left);
+        graphics.DrawLine(pen, left, right);
+        graphics.DrawLine(pen, right, top);
+
+        foreach (PointF node in new[] { top, left, right })
+        {
+            float diameter = bounds.Width * 0.22f;
+            graphics.DrawEllipse(
+                pen,
+                node.X - diameter / 2f,
+                node.Y - diameter / 2f,
+                diameter,
+                diameter
+            );
+        }
     }
 
     private static void DrawKeyboard(Graphics graphics, Pen pen, Rectangle bounds)

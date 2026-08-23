@@ -23,11 +23,22 @@ public sealed partial class HealthCheckEditorDialog
     private void TypeComboBoxFormat(object? sender, ListControlConvertEventArgs e)
     {
         if (e.ListItem is HealthCheckType type)
-        {
-            e.Value = type == HealthCheckType.Vrcosc
-                ? "VRChat OSCQuery"
-                : "Listener";
-        }
+            e.Value = HealthCheckDisplay.Type(type);
+    }
+
+    /// <summary>Draws a health-check type with its network-listener or OSCQuery pictogram.</summary>
+    private void TypeComboBoxDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        HealthCheckType? type = e.Index >= 0 && e.Index < _typeComboBox.Items.Count
+            ? _typeComboBox.Items[e.Index] as HealthCheckType?
+            : _typeComboBox.SelectedItem as HealthCheckType?;
+        ConfigurationIconListRenderer.DrawItem(
+            e,
+            _typeComboBox.Font,
+            HealthCheckDisplay.Type(type),
+            (graphics, bounds, color, _) =>
+                ConfigurationItemIconRenderer.DrawHealthCheck(graphics, bounds, type, color)
+        );
     }
 
     /// <summary>Formats listener transports using their conventional uppercase abbreviations.</summary>
@@ -38,4 +49,19 @@ public sealed partial class HealthCheckEditorDialog
         if (e.ListItem is ListenerProtocol protocol)
             e.Value = protocol.ToString().ToUpperInvariant();
     }
+}
+
+/// <summary>Provides consistent health-check labels for icon-backed lists and selectors.</summary>
+internal static class HealthCheckDisplay
+{
+    internal static string Type(HealthCheckType? type) => type switch
+    {
+        HealthCheckType.Listener => "Listener",
+        HealthCheckType.Vrcosc => "VRChat OSCQuery",
+        _ => "Type missing"
+    };
+
+    internal static string ListItem(HealthCheckConfig healthCheck) =>
+        (string.IsNullOrWhiteSpace(healthCheck.Name) ? "New health check" : healthCheck.Name) +
+        (healthCheck.Enabled ? "" : " (disabled)");
 }

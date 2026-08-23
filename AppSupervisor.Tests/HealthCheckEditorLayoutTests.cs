@@ -160,6 +160,15 @@ public sealed class HealthCheckEditorLayoutTests
                 TableLayoutPanel settings = general.Controls
                     .OfType<TableLayoutPanel>()
                     .Single();
+                ComboBox typeSelector = Assert.Single(
+                    settings.Controls.OfType<ComboBox>(),
+                    comboBox => comboBox.SelectedItem is HealthCheckType
+                );
+                Assert.Equal(DrawMode.OwnerDrawFixed, typeSelector.DrawMode);
+                Assert.Equal(
+                    ConfigurationIconListRenderer.GetItemHeight(typeSelector),
+                    typeSelector.ItemHeight
+                );
                 int[] editorLeftEdges = settings.Controls
                     .Cast<Control>()
                     .Where(control => settings.GetColumn(control) == 1)

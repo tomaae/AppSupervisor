@@ -83,7 +83,12 @@ public sealed partial class ConfigurationEditorForm : Form
         AutoSize = true
     };
     private readonly NotificationTargetsControl _applicationNotifications = new();
-    private readonly ListBox _healthCheckList = new() { Dock = DockStyle.Fill };
+    private readonly ListBox _healthCheckList = new()
+    {
+        Dock = DockStyle.Fill,
+        DrawMode = DrawMode.OwnerDrawFixed,
+        IntegralHeight = false
+    };
     private readonly Panel _applicationEditorPanel = new() { Dock = DockStyle.Fill };
 
     private readonly CheckBox _serviceEnabled = new()
@@ -386,6 +391,8 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <returns>The nested health-check panel.</returns>
     private Control BuildHealthCheckPanel()
     {
+        _healthCheckList.ItemHeight =
+            ConfigurationIconListRenderer.GetItemHeight(_healthCheckList);
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -451,6 +458,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _resourceList.MouseMove += ResourceListMouseMove;
         _resourceList.MouseUp += ResourceListMouseUp;
         _healthCheckList.Format += HealthCheckListFormat;
+        _healthCheckList.DrawItem += HealthCheckListDrawItem;
         _healthCheckList.DoubleClick += EditHealthCheckClicked;
 
         _profileEnabled.CheckedChanged += ProfileFieldChanged;
@@ -721,11 +729,30 @@ public sealed partial class ConfigurationEditorForm : Form
     private void HealthCheckListFormat(object? sender, ListControlConvertEventArgs e)
     {
         if (e.ListItem is HealthCheckConfig healthCheck)
+            e.Value = HealthCheckDisplay.ListItem(healthCheck);
+    }
+
+    private void HealthCheckListDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || e.Index >= _healthCheckList.Items.Count ||
+            _healthCheckList.Items[e.Index] is not HealthCheckConfig healthCheck)
         {
-            string type = healthCheck.Type?.ToString().ToLowerInvariant() ?? "type missing";
-            e.Value = $"{DisplayName(healthCheck.Name, "New health check")} [{type}]" +
-                (healthCheck.Enabled ? "" : " (disabled)");
+            e.DrawBackground();
+            return;
         }
+
+        ConfigurationIconListRenderer.DrawItem(
+            e,
+            _healthCheckList.Font,
+            HealthCheckDisplay.ListItem(healthCheck),
+            (graphics, bounds, color, _) =>
+                ConfigurationItemIconRenderer.DrawHealthCheck(
+                    graphics,
+                    bounds,
+                    healthCheck.Type,
+                    color
+                )
+        );
     }
 
     /// <summary>Adds and selects a new supervisor profile.</summary>

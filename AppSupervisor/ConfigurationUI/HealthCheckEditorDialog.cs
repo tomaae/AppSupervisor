@@ -14,7 +14,8 @@ public sealed partial class HealthCheckEditorDialog : Form
     private readonly ComboBox _typeComboBox = new()
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
-        Dock = DockStyle.Fill
+        Dock = DockStyle.Fill,
+        DrawMode = DrawMode.OwnerDrawFixed
     };
     private readonly NumericUpDown _intervalSeconds = CreatePositiveNumeric(1, ConfigurationLimits.MaximumHealthIntervalSeconds);
     private readonly NumericUpDown _timeoutSeconds = CreatePositiveNumeric(1, ConfigurationLimits.MaximumHealthProbeTimeoutSeconds);
@@ -141,8 +142,10 @@ public sealed partial class HealthCheckEditorDialog : Form
         AcceptButton = saveButton;
         CancelButton = cancelButton;
         _typeComboBox.FormattingEnabled = true;
+        _typeComboBox.ItemHeight = ConfigurationIconListRenderer.GetItemHeight(_typeComboBox);
         _protocolComboBox.FormattingEnabled = true;
         _typeComboBox.Format += TypeComboBoxFormat;
+        _typeComboBox.DrawItem += TypeComboBoxDrawItem;
         _protocolComboBox.Format += ProtocolComboBoxFormat;
         _typeComboBox.DataSource = Enum.GetValues<HealthCheckType>();
         _protocolComboBox.DataSource = Enum.GetValues<ListenerProtocol>();
