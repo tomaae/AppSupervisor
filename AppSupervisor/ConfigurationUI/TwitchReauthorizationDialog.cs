@@ -1,11 +1,29 @@
+using AppSupervisor.Twitch;
+
 namespace AppSupervisor.ConfigurationUI;
 
-/// <summary>Prompts for fresh Twitch consent when the stored refresh chain is no longer usable.</summary>
+/// <summary>Prompts for and directly performs fresh Twitch broadcaster consent.</summary>
 internal sealed class TwitchReauthorizationDialog : Form
 {
+    private readonly Func<Action<string>, CancellationToken, Task<TwitchAuthorizationStatus>>
+        _connect;
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly Label _detailLabel;
+    private readonly Button _reconnectButton;
+    private readonly Button _laterButton;
+
     public TwitchReauthorizationDialog(string detail)
+        : this(detail, TwitchConnectionFlow.ConnectAsync)
+    {
+    }
+
+    internal TwitchReauthorizationDialog(
+        string detail,
+        Func<Action<string>, CancellationToken, Task<TwitchAuthorizationStatus>> connect)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(detail);
+        ArgumentNullException.ThrowIfNull(connect);
+        _connect = connect;
 
         Text = "Reconnect Twitch";
         StartPosition = FormStartPosition.CenterParent;
@@ -16,14 +34,14 @@ internal sealed class TwitchReauthorizationDialog : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(560, 205);
 
-        var reconnectButton = new Button
+        _reconnectButton = new Button
         {
             Text = "Reconnect Twitch",
-            DialogResult = DialogResult.OK,
             AutoSize = true,
             MinimumSize = new Size(128, 30)
         };
-        var laterButton = new Button
+        _reconnectButton.Click += ReconnectClicked;
+        _laterButton = new Button
         {
             Text = "Later",
             DialogResult = DialogResult.Cancel,
@@ -38,9 +56,17 @@ internal sealed class TwitchReauthorizationDialog : Form
             WrapContents = false,
             Margin = Padding.Empty
         };
-        buttons.Controls.Add(laterButton);
-        buttons.Controls.Add(reconnectButton);
+        buttons.Controls.Add(_laterButton);
+        buttons.Controls.Add(_reconnectButton);
 
+        _detailLabel = new Label
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            MaximumSize = new Size(520, 0),
+            Padding = new Padding(0, 12, 0, 12),
+            Text = $"{detail}\n\nReconnect before the next Twitch action is needed."
+        };
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -56,18 +82,57 @@ internal sealed class TwitchReauthorizationDialog : Form
             AutoSize = true,
             Text = "Twitch authorization needs to be renewed."
         });
-        layout.Controls.Add(new Label
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            MaximumSize = new Size(520, 0),
-            Padding = new Padding(0, 12, 0, 12),
-            Text = $"{detail}\n\nReconnect before the next Twitch action is needed."
-        });
+        layout.Controls.Add(_detailLabel);
         layout.Controls.Add(buttons);
         Controls.Add(layout);
 
-        AcceptButton = reconnectButton;
-        CancelButton = laterButton;
+        AcceptButton = _reconnectButton;
+        CancelButton = _laterButton;
+        FormClosed += (_, _) => _lifetimeCancellation.Cancel();
+    }
+
+    private async void ReconnectClicked(object? sender, EventArgs e)
+    {
+        _reconnectButton.Enabled = false;
+        _laterButton.Text = "Cancel";
+
+        try
+        {
+            TwitchAuthorizationStatus status = await _connect(
+                UpdateAuthorizationStatus,
+                _lifetimeCancellation.Token
+            );
+            if (IsDisposed)
+                return;
+
+            _detailLabel.Text = $"Connected as {status.Login}.";
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (IsDisposed)
+                return;
+
+            _detailLabel.Text = exception.Message;
+            _reconnectButton.Enabled = true;
+            _laterButton.Text = "Later";
+        }
+    }
+
+    private void UpdateAuthorizationStatus(string status)
+    {
+        if (!IsDisposed)
+            _detailLabel.Text = status;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            _lifetimeCancellation.Dispose();
+        base.Dispose(disposing);
     }
 }

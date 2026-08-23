@@ -18,23 +18,10 @@ public partial class TrayApplicationContext
     /// <param name="e">The menu-click or tray-icon event data.</param>
     private async void OpenConfigurationEditor(object? sender, EventArgs e)
     {
-        await OpenConfigurationEditorAsync(selectIntegrations: false);
-    }
-
-    /// <summary>Opens or focuses the editor directly on the Twitch integration controls.</summary>
-    private async void OpenTwitchIntegrationEditor()
-    {
-        await OpenConfigurationEditorAsync(selectIntegrations: true);
-    }
-
-    private async Task OpenConfigurationEditorAsync(bool selectIntegrations)
-    {
         if (_configurationEditorOpen)
         {
             if (_configurationEditor is { IsDisposed: false })
             {
-                if (selectIntegrations)
-                    _configurationEditor.SelectIntegrationsTab();
                 _configurationEditor.BringToFront();
                 _configurationEditor.Activate();
             }
@@ -60,9 +47,6 @@ public partial class TrayApplicationContext
                 ReadConfigurationRuntimeStatusSnapshot
             );
             _configurationEditor = editor;
-
-            if (selectIntegrations)
-                editor.SelectIntegrationsTab();
 
             if (editor.ShowDialog(_dialogOwner) == DialogResult.OK && !_exiting)
                 await LoadConfigurationAsync(showNotification: true);

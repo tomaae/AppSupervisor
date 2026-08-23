@@ -349,25 +349,12 @@ public sealed partial class ConfigurationEditorForm
         bool connected = false;
         try
         {
-            var integration = new TwitchIntegrationConfig();
-            using var authorization = new TwitchAuthorizationService(integration);
-            TwitchDeviceAuthorization device = await authorization.BeginConnectAsync(CancellationToken.None);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(device.VerificationUri.AbsoluteUri)
-            {
-                UseShellExecute = true
-            });
-            MessageBox.Show(
-                this,
-                $"Twitch opened in your browser. Enter this code if Twitch asks for it:\n\n{device.UserCode}\n\nAuthorize the broadcaster account, then return here. AppSupervisor will finish connecting automatically.",
-                "Authorize Twitch",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information
+            TwitchAuthorizationStatus status = await TwitchConnectionFlow.ConnectAsync(
+                status => _twitchConnectionStatus.Text = status,
+                CancellationToken.None
             );
-            _twitchConnectionStatus.Text = "Waiting for Twitch authorization...";
-            TwitchAuthorizationStatus status = await authorization.CompleteConnectAsync(device, CancellationToken.None);
             ApplyTwitchConnectionStatus(status);
             connected = true;
-            MessageBox.Show(this, $"Connected as {status.Login}.", "Twitch connected", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {

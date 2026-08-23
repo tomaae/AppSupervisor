@@ -12,52 +12,6 @@ namespace AppSupervisor.Tests;
 public sealed class ConfigurationEditorTwitchTests
 {
     [Fact]
-    public void SelectIntegrationsTab_OpensGlobalIntegrationPage()
-    {
-        string directory = Path.Combine(
-            Path.GetTempPath(),
-            $"AppSupervisor.TwitchTabTests-{Guid.NewGuid():N}"
-        );
-        Directory.CreateDirectory(directory);
-        string configPath = Path.Combine(directory, "config.json");
-        ConfigFileWriter.SaveAtomic(configPath, new AppSupervisorConfig());
-        Exception? threadException = null;
-
-        try
-        {
-            var thread = new Thread(() =>
-            {
-                try
-                {
-                    using var form = new ConfigurationEditorForm(
-                        configPath,
-                        _ => Task.FromResult<IReadOnlyList<InstalledServiceInfo>>([]),
-                        notificationPublisher: null
-                    );
-
-                    form.SelectIntegrationsTab();
-
-                    TabControl tabs = Assert.Single(EnumerateControls(form).OfType<TabControl>());
-                    Assert.Equal("Integrations", tabs.SelectedTab!.Text);
-                }
-                catch (Exception exception)
-                {
-                    threadException = exception;
-                }
-            });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "Twitch tab test timed out.");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-
-        Assert.Null(threadException);
-    }
-
-    [Fact]
     public void ConnectionStatus_EnablesOnlyApplicableConnectionButton()
     {
         string directory = Path.Combine(

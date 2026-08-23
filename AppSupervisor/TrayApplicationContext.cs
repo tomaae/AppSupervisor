@@ -341,8 +341,7 @@ public partial class TrayApplicationContext : ApplicationContext
                 return;
 
             using var dialog = new TwitchReauthorizationDialog(detail);
-            if (dialog.ShowDialog(_dialogOwner) == DialogResult.OK && !_exiting)
-                OpenTwitchIntegrationEditor();
+            dialog.ShowDialog(_dialogOwner);
         });
     }
 

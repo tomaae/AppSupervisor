@@ -1,4 +1,5 @@
 using AppSupervisor.ConfigurationUI;
+using AppSupervisor.Twitch;
 using System.Windows.Forms;
 
 namespace AppSupervisor.Tests;
@@ -7,15 +8,22 @@ namespace AppSupervisor.Tests;
 public sealed class TwitchReauthorizationDialogTests
 {
     [Fact]
-    public void Dialog_OffersExplicitReconnectAndLaterActions()
+    public void ReconnectButton_PerformsAuthorizationDirectly()
     {
         Exception? threadException = null;
         var thread = new Thread(() =>
         {
             try
             {
+                int connectionCount = 0;
                 using var dialog = new TwitchReauthorizationDialog(
-                    "The stored Twitch authorization can no longer be refreshed."
+                    "The stored Twitch authorization can no longer be refreshed.",
+                    (updateStatus, _) =>
+                    {
+                        connectionCount++;
+                        updateStatus("Waiting for Twitch authorization...");
+                        return Task.FromResult(new TwitchAuthorizationStatus(true, "broadcaster"));
+                    }
                 );
                 Button reconnect = Assert.Single(
                     EnumerateControls(dialog).OfType<Button>(),
@@ -28,12 +36,16 @@ public sealed class TwitchReauthorizationDialogTests
 
                 Assert.Same(reconnect, dialog.AcceptButton);
                 Assert.Same(later, dialog.CancelButton);
-                Assert.Equal(DialogResult.OK, reconnect.DialogResult);
+                Assert.Equal(DialogResult.None, reconnect.DialogResult);
                 Assert.Equal(DialogResult.Cancel, later.DialogResult);
-                Assert.Contains(
-                    EnumerateControls(dialog).OfType<Label>(),
-                    label => label.Text.Contains("before the next Twitch action", StringComparison.Ordinal)
-                );
+
+                dialog.Show();
+                reconnect.PerformClick();
+                Application.DoEvents();
+
+                Assert.Equal(1, connectionCount);
+                Assert.Equal(DialogResult.OK, dialog.DialogResult);
+                Assert.False(dialog.Visible);
             }
             catch (Exception exception)
             {
