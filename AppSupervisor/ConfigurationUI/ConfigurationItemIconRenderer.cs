@@ -5,6 +5,37 @@ namespace AppSupervisor.ConfigurationUI;
 /// <summary>Draws compact configuration-item pictograms that remain legible at 20 pixels.</summary>
 internal static class ConfigurationItemIconRenderer
 {
+    /// <summary>Draws a speaker for output endpoints and a microphone for input endpoints.</summary>
+    internal static void DrawAudio(
+        Graphics graphics,
+        Rectangle bounds,
+        AudioInterfaceDirection direction,
+        Color color)
+    {
+        SmoothingMode previousSmoothingMode = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        try
+        {
+            float strokeWidth = Math.Max(1.35f, bounds.Width / 12f);
+            using var pen = new Pen(color, strokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            if (direction == AudioInterfaceDirection.Input)
+                DrawMicrophone(graphics, pen, bounds);
+            else
+                DrawSpeaker(graphics, pen, bounds);
+        }
+        finally
+        {
+            graphics.SmoothingMode = previousSmoothingMode;
+        }
+    }
+
     /// <summary>Draws a network-listener or OSCQuery pictogram for one health-check type.</summary>
     internal static void DrawHealthCheck(
         Graphics graphics,
@@ -102,6 +133,48 @@ internal static class ConfigurationItemIconRenderer
         PointF center = RelativePoint(bounds, 0.5f, 0.5f);
         graphics.DrawLine(pen, center, RelativePoint(bounds, 0.5f, 0.28f));
         graphics.DrawLine(pen, center, RelativePoint(bounds, 0.7f, 0.5f));
+    }
+
+    private static void DrawSpeaker(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        float middleY = bounds.Top + bounds.Height / 2f;
+        var speaker = new PointF[]
+        {
+            new(bounds.Left + bounds.Width * 0.1f, middleY - bounds.Height * 0.15f),
+            new(bounds.Left + bounds.Width * 0.32f, middleY - bounds.Height * 0.15f),
+            new(bounds.Left + bounds.Width * 0.52f, bounds.Top + bounds.Height * 0.17f),
+            new(bounds.Left + bounds.Width * 0.52f, bounds.Bottom - bounds.Height * 0.17f),
+            new(bounds.Left + bounds.Width * 0.32f, middleY + bounds.Height * 0.15f),
+            new(bounds.Left + bounds.Width * 0.1f, middleY + bounds.Height * 0.15f)
+        };
+        graphics.DrawPolygon(pen, speaker);
+        graphics.DrawArc(
+            pen,
+            RelativeRectangle(bounds, 0.4f, 0.24f, 0.42f, 0.52f),
+            -55,
+            110
+        );
+    }
+
+    private static void DrawMicrophone(Graphics graphics, Pen pen, Rectangle bounds)
+    {
+        graphics.DrawEllipse(pen, RelativeRectangle(bounds, 0.33f, 0.07f, 0.34f, 0.55f));
+        graphics.DrawArc(
+            pen,
+            RelativeRectangle(bounds, 0.18f, 0.27f, 0.64f, 0.52f),
+            0,
+            180
+        );
+        graphics.DrawLine(
+            pen,
+            RelativePoint(bounds, 0.5f, 0.79f),
+            RelativePoint(bounds, 0.5f, 0.9f)
+        );
+        graphics.DrawLine(
+            pen,
+            RelativePoint(bounds, 0.3f, 0.9f),
+            RelativePoint(bounds, 0.7f, 0.9f)
+        );
     }
 
     private static void DrawListener(Graphics graphics, Pen pen, Rectangle bounds)

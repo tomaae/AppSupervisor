@@ -148,6 +148,16 @@ public sealed class ConfigurationEditorAddResourceTests
                     );
                     Assert.True(audio.UseDefaultDevice);
                     Assert.Equal(AudioInterfaceDirection.Output, audio.Direction);
+                    ComboBox audioSelector = Assert.Single(
+                        EnumerateControls(form).OfType<ComboBox>(),
+                        comboBox => comboBox.Items.Count == 3 &&
+                            comboBox.Items.Cast<object>().All(item => item is AudioEndpointSnapshot)
+                    );
+                    Assert.Equal(DrawMode.OwnerDrawFixed, audioSelector.DrawMode);
+                    Assert.Equal(
+                        ConfigurationIconListRenderer.GetItemHeight(audioSelector),
+                        audioSelector.ItemHeight
+                    );
                     Assert.Single(
                         EnumerateControls(form).OfType<Button>(),
                         button => button.Visible && button.Text == "Test for 5 seconds"

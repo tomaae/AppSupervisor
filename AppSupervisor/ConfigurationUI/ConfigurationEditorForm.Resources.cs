@@ -428,6 +428,17 @@ public sealed partial class ConfigurationEditorForm
                 return;
             }
 
+            if (resource is AudioInterfaceResourceConfig audio)
+            {
+                ConfigurationItemIconRenderer.DrawAudio(
+                    graphics,
+                    bounds,
+                    audio.Direction,
+                    color
+                );
+                return;
+            }
+
             float strokeWidth = Math.Max(1f, bounds.Width / 11f);
             using var pen = new Pen(color, strokeWidth)
             {
@@ -438,8 +449,6 @@ public sealed partial class ConfigurationEditorForm
 
             if (resource is DelayResourceConfig)
                 DrawDelayIcon(graphics, pen, bounds);
-            else if (resource is AudioInterfaceResourceConfig)
-                DrawAudioIcon(graphics, pen, bounds);
             else
                 DrawApplicationIcon(graphics, pen, bounds);
         }

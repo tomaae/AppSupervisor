@@ -16,6 +16,7 @@ public sealed partial class ConfigurationEditorForm
     {
         Dock = DockStyle.Fill,
         DropDownStyle = ComboBoxStyle.DropDownList,
+        DrawMode = DrawMode.OwnerDrawFixed,
         DisplayMember = nameof(AudioEndpointSnapshot.DisplayName)
     };
     private readonly NumericUpDown _audioVolume = new()
@@ -47,6 +48,8 @@ public sealed partial class ConfigurationEditorForm
 
     private Control BuildAudioInterfaceEditor()
     {
+        _audioInterfaceSelector.ItemHeight =
+            ConfigurationIconListRenderer.GetItemHeight(_audioInterfaceSelector);
         _audioInterfaceEditorPanel.Padding = new Padding(14);
         var scrolling = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         TableLayoutPanel layout = CreateEditorTable();
@@ -80,6 +83,7 @@ public sealed partial class ConfigurationEditorForm
 
         _audioInterfaceEnabled.CheckedChanged += AudioInterfaceFieldChanged;
         _audioInterfaceSelector.SelectedIndexChanged += AudioInterfaceSelectionChanged;
+        _audioInterfaceSelector.DrawItem += AudioInterfaceSelectorDrawItem;
         _audioVolume.ValueChanged += AudioInterfaceFieldChanged;
         _audioMuteState.SelectedIndexChanged += AudioInterfaceFieldChanged;
         _audioRestoreOnDeactivate.CheckedChanged += AudioInterfaceFieldChanged;
@@ -229,6 +233,32 @@ public sealed partial class ConfigurationEditorForm
 
         endpoint.CopyIdentityTo(resource);
         AudioInterfaceFieldChanged(sender, e);
+    }
+
+    private void AudioInterfaceSelectorDrawItem(object? sender, DrawItemEventArgs e)
+    {
+        AudioEndpointSnapshot? endpoint = e.Index >= 0 && e.Index < _audioInterfaceSelector.Items.Count
+            ? _audioInterfaceSelector.Items[e.Index] as AudioEndpointSnapshot
+            : _audioInterfaceSelector.SelectedItem as AudioEndpointSnapshot;
+
+        if (endpoint is null)
+        {
+            e.DrawBackground();
+            return;
+        }
+
+        ConfigurationIconListRenderer.DrawItem(
+            e,
+            _audioInterfaceSelector.Font,
+            endpoint.DisplayName,
+            (graphics, bounds, color, _) =>
+                ConfigurationItemIconRenderer.DrawAudio(
+                    graphics,
+                    bounds,
+                    endpoint.Direction,
+                    color
+                )
+        );
     }
 
     private void AudioInterfaceFieldChanged(object? sender, EventArgs e)
@@ -387,30 +417,6 @@ public sealed partial class ConfigurationEditorForm
 
     private void TestAudioNotificationClicked(object? sender, EventArgs e) =>
         PublishTestNotification(_audioNotifications.SelectedTargets, "Windows audio interface");
-
-    private static void DrawAudioIcon(Graphics graphics, Pen pen, Rectangle bounds)
-    {
-        float middleY = bounds.Top + bounds.Height / 2f;
-        var speaker = new PointF[]
-        {
-            new(bounds.Left + bounds.Width * 0.12f, middleY - bounds.Height * 0.15f),
-            new(bounds.Left + bounds.Width * 0.34f, middleY - bounds.Height * 0.15f),
-            new(bounds.Left + bounds.Width * 0.53f, bounds.Top + bounds.Height * 0.18f),
-            new(bounds.Left + bounds.Width * 0.53f, bounds.Bottom - bounds.Height * 0.18f),
-            new(bounds.Left + bounds.Width * 0.34f, middleY + bounds.Height * 0.15f),
-            new(bounds.Left + bounds.Width * 0.12f, middleY + bounds.Height * 0.15f)
-        };
-        graphics.DrawPolygon(pen, speaker);
-        graphics.DrawArc(
-            pen,
-            bounds.Left + bounds.Width * 0.39f,
-            bounds.Top + bounds.Height * 0.25f,
-            bounds.Width * 0.42f,
-            bounds.Height * 0.5f,
-            -55,
-            110
-        );
-    }
 
     private sealed record AudioMuteChoice(bool Muted, string DisplayName);
 }
