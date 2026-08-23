@@ -1,16 +1,105 @@
 # AppSupervisor
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/tomaae/AppSupervisor?style=plastic)
-![Project Stage](https://img.shields.io/badge/project%20stage-development-yellow.svg?style=plastic)
-![GitHub all releases](https://img.shields.io/github/downloads/tomaae/AppSupervisor/total?style=plastic)
 
-![GitHub commits since latest release](https://img.shields.io/github/commits-since/tomaae/AppSupervisor/latest?style=plastic)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/m/tomaae/AppSupervisor?style=plastic)
-![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/tomaae/AppSupervisor/ci.yml?style=plastic)
+**Keep a complete Windows setup in sync with the application that needs it.**
 
-AppSupervisor is a lightweight Windows tray application that starts, supervises, restarts, and closes groups of helper applications and Windows services based on whether a configured monitor process is running.
+[![Latest release](https://img.shields.io/github/v/release/tomaae/AppSupervisor?style=flat-square)](https://github.com/tomaae/AppSupervisor/releases/latest)
+![Project stage](https://img.shields.io/badge/project%20stage-development-yellow.svg?style=flat-square)
+![Total downloads](https://img.shields.io/github/downloads/tomaae/AppSupervisor/total?style=flat-square)
+[![Build](https://img.shields.io/github/actions/workflow/status/tomaae/AppSupervisor/ci.yml?style=flat-square&label=build)](https://github.com/tomaae/AppSupervisor/actions/workflows/ci.yml)
+![Commits since release](https://img.shields.io/github/commits-since/tomaae/AppSupervisor/latest?style=flat-square)
+
+AppSupervisor is a lightweight Windows tray application that watches for a configured process and then starts, supervises, restarts, and closes the applications, services, devices, and integrations that belong with it.
+
+For example, starting OBS can activate streaming helpers, audio settings, lighting, and Twitch chat modes in one ordered profile. Closing OBS reverses the resources that should be restored and leaves one-shot actions alone.
 
 > [!CAUTION]
 > **This project was fully created by AI.** Selected behavior has been tested by the project owner, but the code has not received a comprehensive independent human audit. Review it carefully before use—especially because AppSupervisor runs with administrator privileges and can start or stop applications and Windows services.
+
+## Quick start
+
+1. Download and extract the [latest release](https://github.com/tomaae/AppSupervisor/releases/latest).
+2. Install the **.NET 10 Desktop Runtime** if it is not already installed.
+3. Run `AppSupervisor.exe`, approve the UAC prompt, and find AppSupervisor in the notification area.
+4. Double-click the tray icon—or right-click it and choose **Configure...**—to open the editor.
+5. Create a profile, choose the process that activates it, add helpers in startup order, then choose **Validate** and **Save & Apply**.
+
+AppSupervisor runs in the notification area rather than opening a permanent main window. Its configuration is stored beside the executable in `config.json`.
+
+## How profiles work
+
+| Event | What AppSupervisor does |
+| --- | --- |
+| The monitored process starts | Activates the profile and processes enabled resources from top to bottom. |
+| A helper or service becomes unavailable unexpectedly | Reports the problem and optionally restarts it after the configured timeout. |
+| A health check confirms a failure | Notifies the configured destinations and can gracefully restart the affected helper. |
+| The monitored process remains closed | Waits for the profile's close timeout, then closes, stops, or restores reversible resources. |
+| Supervision is paused or AppSupervisor exits | Leaves external applications, services, devices, and integration state untouched. |
+
+## Configuration tour
+
+The screenshots below use a sanitized copy of a real OBS profile. They contain example credentials and device data only.
+
+### 1. Choose what activates a profile
+
+A profile watches one executable name. The optional close and restart timeout overrides apply to everything owned by that profile.
+
+![OBS profile settings showing the monitored process and timeout controls](docs/images/configuration-profile.jpg)
+
+### 2. Build an ordered helper list
+
+Add applications, Windows services, delays, audio interfaces, Home Assistant actions, OBS actions, or Twitch actions. Drag or move helpers into startup order, and make a helper depend on an earlier application or service when readiness matters.
+
+The left side keeps the entire sequence visible; the right side shows the settings and test actions for the selected helper.
+
+![Ordered OBS helper list with a Home Assistant lighting action selected](docs/images/configuration-resources.jpg)
+
+### 3. Automate startup and verify helper health
+
+Each helper can run an ordered Startup macro after launch and can own independent health checks. Individual actions, full macros, checks, notifications, and the complete helper lifecycle can be tested before the profile is activated.
+
+![A helper with an ordered Startup macro and an OBS WebSocket health check](docs/images/macros-and-health-checks.jpg)
+
+A health check controls its own timing, failure threshold, recovery behavior, process gate, and notification destinations:
+
+![Listener health-check settings for an OBS WebSocket endpoint](docs/images/health-check.jpg)
+
+### 4. Configure shared integrations once
+
+Home Assistant, OBS WebSocket, Twitch, SteamVR monitoring, diagnostic logging, and the read-only local API are global settings shared by profiles. Credentials remain masked in the editor but Home Assistant and OBS credentials are stored in the local configuration file.
+
+![Global Supervisor API, Home Assistant, and OBS WebSocket settings](docs/images/configuration-integrations.jpg)
+
+### 5. Read supervision state from the tray
+
+The tray icon stays compact while showing the important state. The blue clock means helpers are still starting. The orange stop badge appears both during the profile's close timeout and while helpers are closing; either badge can be combined with the green supervising or red error badge when both conditions apply.
+
+![Inactive, supervising, paused, error, starting, and stopping tray icon examples](docs/images/tray-icon-states.png)
+
+- **Inactive:** no profile currently needs resources.
+- **Supervising:** at least one profile is active.
+- **Paused:** supervision is paused; external resources are left untouched.
+- **Error:** one or more active supervision errors need attention.
+- **Starting:** one or more profile resources are still starting.
+- **Stopping:** the close timeout is running or one or more profile resources are still closing.
+
+## Contents
+
+- [Functionality summary](#functionality-summary)
+- [Profiles and resources](#profiles-and-resources)
+- [Helper applications](#helper-applications)
+- [Startup macros](#startup-macros)
+- [Windows services](#windows-services)
+- [Health checks](#health-checks)
+- [Home Assistant](#home-assistant)
+- [OBS WebSocket](#obs-websocket)
+- [Windows audio interfaces](#windows-audio-interfaces)
+- [SteamVR device monitoring](#steamvr-device-monitoring)
+- [Twitch](#twitch)
+- [Notifications](#notifications)
+- [Configuration editor](#configuration-editor)
+- [Diagnostic logging](#diagnostic-logging)
+- [Supervisor API](#supervisor-api)
+- [Installation and building](#running-a-packaged-build)
 
 ## Functionality summary
 
