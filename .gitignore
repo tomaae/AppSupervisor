@@ -1,5 +1,6 @@
 **/bin/
 **/obj/
+**/node_modules/
 artifacts/
 .vs/
 TestResults/
@@ -12,5 +13,6 @@ TestResults/
 .sentry-native/
 .diagnostics/
 *.log
+StreamDeckPlugin/com.tomaae.appsupervisor.sdPlugin/LICENSE.txt
 AppSupervisor/config.json
 AppSupervisor/config.json.old

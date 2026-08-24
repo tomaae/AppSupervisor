@@ -13,6 +13,12 @@ public partial class TrayApplicationContext
     private bool _verifiedBackupSaved;
     private ConfigurationEditorForm? _configurationEditor;
 
+    /// <summary>Marshals a Stream Deck key press onto the WinForms thread.</summary>
+    private void StreamDeckConfigurationRequested()
+    {
+        RunOnUiThread(() => OpenConfigurationEditor(null, EventArgs.Empty));
+    }
+
     /// <summary>Opens one structured editor from the tray menu or tray-icon double-click and reloads an accepted document.</summary>
     /// <param name="sender">The Configure menu item or tray icon.</param>
     /// <param name="e">The menu-click or tray-icon event data.</param>

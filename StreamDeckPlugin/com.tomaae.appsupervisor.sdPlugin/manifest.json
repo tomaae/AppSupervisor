@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Actions": [
+    {
+      "Controllers": [
+        "Keypad"
+      ],
+      "Icon": "static/imgs/action-list/status",
+      "Name": "Status",
+      "States": [
+        {
+          "Image": "static/imgs/keys/offline",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#FFFFFF",
+          "FontSize": 12
+        }
+      ],
+      "Tooltip": "Shows AppSupervisor status and opens configuration when pressed.",
+      "UUID": "com.tomaae.appsupervisor.status",
+      "UserTitleEnabled": false
+    }
+  ],
+  "ApplicationsToMonitor": {
+    "windows": [
+      "AppSupervisor.exe"
+    ]
+  },
+  "Author": "Tomaae",
+  "Category": "AppSupervisor",
+  "CategoryIcon": "static/imgs/category/appsupervisor",
+  "CodePath": "bin/plugin.js",
+  "Description": "Mirrors the AppSupervisor tray status on a Stream Deck key and opens configuration when pressed.",
+  "Icon": "static/imgs/plugin/appsupervisor",
+  "Name": "AppSupervisor",
+  "Nodejs": {
+    "Version": "20"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.6"
+  },
+  "UUID": "com.tomaae.appsupervisor",
+  "Version": "1.0.0.0"
+}

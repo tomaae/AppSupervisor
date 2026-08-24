@@ -1,0 +1,19 @@
+{
+  "name": "appsupervisor-stream-deck",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "build": "node esbuild.mjs",
+    "validate": "streamdeck validate com.tomaae.appsupervisor.sdPlugin --no-update-check",
+    "pack": "npm run test && npm run build && streamdeck pack com.tomaae.appsupervisor.sdPlugin --force --no-update-check --output ../artifacts/StreamDeck"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "2.1.2"
+  },
+  "devDependencies": {
+    "@elgato/cli": "1.9.0",
+    "esbuild": "0.28.2"
+  }
+}

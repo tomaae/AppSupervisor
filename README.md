@@ -403,6 +403,32 @@ curl.exe -sS -o NUL -w '%{http_code}\n' http://127.0.0.1:17834/not-a-profile
 curl.exe -sS -o NUL -w '%{http_code}\n' -X POST http://127.0.0.1:17834/
 ```
 
+### Stream Deck status button
+
+The companion Stream Deck plugin provides one **Status** action that behaves like an accessible
+copy of the tray icon. Its image and short title follow the same waiting, supervising, starting,
+stopping, paused, and error states as the Windows notification-area icon. Pressing the key opens
+the same configuration editor as double-clicking the tray icon. Multiple Status keys share one
+connection and always display the same current state.
+
+The connection is automatic and does not require enabling the Supervisor API. AppSupervisor pushes
+only deduplicated state changes over a current-user-only Windows named pipe; neither side polls for
+status. When AppSupervisor is unavailable, the key shows **Offline**. Reconnect attempts back off to
+once per minute, while Stream Deck's application monitoring triggers an immediate attempt when
+`AppSupervisor.exe` launches.
+
+To install the development package:
+
+1. Double-click `artifacts/StreamDeck/com.tomaae.appsupervisor.streamDeckPlugin` and accept the
+   Stream Deck installation prompt.
+2. In the Stream Deck application, expand **AppSupervisor** and drag **Status** onto a key.
+3. Start the matching AppSupervisor build. The key should adopt the tray status; press it to open
+   configuration.
+
+Building the installer from source requires Node.js 24 or later. Run
+`.\StreamDeckPlugin\Build.ps1`; it installs the locked dependencies, runs plugin tests, bundles and
+validates the plugin, and writes the installer under `artifacts/StreamDeck/`.
+
 ### Administrator and startup behavior
 
 AppSupervisor requires administrator privileges to manage configured services consistently. It prevents multiple supervisor instances and can create a current-user scheduled task that launches it with elevated privileges at sign-in.

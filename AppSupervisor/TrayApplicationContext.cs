@@ -3,6 +3,7 @@ using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
 using AppSupervisor.SteamVr;
+using AppSupervisor.StreamDeck;
 using AppSupervisor.SupervisorApi;
 using AppSupervisor.Twitch;
 using Microsoft.Win32;
@@ -33,6 +34,8 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _pauseResumeItem;
     private readonly NotificationService _notificationService;
     private readonly SupervisorApiServer _supervisorApi = new();
+    private readonly StreamDeckStatusImages _streamDeckStatusImages;
+    private readonly StreamDeckStatusServer _streamDeckStatusServer;
     private readonly SemaphoreSlim _supervisionGate = new(1, 1);
     private readonly CancellationTokenSource _supervisionCancellation = new();
     private int _monitorWorkPending;
@@ -116,6 +119,18 @@ public partial class TrayApplicationContext : ApplicationContext
         };
         _trayIcon.DoubleClick += OpenConfigurationEditor;
         _dialogOwner = CreateDialogOwner();
+
+        _streamDeckStatusImages = StreamDeckStatusImages.Create(
+            Application.ExecutablePath,
+            _appIcon
+        );
+        _streamDeckStatusServer = new StreamDeckStatusServer(new StreamDeckStatusSnapshot(
+            StreamDeckVisualState.Idle,
+            "Starting",
+            "AppSupervisor - Starting",
+            _streamDeckStatusImages[StreamDeckVisualState.Idle]
+        ));
+        _streamDeckStatusServer.ConfigurationRequested += StreamDeckConfigurationRequested;
 
         string executablePath = Environment.ProcessPath
             ?? throw new InvalidOperationException("The AppSupervisor executable path could not be determined.");
@@ -1137,16 +1152,22 @@ public partial class TrayApplicationContext : ApplicationContext
                 : "Pause";
         Icon icon;
         string text;
+        StreamDeckVisualState streamDeckState;
+        string streamDeckTitle;
 
         if (_pausing)
         {
             icon = _errorIcon;
             text = "AppSupervisor - Pausing; finishing lifecycle tasks";
+            streamDeckState = StreamDeckVisualState.Error;
+            streamDeckTitle = "Pausing";
         }
         else if (_pausedManually)
         {
             icon = _pausedIcon;
             text = "AppSupervisor - Paused";
+            streamDeckState = StreamDeckVisualState.Paused;
+            streamDeckTitle = "Paused";
         }
         else if (_configurationLoadError)
         {
@@ -1155,6 +1176,8 @@ public partial class TrayApplicationContext : ApplicationContext
                 _configurationLoadErrorTrayStatus,
                 additionalErrorCount: 0
             );
+            streamDeckState = StreamDeckVisualState.Error;
+            streamDeckTitle = "Config error";
         }
         else if (hasRuntimeError || _hasSteamVrOfflineDevices)
         {
@@ -1183,21 +1206,33 @@ public partial class TrayApplicationContext : ApplicationContext
                 additionalErrorCount,
                 activity
             );
+            streamDeckState = shutdownPending
+                ? StreamDeckVisualState.StoppingError
+                : startupPending
+                    ? StreamDeckVisualState.StartingError
+                    : StreamDeckVisualState.Error;
+            streamDeckTitle = activity is null ? "Error" : $"Error\n{activity}";
         }
         else if (_profiles.Count == 0 && !_steamVrMonitoringEnabled)
         {
             icon = _errorIcon;
             text = "AppSupervisor - No enabled profiles";
+            streamDeckState = StreamDeckVisualState.Error;
+            streamDeckTitle = "No profiles";
         }
         else if (_profiles.Count == 0)
         {
             icon = _appIcon;
             text = "AppSupervisor - Monitoring SteamVR";
+            streamDeckState = StreamDeckVisualState.Idle;
+            streamDeckTitle = "SteamVR";
         }
         else if (_paused)
         {
             icon = _pausedIcon;
             text = "AppSupervisor - Paused";
+            streamDeckState = StreamDeckVisualState.Paused;
+            streamDeckTitle = "Paused";
         }
         else if (shutdownPending)
         {
@@ -1205,6 +1240,10 @@ public partial class TrayApplicationContext : ApplicationContext
             text = supervisionActive
                 ? $"AppSupervisor - Supervising; {shutdownText}"
                 : $"AppSupervisor - {char.ToUpperInvariant(shutdownText[0])}{shutdownText[1..]}";
+            streamDeckState = supervisionActive
+                ? StreamDeckVisualState.StoppingSupervising
+                : StreamDeckVisualState.Stopping;
+            streamDeckTitle = "Closing";
         }
         else if (supervisionActive)
         {
@@ -1212,14 +1251,27 @@ public partial class TrayApplicationContext : ApplicationContext
             text = startupPending
                 ? "AppSupervisor - Starting helpers"
                 : "AppSupervisor - Supervising";
+            streamDeckState = startupPending
+                ? StreamDeckVisualState.StartingSupervising
+                : StreamDeckVisualState.Supervising;
+            streamDeckTitle = startupPending ? "Starting" : "Supervising";
         }
         else
         {
             icon = _appIcon;
             text = "AppSupervisor - Waiting for monitored applications";
+            streamDeckState = StreamDeckVisualState.Idle;
+            streamDeckTitle = "Waiting";
         }
 
-        var state = new TrayStateSnapshot(pauseEnabled, pauseText, icon, text);
+        var state = new TrayStateSnapshot(
+            pauseEnabled,
+            pauseText,
+            icon,
+            text,
+            streamDeckState,
+            streamDeckTitle
+        );
 
         lock (_trayStateLock)
         {
@@ -1301,6 +1353,12 @@ public partial class TrayApplicationContext : ApplicationContext
         _pauseResumeItem.Text = state.PauseText;
         _trayIcon.Icon = state.Icon;
         _trayIcon.Text = state.Text;
+        _streamDeckStatusServer.Publish(new StreamDeckStatusSnapshot(
+            state.StreamDeckState,
+            state.StreamDeckTitle,
+            state.Text,
+            _streamDeckStatusImages[state.StreamDeckState]
+        ));
 
         if (transition)
             SupervisorLog.WriteTrace($"Tray transition applied: '{state.Text}'.");
@@ -1311,7 +1369,9 @@ public partial class TrayApplicationContext : ApplicationContext
         bool PauseEnabled,
         string PauseText,
         Icon Icon,
-        string Text)
+        string Text,
+        StreamDeckVisualState StreamDeckState,
+        string StreamDeckTitle)
     {
         /// <summary>Compares stable tray values without relying on native icon-handle equality.</summary>
         public bool Matches(TrayStateSnapshot other)
@@ -1319,7 +1379,9 @@ public partial class TrayApplicationContext : ApplicationContext
             return PauseEnabled == other.PauseEnabled &&
                 string.Equals(PauseText, other.PauseText, StringComparison.Ordinal) &&
                 ReferenceEquals(Icon, other.Icon) &&
-                string.Equals(Text, other.Text, StringComparison.Ordinal);
+                string.Equals(Text, other.Text, StringComparison.Ordinal) &&
+                StreamDeckState == other.StreamDeckState &&
+                string.Equals(StreamDeckTitle, other.StreamDeckTitle, StringComparison.Ordinal);
         }
     }
 
@@ -1399,6 +1461,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         _supervisionCancellation.Cancel();
         _supervisorApi.Dispose();
+        await _streamDeckStatusServer.DisposeAsync();
         await Task.Run(_notificationService.Dispose);
 
         _ensureClosedTimer.Dispose();
