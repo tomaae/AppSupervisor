@@ -47,7 +47,7 @@ A profile watches one executable name. The optional close and restart timeout ov
 
 ### 2. Build an ordered helper list
 
-Add applications, Windows services, delays, audio interfaces, Home Assistant actions, OBS actions, or Twitch actions. Drag or move helpers into startup order, and make a helper depend on an earlier application or service when readiness matters.
+Add applications, Windows services, delays, audio interfaces, Home Assistant actions, OBS actions, Stream Deck actions, or Twitch actions. Drag or move helpers into startup order, and make a helper depend on an earlier application or service when readiness matters.
 
 The left side keeps the entire sequence visible; the right side shows the settings and test actions for the selected helper.
 
@@ -92,6 +92,7 @@ The tray icon stays compact while showing the important state. The blue clock me
 - [Health checks](#health-checks)
 - [Home Assistant](#home-assistant)
 - [OBS WebSocket](#obs-websocket)
+- [Stream Deck actions](#stream-deck-actions)
 - [Windows audio interfaces](#windows-audio-interfaces)
 - [SteamVR device monitoring](#steamvr-device-monitoring)
 - [Twitch](#twitch)
@@ -135,6 +136,7 @@ Resources can include:
 - Nonblocking delays between startup entries.
 - Home Assistant actions.
 - OBS actions.
+- Stream Deck actions.
 - Twitch broadcaster actions.
 - Windows audio interface actions.
 
@@ -206,6 +208,18 @@ Profiles can switch the OBS program scene, mute or unmute an OBS input, and show
 
 OBS uses the standard WebSocket 5.x protocol over `ws` with a shared host, port, and optional password. The password is stored in the local configuration files, so those files must be treated as credentials.
 
+### Stream Deck actions
+
+Profiles can run actions placed on Stream Deck's dedicated **MCP Actions** profile. Choose **Add Stream Deck action** in the Resources menu, select a discovered action, and optionally test it before saving. The action runs once during profile activation and is never reversed when the monitored app closes. This is a native Stream Deck action invocation through Elgato's MCP server; AppSupervisor does not simulate a physical or virtual key press.
+
+In Stream Deck 7.4 or later, enable **MCP Deck** under Stream Deck Preferences and place the desired actions on the generated MCP Actions profile. Then install Elgato's local bridge once:
+
+```powershell
+npm install -g @elgato/mcp-server
+```
+
+AppSupervisor starts one shared local stdio bridge only when discovery or execution is requested, serializes calls through it, and performs no polling. The separate AppSupervisor Stream Deck plugin described below remains responsible only for the tray-style Status key.
+
 ### Windows audio interfaces
 
 Profiles can set the master volume and mute state of an active Windows playback or recording interface. The interface picker includes **Default output** and **Default input** choices that follow the current Windows multimedia defaults. Before applying the requested state, AppSupervisor captures the current volume and mute values. By default it restores both values when the monitored app closes; clear **Restore original volume and mute when monitored app closes** when the requested state should remain in place. **Test for 5 seconds** temporarily applies the configured state and always attempts to restore the original values.
@@ -228,7 +242,7 @@ Twitch uses one global broadcaster connection and allows Twitch resources in onl
 
 ### Notifications
 
-Helper applications, Windows services, health checks, Windows audio interfaces, Home Assistant actions, OBS actions, Twitch actions, and SteamVR devices can report through:
+Helper applications, Windows services, health checks, Windows audio interfaces, Home Assistant actions, OBS actions, Stream Deck actions, Twitch actions, and SteamVR devices can report through:
 
 - Popup dialogs.
 - Windows notifications.
@@ -244,7 +258,7 @@ Open the editor from **Configure...** in the tray menu or by double-clicking the
 
 The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, SteamVR devices, and live VRChat OSCQuery parameter names. Running, Steam, and Store application pickers show a loading overlay that prevents selecting incomplete results and provide text filtering after results are ready. The running-process picker excludes Windows service processes and hides Microsoft/Windows applications by default; the Store picker similarly hides Microsoft/system applications unless requested. The running and Store picker status text reports visible and filtered counts.
 
-Steam and Microsoft Store catalog discovery retries transient failures up to four total attempts before reporting a distinct **Application discovery error**. If discovery fails while applying a reload, the previous valid configuration and its supervision remain active. The unified resource list uses each helper executable's icon when available and dedicated type pictograms for services, delays, Windows audio, Home Assistant, OBS, and Twitch resources.
+Steam and Microsoft Store catalog discovery retries transient failures up to four total attempts before reporting a distinct **Application discovery error**. If discovery fails while applying a reload, the previous valid configuration and its supervision remain active. The unified resource list uses each helper executable's icon when available and dedicated type pictograms for services, delays, Windows audio, Home Assistant, OBS, Stream Deck, and Twitch resources.
 
 Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
 

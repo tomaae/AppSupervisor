@@ -3,6 +3,7 @@ using AppSupervisor.Core;
 using AppSupervisor.Notifications;
 using AppSupervisor.HomeAssistant;
 using AppSupervisor.Obs;
+using AppSupervisor.StreamDeck;
 using AppSupervisor.WindowsAudio;
 
 using AppSupervisor.SteamVr;
@@ -165,6 +166,10 @@ public sealed partial class ConfigurationEditorForm : Form
             obsCatalogLoader = null,
         Func<CancellationToken, Task<IReadOnlyList<AudioEndpointSnapshot>>>?
             audioEndpointLoader = null,
+        Func<CancellationToken, Task<IReadOnlyList<StreamDeckMcpAction>>>?
+            streamDeckActionLoader = null,
+        Func<StreamDeckResourceConfig, CancellationToken, Task>?
+            streamDeckActionExecutor = null,
         Action<InstalledServiceInfo>? automaticServiceWarning = null,
         IHelperTestController? helperTestController = null,
         Func<ConfigurationRuntimeStatusSnapshot>? runtimeStatusReader = null)
@@ -184,6 +189,10 @@ public sealed partial class ConfigurationEditorForm : Form
                 .GetActiveEndpoints(),
             cancellationToken
         ));
+        _streamDeckActionLoader = streamDeckActionLoader ??
+            StreamDeckMcpClient.Shared.LoadActionsAsync;
+        _streamDeckActionExecutor = streamDeckActionExecutor ??
+            StreamDeckMcpClient.Shared.ExecuteActionAsync;
         _automaticServiceWarning = automaticServiceWarning ?? ShowAutomaticServiceWarning;
         _helperTestController = helperTestController;
         _runtimeStatusReader = runtimeStatusReader;
@@ -773,6 +782,7 @@ public sealed partial class ConfigurationEditorForm : Form
             Delays = [],
             HomeAssistantResources = [],
             ObsResources = [],
+            StreamDeckResources = [],
             TwitchResources = [],
             AudioInterfaces = []
         };
@@ -1421,6 +1431,10 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <summary>Gets the currently selected OBS action.</summary>
     private ObsResourceConfig? SelectedObs =>
         SelectedResource as ObsResourceConfig;
+
+    /// <summary>Gets the currently selected Stream Deck action.</summary>
+    private StreamDeckResourceConfig? SelectedStreamDeck =>
+        SelectedResource as StreamDeckResourceConfig;
 
     /// <summary>Gets the currently selected Twitch action.</summary>
     private TwitchResourceConfig? SelectedTwitch =>

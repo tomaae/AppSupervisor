@@ -4,6 +4,7 @@ using AppSupervisor.HomeAssistant;
 using AppSupervisor.Obs;
 using AppSupervisor.ServiceControl;
 using AppSupervisor.SteamVr;
+using AppSupervisor.StreamDeck;
 using AppSupervisor.WindowsAudio;
 using System.Windows.Forms;
 
@@ -102,6 +103,14 @@ public sealed class ConfigurationEditorAddResourceTests
                                 "Test audio",
                                 AudioInterfaceDirection.Output
                             )]
+                        ),
+                        streamDeckActionLoader: _ => Task.FromResult<
+                            IReadOnlyList<StreamDeckMcpAction>>(
+                            [new StreamDeckMcpAction(
+                                "streamdeck__start_vr",
+                                "Start VR",
+                                "Starts the configured VR action"
+                            )]
                         )
                     );
                     form.ShowInTaskbar = false;
@@ -126,12 +135,13 @@ public sealed class ConfigurationEditorAddResourceTests
                     InvokeMenuItem(menu, "Add delay");
                     InvokeMenuItem(menu, "Add Home Assistant");
                     InvokeMenuItem(menu, "Add OBS action");
+                    InvokeMenuItem(menu, "Add Stream Deck action");
                     InvokeMenuItem(menu, "Add Windows audio interface");
                     Application.DoEvents();
 
                     ListBox resources = Assert.Single(
                         EnumerateControls(form).OfType<ListBox>(),
-                        list => list.Items.Count == 6 &&
+                        list => list.Items.Count == 7 &&
                             list.Items.Cast<object>().All(item => item is ManagedResourceConfig)
                     );
                     Assert.Collection(
@@ -141,10 +151,11 @@ public sealed class ConfigurationEditorAddResourceTests
                         resource => Assert.IsType<DelayResourceConfig>(resource),
                         resource => Assert.IsType<HomeAssistantResourceConfig>(resource),
                         resource => Assert.IsType<ObsResourceConfig>(resource),
+                        resource => Assert.IsType<StreamDeckResourceConfig>(resource),
                         resource => Assert.IsType<AudioInterfaceResourceConfig>(resource)
                     );
                     AudioInterfaceResourceConfig audio = Assert.IsType<AudioInterfaceResourceConfig>(
-                        resources.Items[5]
+                        resources.Items[6]
                     );
                     Assert.True(audio.UseDefaultDevice);
                     Assert.Equal(AudioInterfaceDirection.Output, audio.Direction);

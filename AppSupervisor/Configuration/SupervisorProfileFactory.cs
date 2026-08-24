@@ -118,6 +118,16 @@ public static class SupervisorProfileFactory
             ));
         }
 
+        foreach (StreamDeckResourceConfig streamDeckConfig in
+            config.StreamDeckResources.Where(resource => resource.Enabled))
+        {
+            configuredResources.Add((
+                streamDeckConfig,
+                new StreamDeckResource(streamDeckConfig),
+                stableOrder++
+            ));
+        }
+
         foreach (TwitchResourceConfig twitchConfig in
             config.TwitchResources.Where(resource => resource.Enabled))
         {

@@ -36,6 +36,9 @@ public class SupervisorProfileConfig
     /// <summary>Gets or sets one-way OBS actions issued when this profile activates.</summary>
     public List<ObsResourceConfig> ObsResources { get; set; } = [];
 
+    /// <summary>Gets or sets Stream Deck actions issued through Elgato's official MCP server.</summary>
+    public List<StreamDeckResourceConfig> StreamDeckResources { get; set; } = [];
+
     /// <summary>Gets or sets Twitch broadcaster actions supervised by this profile.</summary>
     public List<TwitchResourceConfig> TwitchResources { get; set; } = [];
 

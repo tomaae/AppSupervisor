@@ -117,6 +117,19 @@ internal static class ConfigNormalizer
                 }
             }
 
+            if (profile.StreamDeckResources is not null)
+            {
+                foreach (StreamDeckResourceConfig? resource in profile.StreamDeckResources)
+                {
+                    if (resource is null)
+                        continue;
+
+                    NormalizeResource(resource);
+                    resource.ToolName = NormalizeText(resource.ToolName);
+                    resource.ActionName = NormalizeText(resource.ActionName);
+                }
+            }
+
             if (profile.TwitchResources is not null)
             {
                 foreach (TwitchResourceConfig? resource in profile.TwitchResources)

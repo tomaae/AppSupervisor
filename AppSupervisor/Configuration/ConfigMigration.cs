@@ -81,6 +81,11 @@ internal static class ConfigMigration
                 if (resource is not null)
                     yield return resource;
 
+        if (profile.StreamDeckResources is not null)
+            foreach (StreamDeckResourceConfig? resource in profile.StreamDeckResources)
+                if (resource is not null)
+                    yield return resource;
+
         if (profile.TwitchResources is not null)
             foreach (TwitchResourceConfig? resource in profile.TwitchResources)
                 if (resource is not null)

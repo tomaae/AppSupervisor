@@ -16,7 +16,8 @@ public static partial class ConfigValidator
     {
         if (profile.Applications is null || profile.Services is null ||
             profile.Delays is null || profile.HomeAssistantResources is null ||
-            profile.ObsResources is null || profile.TwitchResources is null ||
+            profile.ObsResources is null || profile.StreamDeckResources is null ||
+            profile.TwitchResources is null ||
             profile.AudioInterfaces is null)
             return;
 
@@ -53,6 +54,13 @@ public static partial class ConfigValidator
             .Select((resource, index) => (
                 (ManagedResourceConfig?)resource,
                 $"{profileLabel}, OBS entry {index + 1}"
+            ))
+            .Where(item => item.Item1 is not null)
+            .Select(item => (item.Item1!, item.Item2)));
+        resources.AddRange(profile.StreamDeckResources
+            .Select((resource, index) => (
+                (ManagedResourceConfig?)resource,
+                $"{profileLabel}, Stream Deck entry {index + 1}"
             ))
             .Where(item => item.Item1 is not null)
             .Select(item => (item.Item1!, item.Item2)));

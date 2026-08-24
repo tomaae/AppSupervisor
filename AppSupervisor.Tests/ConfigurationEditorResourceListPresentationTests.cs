@@ -24,6 +24,7 @@ public sealed class ConfigurationEditorResourceListPresentationTests
                 EntityName = "Desk light"
             },
             new ObsResourceConfig(),
+            new StreamDeckResourceConfig { ActionName = "Start VR" },
             new TwitchResourceConfig(),
             new AudioInterfaceResourceConfig()
         ];
@@ -54,7 +55,7 @@ public sealed class ConfigurationEditorResourceListPresentationTests
     public void Draw_BrandedResourceMarks_UsesDistinctRecognizableColors()
     {
         const int iconSize = 20;
-        using var preview = new Bitmap(iconSize * 4, iconSize, PixelFormat.Format32bppArgb);
+        using var preview = new Bitmap(iconSize * 5, iconSize, PixelFormat.Format32bppArgb);
         using Graphics graphics = Graphics.FromImage(preview);
         graphics.Clear(Color.White);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -84,6 +85,12 @@ public sealed class ConfigurationEditorResourceListPresentationTests
             selectionColor,
             selected: false
         );
+        ResourceListIconRenderer.DrawStreamDeck(
+            graphics,
+            new Rectangle(iconSize * 4, 0, iconSize, iconSize),
+            selectionColor,
+            selected: false
+        );
 
         AssertColorCoverage(preview, 0, iconSize, ResourceListIconRenderer.ServiceRearColor);
         AssertColorCoverage(preview, 0, iconSize, ResourceListIconRenderer.ServiceFrontColor);
@@ -104,6 +111,12 @@ public sealed class ConfigurationEditorResourceListPresentationTests
             iconSize * 3,
             iconSize * 4,
             ResourceListIconRenderer.ObsColor
+        );
+        AssertColorCoverage(
+            preview,
+            iconSize * 4,
+            iconSize * 5,
+            ResourceListIconRenderer.StreamDeckColor
         );
 
     }

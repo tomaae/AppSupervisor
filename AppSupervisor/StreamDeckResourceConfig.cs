@@ -1,0 +1,16 @@
+using AppSupervisor.Notifications;
+
+namespace AppSupervisor;
+
+/// <summary>Configures one activation-only action exposed by Stream Deck's MCP Actions profile.</summary>
+public sealed class StreamDeckResourceConfig : ManagedResourceConfig
+{
+    /// <summary>Gets or sets the stable MCP tool name discovered from Elgato MCP Server.</summary>
+    public string ToolName { get; set; } = "";
+
+    /// <summary>Gets or sets the last discovered user-facing action title.</summary>
+    public string ActionName { get; set; } = "";
+
+    /// <summary>Gets or sets Stream Deck action-specific notification targets.</summary>
+    public NotificationConfig Notifications { get; set; } = new();
+}

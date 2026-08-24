@@ -18,6 +18,7 @@ internal static class ResourceListIconRenderer
     internal static readonly Color HomeAssistantColor = Color.FromArgb(24, 188, 242);
     internal static readonly Color TwitchColor = Color.FromArgb(145, 70, 255);
     internal static readonly Color ObsColor = Color.FromArgb(48, 46, 49);
+    internal static readonly Color StreamDeckColor = Color.FromArgb(55, 139, 232);
     internal static readonly Color ServiceRearColor = Color.FromArgb(57, 127, 193);
     internal static readonly Color ServiceFrontColor = Color.FromArgb(87, 181, 229);
 
@@ -103,6 +104,34 @@ internal static class ResourceListIconRenderer
     /// <summary>Draws the OBS Studio three-blade brand mark.</summary>
     internal static void DrawObs(Graphics graphics, Rectangle bounds, Color selectionColor, bool selected) =>
         Draw(ObsGeometry, graphics, bounds, selected ? selectionColor : ObsColor);
+
+    /// <summary>Draws Stream Deck's recognizable three-by-two key grid.</summary>
+    internal static void DrawStreamDeck(
+        Graphics graphics,
+        Rectangle bounds,
+        Color selectionColor,
+        bool selected)
+    {
+        Color color = selected ? selectionColor : StreamDeckColor;
+        float gap = Math.Max(1f, bounds.Width * 0.08f);
+        float keyWidth = (bounds.Width - gap * 2f) / 3f;
+        float keyHeight = (bounds.Height - gap) / 2f;
+        using var brush = new SolidBrush(color);
+
+        for (int row = 0; row < 2; row++)
+        {
+            for (int column = 0; column < 3; column++)
+            {
+                graphics.FillRectangle(
+                    brush,
+                    bounds.Left + column * (keyWidth + gap),
+                    bounds.Top + row * (keyHeight + gap),
+                    keyWidth,
+                    keyHeight
+                );
+            }
+        }
+    }
 
     private static RectangleF RelativeBounds(
         Rectangle bounds,

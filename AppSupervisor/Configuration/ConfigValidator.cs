@@ -90,6 +90,7 @@ public static partial class ConfigValidator
                 profile.Enabled
             );
             ValidateObsResources(profile, profileLabel, errors);
+            ValidateStreamDeckResources(profile, profileLabel, errors);
             ValidateTwitchResources(profile, profileLabel, errors, ref activeTwitchProfile);
             ValidateAudioInterfaces(profile, profileLabel, errors);
 

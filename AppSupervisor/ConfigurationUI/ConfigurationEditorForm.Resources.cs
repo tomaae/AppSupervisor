@@ -132,6 +132,7 @@ public sealed partial class ConfigurationEditorForm
         _resourceTypeEditorPanel.Controls.Add(BuildDelayEditor());
         _resourceTypeEditorPanel.Controls.Add(BuildHomeAssistantEditor());
         _resourceTypeEditorPanel.Controls.Add(BuildObsEditor());
+        _resourceTypeEditorPanel.Controls.Add(BuildStreamDeckEditor());
         _resourceTypeEditorPanel.Controls.Add(BuildTwitchEditor());
         _resourceTypeEditorPanel.Controls.Add(BuildAudioInterfaceEditor());
         scrollableSection.Controls.Add(_resourceTypeEditorPanel);
@@ -205,6 +206,7 @@ public sealed partial class ConfigurationEditorForm
             .Concat(profile.Delays)
             .Concat(profile.HomeAssistantResources)
             .Concat(profile.ObsResources)
+            .Concat(profile.StreamDeckResources)
             .Concat(profile.TwitchResources)
             .Concat(profile.AudioInterfaces)
             .Select((resource, stableOrder) => (resource, stableOrder))
@@ -233,6 +235,7 @@ public sealed partial class ConfigurationEditorForm
                 DelayResourceConfig => "Delay",
                 HomeAssistantResourceConfig => "Home Assistant",
                 ObsResourceConfig => "OBS action",
+                StreamDeckResourceConfig => "Stream Deck action",
                 TwitchResourceConfig => "Twitch action",
                 AudioInterfaceResourceConfig => "Windows audio interface",
                 _ => ""
@@ -243,6 +246,7 @@ public sealed partial class ConfigurationEditorForm
             _delayEditorPanel.Visible = resource is DelayResourceConfig;
             _homeAssistantEditorPanel.Visible = resource is HomeAssistantResourceConfig;
             _obsEditorPanel.Visible = resource is ObsResourceConfig;
+            _streamDeckEditorPanel.Visible = resource is StreamDeckResourceConfig;
             _twitchEditorPanel.Visible = resource is TwitchResourceConfig;
             _audioInterfaceEditorPanel.Visible = resource is AudioInterfaceResourceConfig;
 
@@ -256,6 +260,8 @@ public sealed partial class ConfigurationEditorForm
                 _homeAssistantEditorPanel.BringToFront();
             else if (_obsEditorPanel.Visible)
                 _obsEditorPanel.BringToFront();
+            else if (_streamDeckEditorPanel.Visible)
+                _streamDeckEditorPanel.BringToFront();
             else if (_twitchEditorPanel.Visible)
                 _twitchEditorPanel.BringToFront();
             else if (_audioInterfaceEditorPanel.Visible)
@@ -271,6 +277,7 @@ public sealed partial class ConfigurationEditorForm
         LoadSelectedDelay();
         _ = LoadSelectedHomeAssistantAsync();
         _ = LoadSelectedObsAsync();
+        _ = LoadSelectedStreamDeckAsync();
         LoadSelectedTwitch();
         _ = LoadSelectedAudioInterfaceAsync();
         UpdateResourceMoveButtons();
@@ -443,6 +450,12 @@ public sealed partial class ConfigurationEditorForm
             if (resource is ObsResourceConfig)
             {
                 ResourceListIconRenderer.DrawObs(graphics, bounds, color, selected);
+                return;
+            }
+
+            if (resource is StreamDeckResourceConfig)
+            {
+                ResourceListIconRenderer.DrawStreamDeck(graphics, bounds, color, selected);
                 return;
             }
 
@@ -690,6 +703,7 @@ public sealed partial class ConfigurationEditorForm
                     DisplayName(homeAssistant.EntityId, "New action")
                 ),
             ObsResourceConfig obs => ObsResource.GetDisplayName(obs),
+            StreamDeckResourceConfig streamDeck => StreamDeckResource.GetDisplayName(streamDeck),
             TwitchResourceConfig twitch => TwitchResource.GetDisplayName(twitch),
             AudioInterfaceResourceConfig audio => AudioInterfaceResource.GetDisplayName(audio),
             _ => "Resource"
@@ -712,6 +726,8 @@ public sealed partial class ConfigurationEditorForm
             RemoveHomeAssistantClicked(sender, e);
         else if (SelectedResource is ObsResourceConfig)
             RemoveObsClicked(sender, e);
+        else if (SelectedResource is StreamDeckResourceConfig)
+            RemoveStreamDeckClicked(sender, e);
         else if (SelectedResource is TwitchResourceConfig)
             RemoveTwitchClicked(sender, e);
         else if (SelectedResource is AudioInterfaceResourceConfig)
@@ -792,6 +808,7 @@ public sealed partial class ConfigurationEditorForm
             .Concat(profile.Delays)
             .Concat(profile.HomeAssistantResources)
             .Concat(profile.ObsResources)
+            .Concat(profile.StreamDeckResources)
             .Concat(profile.TwitchResources)
             .Concat(profile.AudioInterfaces))
         {
@@ -830,6 +847,7 @@ public sealed partial class ConfigurationEditorForm
         _addResourceMenu.Items.Add("Add delay", null, AddDelayClicked);
         _addResourceMenu.Items.Add("Add Home Assistant", null, AddHomeAssistantClicked);
         _addResourceMenu.Items.Add("Add OBS action", null, AddObsClicked);
+        _addResourceMenu.Items.Add("Add Stream Deck action", null, AddStreamDeckClicked);
         _addResourceMenu.Items.Add("Add Twitch action", null, AddTwitchClicked);
         _addResourceMenu.Items.Add("Add Windows audio interface", null, AddAudioInterfaceClicked);
     }

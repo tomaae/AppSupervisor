@@ -1462,6 +1462,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _supervisionCancellation.Cancel();
         _supervisorApi.Dispose();
         await _streamDeckStatusClient.DisposeAsync();
+        await StreamDeckMcpClient.ShutdownSharedAsync();
         await Task.Run(_notificationService.Dispose);
 
         _ensureClosedTimer.Dispose();
