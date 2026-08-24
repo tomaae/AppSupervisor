@@ -17,7 +17,7 @@ public sealed class StreamDeckResourceTests
 
         Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
         Assert.Single(client.Actions);
-        Assert.Equal("streamdeck__start_vr", client.Actions[0].ToolName);
+        Assert.Equal("4979ce49-d88b-49cb-9a80-1e95eb45d8f9", client.Actions[0].ActionId);
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public sealed class StreamDeckResourceTests
     private static StreamDeckResource CreateResource(FakeClient client) => new(
         new StreamDeckResourceConfig
         {
-            ToolName = "streamdeck__start_vr",
+            ActionId = "4979ce49-d88b-49cb-9a80-1e95eb45d8f9",
             ActionName = "Start VR"
         },
         client

@@ -151,14 +151,14 @@ public sealed partial class ConfigurationEditorForm
                 _streamDeckAction.Items.Add(action);
 
             StreamDeckMcpAction? selected = actions.FirstOrDefault(action =>
-                string.Equals(action.ToolName, resource.ToolName, StringComparison.Ordinal));
+                string.Equals(action.ActionId, resource.ActionId, StringComparison.Ordinal));
 
-            if (selected is null && !string.IsNullOrWhiteSpace(resource.ToolName))
+            if (selected is null && !string.IsNullOrWhiteSpace(resource.ActionId))
             {
                 selected = new StreamDeckMcpAction(
-                    resource.ToolName,
+                    resource.ActionId,
                     string.IsNullOrWhiteSpace(resource.ActionName)
-                        ? resource.ToolName
+                        ? resource.ActionId
                         : resource.ActionName,
                     "Previously configured action"
                 );
@@ -173,10 +173,10 @@ public sealed partial class ConfigurationEditorForm
             _loadingControls = false;
         }
 
-        if (string.IsNullOrWhiteSpace(resource.ToolName) &&
+        if (string.IsNullOrWhiteSpace(resource.ActionId) &&
             _streamDeckAction.SelectedItem is StreamDeckMcpAction first)
         {
-            resource.ToolName = first.ToolName;
+            resource.ActionId = first.ActionId;
             resource.ActionName = first.DisplayName;
             _resourceList.Refresh();
             UpdateStatus();
@@ -191,7 +191,7 @@ public sealed partial class ConfigurationEditorForm
         resource.Enabled = _streamDeckEnabled.Checked;
         if (_streamDeckAction.SelectedItem is StreamDeckMcpAction action)
         {
-            resource.ToolName = action.ToolName;
+            resource.ActionId = action.ActionId;
             resource.ActionName = action.DisplayName;
         }
 
@@ -237,7 +237,7 @@ public sealed partial class ConfigurationEditorForm
     {
         if (_streamDeckActionTestPending ||
             SelectedStreamDeck is not StreamDeckResourceConfig resource ||
-            string.IsNullOrWhiteSpace(resource.ToolName))
+            string.IsNullOrWhiteSpace(resource.ActionId))
         {
             return;
         }

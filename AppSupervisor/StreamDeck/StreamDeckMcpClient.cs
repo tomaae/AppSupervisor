@@ -32,11 +32,11 @@ internal sealed class StreamDeckMcpClient : IStreamDeckMcpClient, IAsyncDisposab
         StreamDeckResourceConfig configuration,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(configuration.ToolName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(configuration.ActionId);
         await ExecuteAsync(
             async (protocol, token) =>
             {
-                await protocol.ExecuteActionAsync(configuration.ToolName, token)
+                await protocol.ExecuteActionAsync(configuration.ActionId, token)
                     .ConfigureAwait(false);
                 return true;
             },

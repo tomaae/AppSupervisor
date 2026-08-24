@@ -29,7 +29,7 @@ public sealed class StreamDeckIntegrationTests
                         [
                             new StreamDeckResourceConfig
                             {
-                                ToolName = " streamdeck__start_vr ",
+                                ActionId = " 4979ce49-d88b-49cb-9a80-1e95eb45d8f9 ",
                                 ActionName = " Start VR "
                             }
                         ]
@@ -40,7 +40,7 @@ public sealed class StreamDeckIntegrationTests
             StreamDeckResourceConfig action = Assert.Single(
                 Assert.Single(ConfigLoader.Load(path).Profiles).StreamDeckResources
             );
-            Assert.Equal("streamdeck__start_vr", action.ToolName);
+            Assert.Equal("4979ce49-d88b-49cb-9a80-1e95eb45d8f9", action.ActionId);
             Assert.Equal("Start VR", action.ActionName);
         }
         finally

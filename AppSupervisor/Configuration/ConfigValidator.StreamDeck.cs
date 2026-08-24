@@ -30,7 +30,7 @@ public static partial class ConfigValidator
             if (!resource.Enabled)
                 continue;
 
-            if (string.IsNullOrWhiteSpace(resource.ToolName))
+            if (string.IsNullOrWhiteSpace(resource.ActionId))
                 errors.Add($"{label} must have a selected action.");
         }
     }

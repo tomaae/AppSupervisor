@@ -6,14 +6,12 @@ namespace AppSupervisor.Tests;
 public sealed class StreamDeckMcpProtocolClientTests
 {
     [Fact]
-    public async Task LoadActions_FiltersOtherAppsAndToolsRequiringArguments()
+    public async Task LoadActions_ParsesExecutableActionsReturnedByStreamDeck()
     {
         const string responses =
             "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"serverInfo\":{\"name\":\"Elgato\",\"version\":\"1\"}}}\n" +
-            "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"result\":{\"tools\":[" +
-            "{\"name\":\"streamdeck__start_vr\",\"title\":\"Start VR\",\"description\":\"Starts VR\",\"inputSchema\":{\"type\":\"object\"}}," +
-            "{\"name\":\"other__action\",\"title\":\"Other\",\"inputSchema\":{\"type\":\"object\"}}," +
-            "{\"name\":\"streamdeck__needs_input\",\"title\":\"Input\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"value\"]}}]}}\n";
+            "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":" +
+            "\"{\\\"actions\\\":[{\\\"id\\\":\\\"action-2\\\",\\\"description\\\":{\\\"name\\\":\\\"Start VR\\\",\\\"description\\\":\\\"Starts VR\\\"}},{\\\"id\\\":\\\"action-1\\\",\\\"description\\\":{\\\"name\\\":\\\"Action Bar\\\",\\\"description\\\":\\\"Shows Action Bar\\\"}}]}\"}]}}\n";
         using var reader = new StringReader(responses);
         using var writer = new StringWriter();
         var client = new StreamDeckMcpProtocolClient(reader, writer);
@@ -23,11 +21,13 @@ public sealed class StreamDeckMcpProtocolClientTests
             CancellationToken.None
         );
 
-        StreamDeckMcpAction action = Assert.Single(actions);
-        Assert.Equal("streamdeck__start_vr", action.ToolName);
-        Assert.Equal("Start VR", action.DisplayName);
+        Assert.Equal(2, actions.Count);
+        Assert.Equal("action-1", actions[0].ActionId);
+        Assert.Equal("Action Bar", actions[0].DisplayName);
+        Assert.Equal("action-2", actions[1].ActionId);
+        Assert.Equal("Start VR", actions[1].DisplayName);
         Assert.Contains("notifications/initialized", writer.ToString());
-        Assert.Contains("tools/list", writer.ToString());
+        Assert.Contains("streamdeck__get_executable_actions", writer.ToString());
     }
 
     [Fact]
@@ -39,10 +39,10 @@ public sealed class StreamDeckMcpProtocolClientTests
         using var writer = new StringWriter();
         var client = new StreamDeckMcpProtocolClient(reader, writer);
 
-        await client.ExecuteActionAsync("streamdeck__start_vr", CancellationToken.None);
+        await client.ExecuteActionAsync("action-2", CancellationToken.None);
 
         Assert.Contains("\"method\":\"tools/call\"", writer.ToString());
-        Assert.Contains("\"name\":\"streamdeck__start_vr\"", writer.ToString());
-        Assert.Contains("\"arguments\":{}", writer.ToString());
+        Assert.Contains("\"name\":\"streamdeck__execute_action\"", writer.ToString());
+        Assert.Contains("\"arguments\":{\"id\":\"action-2\"}", writer.ToString());
     }
 }

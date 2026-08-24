@@ -125,7 +125,7 @@ internal static class ConfigNormalizer
                         continue;
 
                     NormalizeResource(resource);
-                    resource.ToolName = NormalizeText(resource.ToolName);
+                    resource.ActionId = NormalizeText(resource.ActionId);
                     resource.ActionName = NormalizeText(resource.ActionName);
                 }
             }

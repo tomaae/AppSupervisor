@@ -107,7 +107,7 @@ public sealed class ConfigurationEditorAddResourceTests
                         streamDeckActionLoader: _ => Task.FromResult<
                             IReadOnlyList<StreamDeckMcpAction>>(
                             [new StreamDeckMcpAction(
-                                "streamdeck__start_vr",
+                                "4979ce49-d88b-49cb-9a80-1e95eb45d8f9",
                                 "Start VR",
                                 "Starts the configured VR action"
                             )]

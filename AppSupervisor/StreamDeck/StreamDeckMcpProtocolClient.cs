@@ -6,6 +6,8 @@ namespace AppSupervisor.StreamDeck;
 internal sealed class StreamDeckMcpProtocolClient(TextReader reader, TextWriter writer)
 {
     private const string ProtocolVersion = "2025-06-18";
+    private const string DiscoverActionsTool = "streamdeck__get_executable_actions";
+    private const string ExecuteActionTool = "streamdeck__execute_action";
     private readonly TextReader _reader = reader;
     private readonly TextWriter _writer = writer;
     private long _nextRequestId;
@@ -34,60 +36,79 @@ internal sealed class StreamDeckMcpProtocolClient(TextReader reader, TextWriter 
     public async Task<IReadOnlyList<StreamDeckMcpAction>> LoadActionsAsync(
         CancellationToken cancellationToken)
     {
-        JsonElement result = await SendRequestAsync(
-            "tools/list",
-            parameters: null,
+        JsonElement result = await CallToolAsync(
+            DiscoverActionsTool,
+            new { },
             cancellationToken
         ).ConfigureAwait(false);
+        string actionCatalogJson = ReadToolResultText(result);
 
-        if (!result.TryGetProperty("tools", out JsonElement tools) ||
-            tools.ValueKind != JsonValueKind.Array)
-        {
-            throw new InvalidOperationException("Elgato MCP Server returned no tools list.");
-        }
+        using JsonDocument catalog = JsonDocument.Parse(actionCatalogJson);
+        if (!catalog.RootElement.TryGetProperty("actions", out JsonElement actionsJson) ||
+            actionsJson.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("Stream Deck returned no executable actions list.");
 
         var actions = new List<StreamDeckMcpAction>();
 
-        foreach (JsonElement tool in tools.EnumerateArray())
+        foreach (JsonElement action in actionsJson.EnumerateArray())
         {
-            string name = ReadString(tool, "name");
-            if (name.Length == 0 || !IsStreamDeckTool(name) || RequiresArguments(tool))
+            string id = ReadString(action, "id");
+            if (id.Length == 0)
                 continue;
 
-            string title = ReadString(tool, "title");
-            string description = ReadString(tool, "description");
+            JsonElement descriptionObject = action.TryGetProperty(
+                "description",
+                out JsonElement value
+            ) && value.ValueKind == JsonValueKind.Object
+                ? value
+                : default;
+            string title = descriptionObject.ValueKind == JsonValueKind.Object
+                ? ReadString(descriptionObject, "name")
+                : "";
+            string description = descriptionObject.ValueKind == JsonValueKind.Object
+                ? ReadString(descriptionObject, "description")
+                : "";
             actions.Add(new StreamDeckMcpAction(
-                name,
-                title.Length == 0 ? FriendlyToolName(name) : title,
+                id,
+                title.Length == 0 ? "Unnamed Stream Deck action" : title,
                 description
             ));
         }
 
         return actions
             .OrderBy(action => action.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-            .ThenBy(action => action.ToolName, StringComparer.Ordinal)
+            .ThenBy(action => action.ActionId, StringComparer.Ordinal)
             .ToArray();
     }
 
     public async Task ExecuteActionAsync(
+        string actionId,
+        CancellationToken cancellationToken)
+    {
+        await CallToolAsync(
+            ExecuteActionTool,
+            new { id = actionId },
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private async Task<JsonElement> CallToolAsync(
         string toolName,
+        object arguments,
         CancellationToken cancellationToken)
     {
         JsonElement result = await SendRequestAsync(
             "tools/call",
-            new
-            {
-                name = toolName,
-                arguments = new { }
-            },
+            new { name = toolName, arguments },
             cancellationToken
         ).ConfigureAwait(false);
-
         if (result.TryGetProperty("isError", out JsonElement isError) &&
             isError.ValueKind == JsonValueKind.True)
         {
             throw new InvalidOperationException(ReadToolResultText(result));
         }
+
+        return result;
     }
 
     private async Task<JsonElement> SendRequestAsync(
@@ -167,37 +188,6 @@ internal sealed class StreamDeckMcpProtocolClient(TextReader reader, TextWriter 
         string json = JsonSerializer.Serialize(message);
         await _writer.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
         await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static bool RequiresArguments(JsonElement tool)
-    {
-        if (!tool.TryGetProperty("inputSchema", out JsonElement schema) ||
-            !schema.TryGetProperty("required", out JsonElement required) ||
-            required.ValueKind != JsonValueKind.Array)
-        {
-            return false;
-        }
-
-        return required.GetArrayLength() > 0;
-    }
-
-    private static bool IsStreamDeckTool(string toolName)
-    {
-        int separator = toolName.IndexOf("__", StringComparison.Ordinal);
-        if (separator < 0)
-            return true;
-
-        string appName = toolName[..separator]
-            .Replace("_", "", StringComparison.Ordinal)
-            .Replace("-", "", StringComparison.Ordinal);
-        return string.Equals(appName, "streamdeck", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string FriendlyToolName(string toolName)
-    {
-        int separator = toolName.IndexOf("__", StringComparison.Ordinal);
-        string value = separator < 0 ? toolName : toolName[(separator + 2)..];
-        return value.Replace('_', ' ').Replace('-', ' ').Trim();
     }
 
     private static string ReadToolResultText(JsonElement result)
