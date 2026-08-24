@@ -68,4 +68,4 @@ streamDeck.system.onApplicationDidTerminate(() => {
   void updateAll(showOffline);
 });
 pipeClient.start();
-await streamDeck.connect();
+streamDeck.connect();

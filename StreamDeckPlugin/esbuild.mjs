@@ -1,4 +1,4 @@
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
@@ -17,6 +17,11 @@ await copyFile(
     ),
   ),
 );
+await writeFile(
+  fileURLToPath(new URL("package.json", outputDirectory)),
+  '{ "type": "module" }\n',
+  "utf8",
+);
 await build({
   entryPoints: [fileURLToPath(new URL("./src/plugin.js", import.meta.url))],
   outfile: fileURLToPath(new URL("plugin.js", outputDirectory)),
@@ -24,6 +29,12 @@ await build({
   format: "esm",
   platform: "node",
   target: "node20",
+  banner: {
+    js: [
+      'import { createRequire as __createRequire } from "node:module";',
+      "const require = __createRequire(import.meta.url);",
+    ].join("\n"),
+  },
   legalComments: "eof",
   sourcemap: false,
 });

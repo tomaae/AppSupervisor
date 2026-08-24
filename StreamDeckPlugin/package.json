@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "build": "node esbuild.mjs",
+    "build": "node esbuild.mjs && node verify-build.mjs",
     "validate": "streamdeck validate com.tomaae.appsupervisor.sdPlugin --no-update-check",
     "pack": "npm run test && npm run build && streamdeck pack com.tomaae.appsupervisor.sdPlugin --force --no-update-check --output ../artifacts/StreamDeck"
   },
