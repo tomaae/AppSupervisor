@@ -1,5 +1,5 @@
 import streamDeck, { SingletonAction } from "@elgato/streamdeck";
-import { AppSupervisorPipeClient } from "./status-protocol.js";
+import { AppSupervisorPipeServer } from "./status-protocol.js";
 
 const ACTION_UUID = "com.tomaae.appsupervisor.status";
 const visibleActions = new Map();
@@ -27,7 +27,7 @@ async function updateAll(render) {
   }
 }
 
-const pipeClient = new AppSupervisorPipeClient({
+const pipeServer = new AppSupervisorPipeServer({
   onStatus: (status) => {
     void updateAll((action) => showStatus(action, status));
   },
@@ -44,8 +44,8 @@ class AppSupervisorStatusAction extends SingletonAction {
   async onWillAppear(event) {
     visibleActions.set(event.action.id, event.action);
 
-    if (pipeClient.status !== undefined) {
-      await showStatus(event.action, pipeClient.status);
+    if (pipeServer.status !== undefined) {
+      await showStatus(event.action, pipeServer.status);
     } else {
       await showOffline(event.action);
     }
@@ -56,16 +56,15 @@ class AppSupervisorStatusAction extends SingletonAction {
   }
 
   async onKeyDown(event) {
-    if (!pipeClient.openConfiguration()) {
+    if (!pipeServer.openConfiguration()) {
       await event.action.showAlert();
     }
   }
 }
 
 streamDeck.actions.registerAction(new AppSupervisorStatusAction());
-streamDeck.system.onApplicationDidLaunch(() => pipeClient.connectNow());
 streamDeck.system.onApplicationDidTerminate(() => {
   void updateAll(showOffline);
 });
-pipeClient.start();
+pipeServer.start();
 streamDeck.connect();

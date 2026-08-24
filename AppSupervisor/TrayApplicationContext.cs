@@ -35,7 +35,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private readonly NotificationService _notificationService;
     private readonly SupervisorApiServer _supervisorApi = new();
     private readonly StreamDeckStatusImages _streamDeckStatusImages;
-    private readonly StreamDeckStatusServer _streamDeckStatusServer;
+    private readonly StreamDeckStatusClient _streamDeckStatusClient;
     private readonly SemaphoreSlim _supervisionGate = new(1, 1);
     private readonly CancellationTokenSource _supervisionCancellation = new();
     private int _monitorWorkPending;
@@ -124,13 +124,13 @@ public partial class TrayApplicationContext : ApplicationContext
             Application.ExecutablePath,
             _appIcon
         );
-        _streamDeckStatusServer = new StreamDeckStatusServer(new StreamDeckStatusSnapshot(
+        _streamDeckStatusClient = new StreamDeckStatusClient(new StreamDeckStatusSnapshot(
             StreamDeckVisualState.Idle,
             "Starting",
             "AppSupervisor - Starting",
             _streamDeckStatusImages[StreamDeckVisualState.Idle]
         ));
-        _streamDeckStatusServer.ConfigurationRequested += StreamDeckConfigurationRequested;
+        _streamDeckStatusClient.ConfigurationRequested += StreamDeckConfigurationRequested;
 
         string executablePath = Environment.ProcessPath
             ?? throw new InvalidOperationException("The AppSupervisor executable path could not be determined.");
@@ -1353,7 +1353,7 @@ public partial class TrayApplicationContext : ApplicationContext
         _pauseResumeItem.Text = state.PauseText;
         _trayIcon.Icon = state.Icon;
         _trayIcon.Text = state.Text;
-        _streamDeckStatusServer.Publish(new StreamDeckStatusSnapshot(
+        _streamDeckStatusClient.Publish(new StreamDeckStatusSnapshot(
             state.StreamDeckState,
             state.StreamDeckTitle,
             state.Text,
@@ -1461,7 +1461,7 @@ public partial class TrayApplicationContext : ApplicationContext
 
         _supervisionCancellation.Cancel();
         _supervisorApi.Dispose();
-        await _streamDeckStatusServer.DisposeAsync();
+        await _streamDeckStatusClient.DisposeAsync();
         await Task.Run(_notificationService.Dispose);
 
         _ensureClosedTimer.Dispose();

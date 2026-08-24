@@ -411,11 +411,11 @@ stopping, paused, and error states as the Windows notification-area icon. Pressi
 the same configuration editor as double-clicking the tray icon. Multiple Status keys share one
 connection and always display the same current state.
 
-The connection is automatic and does not require enabling the Supervisor API. AppSupervisor pushes
-only deduplicated state changes over a current-user-only Windows named pipe; neither side polls for
-status. When AppSupervisor is unavailable, the key shows **Offline**. Reconnect attempts back off to
-once per minute, while Stream Deck's application monitoring triggers an immediate attempt when
-`AppSupervisor.exe` launches.
+The connection is automatic and does not require enabling the Supervisor API. The unelevated plugin
+hosts a current-user Windows named pipe and elevated AppSupervisor connects to it, pushing only
+deduplicated state changes; neither side polls for status. When AppSupervisor is unavailable, the
+key shows **Offline**. AppSupervisor waits for the pipe without consuming CPU and reconnects after
+either application restarts.
 
 To install the development package:
 

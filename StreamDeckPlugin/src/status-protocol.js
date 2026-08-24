@@ -1,4 +1,4 @@
-import { createConnection } from "node:net";
+import { createServer } from "node:net";
 
 export const PIPE_PATH = String.raw`\\.\pipe\AppSupervisor.StreamDeck.v1`;
 export const PROTOCOL_VERSION = 1;
@@ -97,8 +97,10 @@ export class StatusLineDecoder {
   }
 }
 
-/** Maintains one event-driven named-pipe connection shared by every status action instance. */
-export class AppSupervisorPipeClient {
+/** Hosts one event-driven named-pipe connection shared by every status action instance. */
+export class AppSupervisorPipeServer {
+  #pipePath;
+  #server;
   #socket;
   #reconnectTimer;
   #retryDelayMilliseconds = 250;
@@ -106,9 +108,11 @@ export class AppSupervisorPipeClient {
   #stopped = false;
   #status;
 
-  constructor({ onStatus, onConnectionChanged }) {
+  constructor({ onStatus, onConnectionChanged, onListening = () => {}, pipePath = PIPE_PATH }) {
     this.onStatus = onStatus;
     this.onConnectionChanged = onConnectionChanged;
+    this.onListening = onListening;
+    this.#pipePath = pipePath;
   }
 
   get connected() {
@@ -121,7 +125,7 @@ export class AppSupervisorPipeClient {
 
   start() {
     this.#stopped = false;
-    this.connectNow();
+    this.listenNow();
   }
 
   stop() {
@@ -130,31 +134,50 @@ export class AppSupervisorPipeClient {
     this.#reconnectTimer = undefined;
     this.#socket?.destroy();
     this.#socket = undefined;
+    this.#server?.close();
+    this.#server = undefined;
     this.#isConnected = false;
     this.#status = undefined;
   }
 
-  connectNow() {
-    if (this.#stopped || this.#socket !== undefined) {
+  listenNow() {
+    if (this.#stopped || this.#server !== undefined) {
       return;
     }
 
     clearTimeout(this.#reconnectTimer);
     this.#reconnectTimer = undefined;
-    const decoder = new StatusLineDecoder();
-    const socket = createConnection(PIPE_PATH);
-    this.#socket = socket;
+    const server = createServer((socket) => this.#accept(socket));
+    this.#server = server;
 
-    socket.once("connect", () => {
-      if (this.#socket !== socket) {
-        socket.destroy();
+    server.once("listening", () => {
+      if (this.#server !== server) {
         return;
       }
 
-      this.#isConnected = true;
       this.#retryDelayMilliseconds = 250;
-      this.onConnectionChanged(true);
+      this.onListening();
     });
+    server.once("error", () => {
+      if (this.#server !== server) {
+        return;
+      }
+
+      this.#server = undefined;
+      server.close();
+      this.#scheduleListen();
+    });
+    server.listen(this.#pipePath);
+  }
+
+  #accept(socket) {
+    const decoder = new StatusLineDecoder();
+    this.#socket?.destroy();
+    this.#socket = socket;
+    this.#isConnected = true;
+    this.#status = undefined;
+    this.onConnectionChanged(true);
+
     socket.on("data", (chunk) => {
       for (const status of decoder.push(chunk)) {
         this.#status = status;
@@ -176,7 +199,6 @@ export class AppSupervisorPipeClient {
       if (wasOnline) {
         this.onConnectionChanged(false);
       }
-      this.#scheduleReconnect();
     });
   }
 
@@ -189,7 +211,7 @@ export class AppSupervisorPipeClient {
     return true;
   }
 
-  #scheduleReconnect() {
+  #scheduleListen() {
     if (this.#stopped || this.#reconnectTimer !== undefined) {
       return;
     }
@@ -198,7 +220,7 @@ export class AppSupervisorPipeClient {
     this.#retryDelayMilliseconds = Math.min(delay * 2, 60_000);
     this.#reconnectTimer = setTimeout(() => {
       this.#reconnectTimer = undefined;
-      this.connectNow();
+      this.listenNow();
     }, delay);
     this.#reconnectTimer.unref();
   }

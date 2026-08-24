@@ -7,10 +7,10 @@ using System.Threading.Channels;
 namespace AppSupervisor.StreamDeck;
 
 /// <summary>
-/// Pushes deduplicated tray presentations to the local Stream Deck plugin and receives its
-/// configuration-open command without polling or exposing a network listener.
+/// Pushes deduplicated tray presentations to the current user's Stream Deck plugin and receives
+/// its configuration-open command without polling or exposing a network listener.
 /// </summary>
-internal sealed class StreamDeckStatusServer : IAsyncDisposable
+internal sealed class StreamDeckStatusClient : IAsyncDisposable
 {
     public const string PipeName = "AppSupervisor.StreamDeck.v1";
     public const int ProtocolVersion = 1;
@@ -34,18 +34,18 @@ internal sealed class StreamDeckStatusServer : IAsyncDisposable
             SingleWriter = false
         }
     );
-    private readonly Task _serverTask;
+    private readonly Task _clientTask;
     private StreamDeckStatusSnapshot _snapshot;
     private int _disposed;
 
-    public StreamDeckStatusServer(
+    public StreamDeckStatusClient(
         StreamDeckStatusSnapshot initialSnapshot,
         string pipeName = PipeName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         _snapshot = initialSnapshot;
         _pipeName = pipeName;
-        _serverTask = Task.Run(() => RunServerAsync(_shutdown.Token));
+        _clientTask = Task.Run(() => RunClientAsync(_shutdown.Token));
     }
 
     /// <summary>Raised when the user presses any visible AppSupervisor Stream Deck action.</summary>
@@ -73,7 +73,7 @@ internal sealed class StreamDeckStatusServer : IAsyncDisposable
 
         try
         {
-            await _serverTask.ConfigureAwait(false);
+            await _clientTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
@@ -84,37 +84,58 @@ internal sealed class StreamDeckStatusServer : IAsyncDisposable
         }
     }
 
-    private async Task RunServerAsync(CancellationToken cancellationToken)
+    private async Task RunClientAsync(CancellationToken cancellationToken)
     {
+        TimeSpan retryDelay = TimeSpan.FromMilliseconds(250);
+
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                await AcceptOneClientAsync(cancellationToken).ConfigureAwait(false);
+                await using var pipe = new NamedPipeClientStream(
+                    ".",
+                    _pipeName,
+                    PipeDirection.InOut,
+                    PipeOptions.Asynchronous
+                );
+                await pipe.ConnectAsync(cancellationToken).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromMilliseconds(250);
+                await RunConnectionAsync(pipe, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return;
             }
+            catch (IOException)
+            {
+                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromMilliseconds(
+                    Math.Min(retryDelay.TotalMilliseconds * 2, 60_000)
+                );
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                SupervisorLog.WriteError("Stream Deck status bridge access was denied.", exception);
+                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromMilliseconds(
+                    Math.Min(retryDelay.TotalMilliseconds * 2, 60_000)
+                );
+            }
             catch (Exception exception)
             {
                 SupervisorLog.WriteError("Stream Deck status bridge failed.", exception);
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromMilliseconds(
+                    Math.Min(retryDelay.TotalMilliseconds * 2, 60_000)
+                );
             }
         }
     }
 
-    private async Task AcceptOneClientAsync(CancellationToken cancellationToken)
+    private async Task RunConnectionAsync(
+        NamedPipeClientStream pipe,
+        CancellationToken cancellationToken)
     {
-        await using var pipe = new NamedPipeServerStream(
-            _pipeName,
-            PipeDirection.InOut,
-            maxNumberOfServerInstances: 1,
-            PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly
-        );
-        await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-
         using var connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken
         );
@@ -127,7 +148,7 @@ internal sealed class StreamDeckStatusServer : IAsyncDisposable
     }
 
     private async Task WriteStatusesAsync(
-        NamedPipeServerStream pipe,
+        NamedPipeClientStream pipe,
         CancellationToken cancellationToken)
     {
         StreamDeckStatusSnapshot lastSent = Volatile.Read(ref _snapshot);
@@ -150,7 +171,7 @@ internal sealed class StreamDeckStatusServer : IAsyncDisposable
     }
 
     private static async Task WriteStatusAsync(
-        NamedPipeServerStream pipe,
+        NamedPipeClientStream pipe,
         StreamDeckStatusSnapshot snapshot,
         CancellationToken cancellationToken)
     {
@@ -168,7 +189,7 @@ internal sealed class StreamDeckStatusServer : IAsyncDisposable
     }
 
     private async Task ReadCommandsAsync(
-        NamedPipeServerStream pipe,
+        NamedPipeClientStream pipe,
         CancellationToken cancellationToken)
     {
         var command = new StringBuilder(MaximumCommandLength);
@@ -232,7 +253,7 @@ internal sealed class StreamDeckStatusServer : IAsyncDisposable
         }
         catch (IOException)
         {
-            // The Stream Deck plugin disconnected; the accept loop will await its next connection.
+            // The Stream Deck plugin disconnected; the client loop will await its next server.
         }
     }
 }

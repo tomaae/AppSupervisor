@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createConnection } from "node:net";
 import { describe, it } from "node:test";
 import {
+  AppSupervisorPipeServer,
   MAXIMUM_STATUS_BYTES,
+  OPEN_CONFIGURATION_COMMAND,
   StatusLineDecoder,
   parseStatusLine,
 } from "../src/status-protocol.js";
@@ -53,5 +57,45 @@ describe("Stream Deck status protocol", () => {
 
     assert.equal(statuses.length, 1);
     assert.equal(statuses[0].state, "supervising");
+  });
+
+  it("hosts the pipe for an AppSupervisor client", async () => {
+    const pipePath = String.raw`\\.\pipe\AppSupervisor.StreamDeck.Tests.${process.pid}.${Date.now()}`;
+    let signalListening;
+    const listening = new Promise((resolve) => {
+      signalListening = resolve;
+    });
+    let signalStatus;
+    const receivedStatus = new Promise((resolve) => {
+      signalStatus = resolve;
+    });
+    const server = new AppSupervisorPipeServer({
+      pipePath,
+      onListening: signalListening,
+      onConnectionChanged: () => {},
+      onStatus: signalStatus,
+    });
+    server.start();
+
+    try {
+      await listening;
+      const client = createConnection(pipePath);
+      await once(client, "connect");
+
+      try {
+        client.write(`${validMessage()}\n`);
+        const status = await receivedStatus;
+        assert.equal(status.state, "supervising");
+
+        const command = once(client, "data");
+        assert.equal(server.openConfiguration(), true);
+        const [data] = await command;
+        assert.equal(data.toString("utf8"), OPEN_CONFIGURATION_COMMAND);
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.stop();
+    }
   });
 });

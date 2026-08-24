@@ -7,32 +7,33 @@ using AppSupervisor.StreamDeck;
 namespace AppSupervisor.Tests;
 
 /// <summary>Verifies the event-driven Stream Deck status protocol and tray-equivalent images.</summary>
-public sealed class StreamDeckStatusServerTests
+public sealed class StreamDeckStatusClientTests
 {
     [Fact]
-    public async Task ConnectedClient_ReceivesLatestStatusAndCanRequestConfiguration()
+    public async Task ConnectedServer_ReceivesLatestStatusAndCanRequestConfiguration()
     {
         string pipeName = $"AppSupervisor.StreamDeck.Tests.{Guid.NewGuid():N}";
+        await using var server = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly
+        );
         var initial = CreateSnapshot(StreamDeckVisualState.Idle, "Starting");
-        await using var server = new StreamDeckStatusServer(initial, pipeName);
+        await using var client = new StreamDeckStatusClient(initial, pipeName);
         var configurationRequested = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
-        server.ConfigurationRequested += () => configurationRequested.TrySetResult();
+        client.ConfigurationRequested += () => configurationRequested.TrySetResult();
         var latest = CreateSnapshot(StreamDeckVisualState.Supervising, "Supervising");
-        server.Publish(latest);
+        client.Publish(latest);
 
-        await using var client = new NamedPipeClientStream(
-            ".",
-            pipeName,
-            PipeDirection.InOut,
-            PipeOptions.Asynchronous
-        );
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await client.ConnectAsync(timeout.Token);
-        using var reader = new StreamReader(client, Encoding.UTF8, leaveOpen: true);
+        await server.WaitForConnectionAsync(timeout.Token);
+        using var reader = new StreamReader(server, Encoding.UTF8, leaveOpen: true);
         await using var writer = new StreamWriter(
-            client,
+            server,
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             leaveOpen: true
         )
@@ -49,14 +50,14 @@ public sealed class StreamDeckStatusServerTests
         Assert.Equal("Supervising", first.RootElement.GetProperty("title").GetString());
 
         var error = CreateSnapshot(StreamDeckVisualState.Error, "Error");
-        server.Publish(error);
+        client.Publish(error);
         string? secondLine = await reader.ReadLineAsync(timeout.Token);
         Assert.NotNull(secondLine);
         using JsonDocument second = JsonDocument.Parse(secondLine);
         Assert.Equal("error", second.RootElement.GetProperty("state").GetString());
         Assert.Equal("Error", second.RootElement.GetProperty("title").GetString());
 
-        await writer.WriteLineAsync(StreamDeckStatusServer.OpenConfigurationCommand);
+        await writer.WriteLineAsync(StreamDeckStatusClient.OpenConfigurationCommand);
         await configurationRequested.Task.WaitAsync(timeout.Token);
     }
 

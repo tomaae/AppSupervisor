@@ -4,11 +4,11 @@ This companion plugin provides one **Status** action. It mirrors AppSupervisor's
 short status text on a Stream Deck key; pressing the key opens the AppSupervisor configuration
 editor.
 
-The integration is event-driven. AppSupervisor pushes deduplicated status changes through a
-current-user-only Windows named pipe. The plugin performs no status polling and shares one pipe
-connection across all visible Status action instances. If AppSupervisor is not running, the key
-shows **Offline** and reconnect attempts back off to once per minute; Stream Deck's application
-launch event triggers an immediate connection attempt.
+The integration is event-driven. The unelevated plugin hosts a current-user Windows named pipe and
+elevated AppSupervisor connects to it, pushing only deduplicated status changes. The plugin performs
+no status polling and shares one pipe connection across all visible Status action instances. If
+AppSupervisor is not running, the key shows **Offline**; AppSupervisor waits for the pipe without
+consuming CPU and reconnects after either application restarts.
 
 ## Build and package
 
