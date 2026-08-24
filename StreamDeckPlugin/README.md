@@ -11,8 +11,10 @@ implemented by this plugin.
 The integration is event-driven. The unelevated plugin hosts a current-user Windows named pipe and
 elevated AppSupervisor connects to it, pushing only deduplicated status changes. The plugin performs
 no status polling and shares one pipe connection across all visible Status action instances. If
-AppSupervisor is not running, the key shows **Offline**; AppSupervisor waits for the pipe without
-consuming CPU and reconnects after either application restarts.
+AppSupervisor is not running, the key shows **Offline**. The pipe connection is the sole
+online/offline signal, avoiding false state changes from elevation-launcher process events.
+AppSupervisor waits for the pipe without consuming CPU and reconnects after either application
+restarts.
 
 ## Build and package
 

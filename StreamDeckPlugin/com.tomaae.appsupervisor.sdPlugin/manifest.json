@@ -20,11 +20,6 @@
       "UserTitleEnabled": false
     }
   ],
-  "ApplicationsToMonitor": {
-    "windows": [
-      "AppSupervisor.exe"
-    ]
-  },
   "Author": "Tomaae",
   "Category": "AppSupervisor",
   "CategoryIcon": "static/imgs/category/appsupervisor",
@@ -46,5 +41,5 @@
     "MinimumVersion": "6.6"
   },
   "UUID": "com.tomaae.appsupervisor",
-  "Version": "1.0.0.2"
+  "Version": "1.0.0.3"
 }

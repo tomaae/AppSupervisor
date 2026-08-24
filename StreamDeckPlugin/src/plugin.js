@@ -63,8 +63,5 @@ class AppSupervisorStatusAction extends SingletonAction {
 }
 
 streamDeck.actions.registerAction(new AppSupervisorStatusAction());
-streamDeck.system.onApplicationDidTerminate(() => {
-  void updateAll(showOffline);
-});
 pipeServer.start();
 streamDeck.connect();

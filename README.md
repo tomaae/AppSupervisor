@@ -431,8 +431,9 @@ connection and always display the same current state.
 The connection is automatic and does not require enabling the Supervisor API. The unelevated plugin
 hosts a current-user Windows named pipe and elevated AppSupervisor connects to it, pushing only
 deduplicated state changes; neither side polls for status. When AppSupervisor is unavailable, the
-key shows **Offline**. AppSupervisor waits for the pipe without consuming CPU and reconnects after
-either application restarts.
+key shows **Offline**. The pipe connection is the sole online/offline signal, so elevation-launcher
+events cannot overwrite a live status. AppSupervisor waits for the pipe without consuming CPU and
+reconnects after either application restarts.
 
 To install the development package:
 
