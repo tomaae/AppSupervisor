@@ -100,11 +100,12 @@ The tray icon stays compact while showing the important state. The blue clock me
 - [Configuration editor](#configuration-editor)
 - [Diagnostic logging](#diagnostic-logging)
 - [Supervisor API](#supervisor-api)
+- [Stream Deck status button](#stream-deck-status-button)
 - [Installation and building](#running-a-packaged-build)
 
 ## Functionality summary
 
-- Activates profiles when their monitored process starts, then processes applications, services, delays, Windows audio interfaces, Home Assistant, OBS, and Twitch actions in the configured order.
+- Activates profiles when their monitored process starts, then processes applications, services, delays, Windows audio interfaces, Home Assistant, OBS, Stream Deck, and Twitch actions in the configured order.
 - Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
@@ -210,7 +211,7 @@ OBS uses the standard WebSocket 5.x protocol over `ws` with a shared host, port,
 
 ### Stream Deck actions
 
-Profiles can run actions placed on Stream Deck's dedicated **MCP Actions** profile. Choose **Add Stream Deck action** in the Resources menu, select a discovered action, and optionally test it before saving. The action runs once during profile activation and is never reversed when the monitored app closes. This is a native Stream Deck action invocation through Elgato's MCP server; AppSupervisor does not simulate a physical or virtual key press.
+Profiles can run actions placed on Stream Deck's dedicated **MCP Actions** profile. Choose **Add Stream Deck action** in the Resources menu, select a discovered action, and optionally test it before saving. Buttons and switches run once during profile activation; an opted-in switch is invoked once more during profile deactivation to toggle it back. This is a native Stream Deck action invocation through Elgato's MCP server; AppSupervisor does not simulate a physical or virtual key press.
 
 The picker labels one-state actions as buttons and two-state actions as switches using Stream Deck's reported action metadata. It shows the same full category, developer, and action identity used by Stream Deck, and prefixes a configured key title when one is available. Buttons run once. Switches can optionally enable **Toggle switch back when monitored app closes**, which invokes the same switch again during profile deactivation. With that option enabled, **Test action** holds the toggled state for five seconds and then restores it asynchronously.
 
