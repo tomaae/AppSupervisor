@@ -212,6 +212,8 @@ OBS uses the standard WebSocket 5.x protocol over `ws` with a shared host, port,
 
 Profiles can run actions placed on Stream Deck's dedicated **MCP Actions** profile. Choose **Add Stream Deck action** in the Resources menu, select a discovered action, and optionally test it before saving. The action runs once during profile activation and is never reversed when the monitored app closes. This is a native Stream Deck action invocation through Elgato's MCP server; AppSupervisor does not simulate a physical or virtual key press.
 
+The picker labels one-state actions as buttons and two-state actions as switches using Stream Deck's reported action metadata. It shows the same full category, developer, and action identity used by Stream Deck, and prefixes a configured key title when one is available. Buttons run once. Switches can optionally enable **Toggle switch back when monitored app closes**, which invokes the same switch again during profile deactivation. With that option enabled, **Test action** holds the toggled state for five seconds and then restores it asynchronously.
+
 In Stream Deck 7.4 or later, enable **MCP Deck** under Stream Deck Preferences and place the desired actions on the generated MCP Actions profile. Then install Elgato's local bridge once:
 
 ```powershell

@@ -44,6 +44,7 @@ public sealed class ConfigurationEditorAddResourceTests
             ]
         });
         Exception? threadException = null;
+        int streamDeckExecutions = 0;
 
         try
         {
@@ -108,10 +109,19 @@ public sealed class ConfigurationEditorAddResourceTests
                             IReadOnlyList<StreamDeckMcpAction>>(
                             [new StreamDeckMcpAction(
                                 "4979ce49-d88b-49cb-9a80-1e95eb45d8f9",
-                                "Start VR",
-                                "Starts the configured VR action"
+                                "Advanced Launcher [BarRaider]: Advanced Launcher",
+                                "Starts the configured VR action",
+                                Title: "VR",
+                                IsSwitch: true,
+                                CurrentState: 1
                             )]
-                        )
+                        ),
+                        streamDeckActionExecutor: (_, _) =>
+                        {
+                            Interlocked.Increment(ref streamDeckExecutions);
+                            return Task.CompletedTask;
+                        },
+                        streamDeckSwitchTestDuration: TimeSpan.Zero
                     );
                     form.ShowInTaskbar = false;
                     form.Opacity = 0;
@@ -136,6 +146,35 @@ public sealed class ConfigurationEditorAddResourceTests
                     InvokeMenuItem(menu, "Add Home Assistant");
                     InvokeMenuItem(menu, "Add OBS action");
                     InvokeMenuItem(menu, "Add Stream Deck action");
+                    Application.DoEvents();
+                    ComboBox streamDeckSelector = Assert.Single(
+                        EnumerateControls(form).OfType<ComboBox>(),
+                        comboBox => comboBox.Items.Count == 1 &&
+                            comboBox.Items[0] is StreamDeckMcpAction
+                    );
+                    Assert.Equal(
+                        "VR — Advanced Launcher [BarRaider]: Advanced Launcher (switch)",
+                        Assert.IsType<StreamDeckMcpAction>(
+                            streamDeckSelector.Items[0]
+                        ).SelectorLabel
+                    );
+                    CheckBox restoreSwitch = Assert.Single(
+                        EnumerateControls(form).OfType<CheckBox>(),
+                        checkBox => checkBox.Text ==
+                            "Toggle switch back when monitored app closes"
+                    );
+                    Assert.True(restoreSwitch.Enabled);
+                    restoreSwitch.Checked = true;
+                    Button streamDeckTest = Assert.Single(
+                        EnumerateControls(form).OfType<Button>(),
+                        button => button.Visible && button.Text == "Test action"
+                    );
+                    streamDeckTest.PerformClick();
+                    Assert.True(SpinWait.SpinUntil(() =>
+                    {
+                        Application.DoEvents();
+                        return Volatile.Read(ref streamDeckExecutions) == 2;
+                    }, TimeSpan.FromSeconds(2)));
                     InvokeMenuItem(menu, "Add Windows audio interface");
                     Application.DoEvents();
 

@@ -32,6 +32,13 @@ public static partial class ConfigValidator
 
             if (string.IsNullOrWhiteSpace(resource.ActionId))
                 errors.Add($"{label} must have a selected action.");
+
+            if (resource.RestoreSwitchOnDeactivate && !resource.IsSwitch)
+            {
+                errors.Add(
+                    $"{label} can restore on deactivation only when the selected action is a switch."
+                );
+            }
         }
     }
 }

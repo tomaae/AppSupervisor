@@ -10,6 +10,7 @@ public sealed partial class ConfigurationEditorForm
         _streamDeckActionLoader;
     private readonly Func<StreamDeckResourceConfig, CancellationToken, Task>
         _streamDeckActionExecutor;
+    private readonly TimeSpan _streamDeckSwitchTestDuration;
     private readonly Panel _streamDeckEditorPanel = new() { Dock = DockStyle.Fill };
     private readonly CheckBox _streamDeckEnabled = new()
     {
@@ -20,9 +21,14 @@ public sealed partial class ConfigurationEditorForm
     {
         Dock = DockStyle.Fill,
         DropDownStyle = ComboBoxStyle.DropDownList,
-        DisplayMember = nameof(StreamDeckMcpAction.DisplayName)
+        DisplayMember = nameof(StreamDeckMcpAction.SelectorLabel)
     };
     private readonly NotificationTargetsControl _streamDeckNotifications = new();
+    private readonly CheckBox _streamDeckRestoreSwitch = new()
+    {
+        Text = "Toggle switch back when monitored app closes",
+        AutoSize = true
+    };
     private readonly Label _streamDeckStatus = new()
     {
         AutoSize = true,
@@ -41,6 +47,7 @@ public sealed partial class ConfigurationEditorForm
         TableLayoutPanel layout = CreateEditorTable();
         AddEditorRow(layout, "", _streamDeckEnabled);
         AddEditorRow(layout, "Stream Deck action", BuildStreamDeckActionSelector());
+        AddEditorRow(layout, "", _streamDeckRestoreSwitch);
         _testStreamDeckButton = CreateButton("Test action", TestStreamDeckActionClicked);
         AddEditorRow(layout, "Action", _testStreamDeckButton);
         AddEditorRow(layout, "Notifications", BuildNotificationTestPanel(
@@ -53,13 +60,14 @@ public sealed partial class ConfigurationEditorForm
             AutoSize = true,
             MaximumSize = new Size(680, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "Actions come from Stream Deck's MCP Actions profile and run once when this profile activates. AppSupervisor does not simulate a key press and does not reverse the action when the monitored app closes."
+            Text = "Actions come from Stream Deck's MCP Actions profile. Buttons run once. A two-state switch can optionally be toggled back when the monitored app closes. AppSupervisor invokes the official action through Elgato MCP and does not simulate a key press."
         });
         scrolling.Controls.Add(layout);
         _streamDeckEditorPanel.Controls.Add(scrolling);
 
         _streamDeckEnabled.CheckedChanged += StreamDeckResourceFieldChanged;
         _streamDeckAction.SelectedIndexChanged += StreamDeckResourceFieldChanged;
+        _streamDeckRestoreSwitch.CheckedChanged += StreamDeckResourceFieldChanged;
         _streamDeckNotifications.TargetsChanged += StreamDeckResourceFieldChanged;
         return _streamDeckEditorPanel;
     }
@@ -92,6 +100,8 @@ public sealed partial class ConfigurationEditorForm
             _streamDeckEditorPanel.Enabled = resource is not null;
             _streamDeckEnabled.Checked = resource?.Enabled ?? false;
             _streamDeckNotifications.LoadTargets(resource?.Notifications.Target ?? []);
+            _streamDeckRestoreSwitch.Checked =
+                resource?.RestoreSwitchOnDeactivate ?? false;
             _streamDeckAction.Items.Clear();
             UpdateStreamDeckButtons();
             _streamDeckStatus.Text = resource is null ? "" : "Loading Stream Deck actions...";
@@ -160,7 +170,10 @@ public sealed partial class ConfigurationEditorForm
                     string.IsNullOrWhiteSpace(resource.ActionName)
                         ? resource.ActionId
                         : resource.ActionName,
-                    "Previously configured action"
+                    "Previously configured action",
+                    resource.ActionTitle,
+                    resource.IsSwitch,
+                    CurrentState: 0
                 );
                 _streamDeckAction.Items.Add(selected);
             }
@@ -173,14 +186,21 @@ public sealed partial class ConfigurationEditorForm
             _loadingControls = false;
         }
 
-        if (string.IsNullOrWhiteSpace(resource.ActionId) &&
-            _streamDeckAction.SelectedItem is StreamDeckMcpAction first)
+        if (_streamDeckAction.SelectedItem is StreamDeckMcpAction first)
         {
             resource.ActionId = first.ActionId;
             resource.ActionName = first.DisplayName;
+            resource.ActionTitle = first.Title;
+            resource.IsSwitch = first.IsSwitch;
+
+            if (!first.IsSwitch)
+                resource.RestoreSwitchOnDeactivate = false;
+
             _resourceList.Refresh();
             UpdateStatus();
         }
+
+        UpdateStreamDeckControlStates();
     }
 
     private void StreamDeckResourceFieldChanged(object? sender, EventArgs e)
@@ -193,10 +213,18 @@ public sealed partial class ConfigurationEditorForm
         {
             resource.ActionId = action.ActionId;
             resource.ActionName = action.DisplayName;
+            resource.ActionTitle = action.Title;
+            resource.IsSwitch = action.IsSwitch;
+
+            if (!action.IsSwitch)
+                _streamDeckRestoreSwitch.Checked = false;
         }
 
+        resource.RestoreSwitchOnDeactivate =
+            resource.IsSwitch && _streamDeckRestoreSwitch.Checked;
         resource.Notifications.Target = [.. _streamDeckNotifications.SelectedTargets];
         _resourceList.Refresh();
+        UpdateStreamDeckControlStates();
         UpdateStreamDeckButtons();
         UpdateStatus();
     }
@@ -250,8 +278,21 @@ public sealed partial class ConfigurationEditorForm
         {
             await _streamDeckActionExecutor(resource, CancellationToken.None);
 
-            if (!IsDisposed && ReferenceEquals(resource, SelectedStreamDeck))
+            if (resource.IsSwitch && resource.RestoreSwitchOnDeactivate)
+            {
+                if (!IsDisposed && ReferenceEquals(resource, SelectedStreamDeck))
+                    _streamDeckStatus.Text = "Switch toggled; restoring in 5 seconds...";
+
+                await Task.Delay(_streamDeckSwitchTestDuration);
+                await _streamDeckActionExecutor(resource, CancellationToken.None);
+
+                if (!IsDisposed && ReferenceEquals(resource, SelectedStreamDeck))
+                    _streamDeckStatus.Text = "Test action succeeded and the switch was restored.";
+            }
+            else if (!IsDisposed && ReferenceEquals(resource, SelectedStreamDeck))
+            {
                 _streamDeckStatus.Text = "Test action succeeded.";
+            }
         }
         catch (Exception ex)
         {
@@ -284,6 +325,16 @@ public sealed partial class ConfigurationEditorForm
         _refreshStreamDeckButton.Enabled = selected && !_streamDeckDiscoveryPending;
         _testStreamDeckButton.Enabled = selected && !_streamDeckDiscoveryPending &&
             !_streamDeckActionTestPending && _streamDeckAction.SelectedItem is not null;
+    }
+
+    private void UpdateStreamDeckControlStates()
+    {
+        bool isSwitch = _streamDeckAction.SelectedItem is StreamDeckMcpAction action &&
+            action.IsSwitch;
+        _streamDeckRestoreSwitch.Enabled = SelectedStreamDeck is not null && isSwitch;
+
+        if (!isSwitch)
+            _streamDeckRestoreSwitch.Checked = false;
     }
 
     private void TestStreamDeckNotificationClicked(object? sender, EventArgs e)

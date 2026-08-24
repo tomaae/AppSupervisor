@@ -170,6 +170,7 @@ public sealed partial class ConfigurationEditorForm : Form
             streamDeckActionLoader = null,
         Func<StreamDeckResourceConfig, CancellationToken, Task>?
             streamDeckActionExecutor = null,
+        TimeSpan? streamDeckSwitchTestDuration = null,
         Action<InstalledServiceInfo>? automaticServiceWarning = null,
         IHelperTestController? helperTestController = null,
         Func<ConfigurationRuntimeStatusSnapshot>? runtimeStatusReader = null)
@@ -193,6 +194,7 @@ public sealed partial class ConfigurationEditorForm : Form
             StreamDeckMcpClient.Shared.LoadActionsAsync;
         _streamDeckActionExecutor = streamDeckActionExecutor ??
             StreamDeckMcpClient.Shared.ExecuteActionAsync;
+        _streamDeckSwitchTestDuration = streamDeckSwitchTestDuration ?? TimeSpan.FromSeconds(5);
         _automaticServiceWarning = automaticServiceWarning ?? ShowAutomaticServiceWarning;
         _helperTestController = helperTestController;
         _runtimeStatusReader = runtimeStatusReader;

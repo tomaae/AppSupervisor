@@ -24,7 +24,7 @@ public sealed class StreamDeckResourceTests
     public void Deactivate_DoesNotInvokeAnInverseAction()
     {
         var client = new FakeClient();
-        using var resource = CreateResource(client);
+        using var resource = CreateResource(client, isSwitch: true, restoreSwitch: false);
         resource.Activate();
         resource.AdvanceLifecycle(DateTime.UtcNow);
         Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
@@ -37,11 +37,57 @@ public sealed class StreamDeckResourceTests
         Assert.False(resource.DeactivationPending);
     }
 
-    private static StreamDeckResource CreateResource(FakeClient client) => new(
+    [Fact]
+    public void Deactivate_RestorableSwitch_InvokesSwitchAgain()
+    {
+        var client = new FakeClient();
+        using var resource = CreateResource(client, isSwitch: true, restoreSwitch: true);
+        resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
+
+        resource.Deactivate();
+        Assert.True(resource.DeactivationPending);
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => client.Actions.Count == 2 && !resource.DeactivationPending,
+            TimeSpan.FromSeconds(2)
+        ));
+    }
+
+    [Fact]
+    public void Deactivate_WhileSwitchActivationIsQueued_AppliesThenRestores()
+    {
+        var client = new FakeClient();
+        using var resource = CreateResource(client, isSwitch: true, restoreSwitch: true);
+        resource.Activate();
+        resource.Deactivate();
+
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        Assert.True(SpinWait.SpinUntil(
+            () => client.Actions.Count == 1 && resource.LifecycleWorkPending,
+            TimeSpan.FromSeconds(2)
+        ));
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => client.Actions.Count == 2 && !resource.DeactivationPending,
+            TimeSpan.FromSeconds(2)
+        ));
+        Assert.False(resource.IsStarted());
+    }
+
+    private static StreamDeckResource CreateResource(
+        FakeClient client,
+        bool isSwitch = false,
+        bool restoreSwitch = false) => new(
         new StreamDeckResourceConfig
         {
             ActionId = "4979ce49-d88b-49cb-9a80-1e95eb45d8f9",
-            ActionName = "Start VR"
+            ActionName = "Start VR",
+            IsSwitch = isSwitch,
+            RestoreSwitchOnDeactivate = restoreSwitch
         },
         client
     );

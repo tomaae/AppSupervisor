@@ -49,6 +49,7 @@ internal sealed class StreamDeckMcpProtocolClient(TextReader reader, TextWriter 
             throw new InvalidOperationException("Stream Deck returned no executable actions list.");
 
         var actions = new List<StreamDeckMcpAction>();
+        StreamDeckPluginCatalog pluginCatalog = StreamDeckPluginCatalog.Load();
 
         foreach (JsonElement action in actionsJson.EnumerateArray())
         {
@@ -68,10 +69,25 @@ internal sealed class StreamDeckMcpProtocolClient(TextReader reader, TextWriter 
             string description = descriptionObject.ValueKind == JsonValueKind.Object
                 ? ReadString(descriptionObject, "description")
                 : "";
+            string pluginId = ReadString(action, "pluginId");
+            string configuredTitle = ReadString(action, "title");
+
+            if (configuredTitle.Length == 0 &&
+                descriptionObject.ValueKind == JsonValueKind.Object)
+            {
+                configuredTitle = ReadString(descriptionObject, "title");
+            }
+
+            int numberOfStates = ReadInt32(action, "numberOfStates", 1);
+            int currentState = ReadInt32(action, "currentState", 0);
+            string actionName = title.Length == 0 ? "Unnamed Stream Deck action" : title;
             actions.Add(new StreamDeckMcpAction(
                 id,
-                title.Length == 0 ? "Unnamed Stream Deck action" : title,
-                description
+                pluginCatalog.GetFullActionName(pluginId, actionName),
+                description,
+                configuredTitle,
+                IsSwitch: numberOfStates == 2,
+                CurrentState: currentState
             ));
         }
 
@@ -211,6 +227,12 @@ internal sealed class StreamDeckMcpProtocolClient(TextReader reader, TextWriter 
         property.ValueKind == JsonValueKind.String
             ? property.GetString() ?? ""
             : "";
+
+    private static int ReadInt32(JsonElement value, string propertyName, int fallback) =>
+        value.TryGetProperty(propertyName, out JsonElement property) &&
+        property.TryGetInt32(out int result)
+            ? result
+            : fallback;
 
     private static string ReadId(JsonElement id) => id.ValueKind switch
     {

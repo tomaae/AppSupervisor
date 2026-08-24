@@ -30,7 +30,10 @@ public sealed class StreamDeckIntegrationTests
                             new StreamDeckResourceConfig
                             {
                                 ActionId = " 4979ce49-d88b-49cb-9a80-1e95eb45d8f9 ",
-                                ActionName = " Start VR "
+                                ActionName = " Start VR ",
+                                ActionTitle = " VR ",
+                                IsSwitch = true,
+                                RestoreSwitchOnDeactivate = true
                             }
                         ]
                     }
@@ -42,11 +45,38 @@ public sealed class StreamDeckIntegrationTests
             );
             Assert.Equal("4979ce49-d88b-49cb-9a80-1e95eb45d8f9", action.ActionId);
             Assert.Equal("Start VR", action.ActionName);
+            Assert.Equal("VR", action.ActionTitle);
+            Assert.True(action.IsSwitch);
+            Assert.True(action.RestoreSwitchOnDeactivate);
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public void Validate_ButtonConfiguredForRestoration_ThrowsValidationError()
+    {
+        var profile = new SupervisorProfileConfig
+        {
+            Name = "Stream Deck",
+            MonitorProcess = "vr.exe",
+            StreamDeckResources =
+            [
+                new StreamDeckResourceConfig
+                {
+                    ActionId = "action-1",
+                    RestoreSwitchOnDeactivate = true
+                }
+            ]
+        };
+
+        ConfigValidationException exception = Assert.Throws<ConfigValidationException>(
+            () => ConfigValidator.Validate([profile])
+        );
+
+        Assert.Contains("only when the selected action is a switch", exception.Message);
     }
 
     [Fact]
