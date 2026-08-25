@@ -43,7 +43,7 @@ public sealed class TwitchAuthorizationServiceTests
 
         Assert.Equal("new-access", access.AccessToken);
         Assert.Equal("new-refresh", store.Authorization!.RefreshToken);
-        Assert.Equal(1, store.SaveCount);
+        Assert.Equal(2, store.SaveCount);
     }
 
     [Fact]
@@ -74,7 +74,70 @@ public sealed class TwitchAuthorizationServiceTests
         Assert.Equal("new-refresh", store.Authorization.RefreshToken);
         Assert.Equal("123", store.Authorization.UserId);
         Assert.Equal("broadcaster", store.Authorization.Login);
-        Assert.Equal(1, store.SaveCount);
+        Assert.Equal(2, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task GetStatus_StoragePreflightFails_DoesNotConsumeRefreshToken()
+    {
+        var store = CreateExpiredStore();
+        store.SaveFailure = _ => new IOException("Protected storage is unavailable.");
+        int requestCount = 0;
+        using var httpClient = new HttpClient(new StubHandler(_ =>
+        {
+            requestCount++;
+            throw new InvalidOperationException("No Twitch request was expected.");
+        }));
+        using var service = new TwitchAuthorizationService(
+            new TwitchIntegrationConfig(),
+            store,
+            httpClient
+        );
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.GetStatusAsync(CancellationToken.None)
+        );
+
+        Assert.Equal(0, requestCount);
+        Assert.Contains("was not consumed", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.IsType<IOException>(exception.InnerException);
+        Assert.Equal("old-refresh", store.Authorization!.RefreshToken);
+    }
+
+    [Fact]
+    public async Task GetStatus_RotatedCredentialCannotBePersisted_RequiresReconnectImmediately()
+    {
+        var store = CreateExpiredStore();
+        store.SaveFailure = authorization =>
+            authorization.AccessToken == "new-access"
+                ? new IOException("Protected storage is unavailable.")
+                : null;
+        int refreshCount = 0;
+        using var httpClient = new HttpClient(new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/token", StringComparison.Ordinal))
+            {
+                refreshCount++;
+                return Json(HttpStatusCode.OK,
+                    "{\"access_token\":\"new-access\",\"refresh_token\":\"new-refresh\",\"expires_in\":14400}");
+            }
+
+            throw new InvalidOperationException("Validation should not run after persistence fails.");
+        }));
+        using var service = new TwitchAuthorizationService(
+            new TwitchIntegrationConfig(),
+            store,
+            httpClient
+        );
+
+        TwitchReauthorizationRequiredException exception =
+            await Assert.ThrowsAsync<TwitchReauthorizationRequiredException>(
+                () => service.GetStatusAsync(CancellationToken.None)
+            );
+
+        Assert.Equal(1, refreshCount);
+        Assert.Contains("could not save", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.IsType<IOException>(exception.InnerException);
     }
 
     [Fact]
@@ -282,6 +345,7 @@ public sealed class TwitchAuthorizationServiceTests
         private readonly object _sync = new();
         public TwitchStoredAuthorization? Authorization { get; set; }
         public int SaveCount { get; private set; }
+        public Func<TwitchStoredAuthorization, Exception?>? SaveFailure { get; set; }
         public TwitchStoredAuthorization? Load()
         {
             lock (_sync)
@@ -291,6 +355,9 @@ public sealed class TwitchAuthorizationServiceTests
         {
             lock (_sync)
             {
+                Exception? failure = SaveFailure?.Invoke(authorization);
+                if (failure is not null)
+                    throw failure;
                 Authorization = authorization;
                 SaveCount++;
             }

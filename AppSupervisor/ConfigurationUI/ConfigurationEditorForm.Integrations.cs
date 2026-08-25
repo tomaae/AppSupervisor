@@ -306,7 +306,7 @@ public sealed partial class ConfigurationEditorForm
             AutoSize = true,
             MaximumSize = new Size(720, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "Authorization opens Twitch in your browser once. AppSupervisor renews it automatically while running; rotating OAuth credentials are kept in Windows Credential Manager."
+            Text = "Authorization opens Twitch in your browser once. AppSupervisor renews it automatically while running; rotating OAuth credentials are encrypted for this Windows user."
         });
         group.Controls.Add(layout);
         return group;

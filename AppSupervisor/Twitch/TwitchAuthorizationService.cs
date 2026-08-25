@@ -22,7 +22,7 @@ internal sealed class TwitchAuthorizationService : IDisposable
     private DateTimeOffset _lastValidatedUtc = DateTimeOffset.MinValue;
 
     public TwitchAuthorizationService(TwitchIntegrationConfig configuration)
-        : this(configuration, new WindowsTwitchCredentialStore(), new HttpClient(), true)
+        : this(configuration, new ProtectedFileTwitchCredentialStore(), new HttpClient(), true)
     {
     }
 
@@ -280,6 +280,21 @@ internal sealed class TwitchAuthorizationService : IDisposable
         TwitchStoredAuthorization stored,
         CancellationToken cancellationToken)
     {
+        // Twitch refresh tokens rotate when the endpoint succeeds. Prove that the current
+        // credential can still be written before asking Twitch to consume it, so a local
+        // storage outage cannot silently strand the session.
+        try
+        {
+            _store.Save(stored);
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException(
+                "AppSupervisor could not prepare durable storage for a Twitch token refresh. The current refresh token was not consumed.",
+                exception
+            );
+        }
+
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(IdentityBase, "oauth2/token"))
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -317,7 +332,17 @@ internal sealed class TwitchAuthorizationService : IDisposable
         TwitchStoredAuthorization refreshed = CreateStoredAuthorization(stored.ClientId, document.RootElement);
         refreshed.UserId = stored.UserId;
         refreshed.Login = stored.Login;
-        _store.Save(refreshed);
+        try
+        {
+            _store.Save(refreshed);
+        }
+        catch (Exception exception)
+        {
+            throw new TwitchReauthorizationRequiredException(
+                "Twitch renewed the authorization, but AppSupervisor could not save the replacement securely. Reconnect Twitch now.",
+                exception
+            );
+        }
         TwitchAccess validated = await ValidateAsync(refreshed, cancellationToken).ConfigureAwait(false);
         if (!string.Equals(refreshed.UserId, validated.UserId, StringComparison.Ordinal) ||
             !string.Equals(refreshed.Login, validated.Login, StringComparison.Ordinal))

@@ -19,7 +19,7 @@ internal sealed class WindowsTwitchCredentialStore : ITwitchCredentialStore
             int error = Marshal.GetLastWin32Error();
             if (error == 1168)
                 return null;
-            throw new Win32Exception(error, "Windows could not read the stored Twitch authorization.");
+            throw CreateCredentialManagerException(error, "read the stored Twitch authorization");
         }
 
         try
@@ -57,7 +57,12 @@ internal sealed class WindowsTwitchCredentialStore : ITwitchCredentialStore
             };
 
             if (!CredWrite(ref credential, 0))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not store the Twitch authorization.");
+            {
+                throw CreateCredentialManagerException(
+                    Marshal.GetLastWin32Error(),
+                    "store the Twitch authorization"
+                );
+            }
         }
         finally
         {
@@ -71,8 +76,17 @@ internal sealed class WindowsTwitchCredentialStore : ITwitchCredentialStore
         {
             int error = Marshal.GetLastWin32Error();
             if (error != 1168)
-                throw new Win32Exception(error, "Windows could not remove the Twitch authorization.");
+                throw CreateCredentialManagerException(error, "remove the Twitch authorization");
         }
+    }
+
+    internal static Win32Exception CreateCredentialManagerException(int error, string operation)
+    {
+        string systemMessage = new Win32Exception(error).Message;
+        return new Win32Exception(
+            error,
+            $"Windows Credential Manager could not {operation}. Credential Manager error {error}: {systemMessage}"
+        );
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
