@@ -267,6 +267,10 @@ An identical ordinary supervision error from the same resource is published only
 
 Open the editor from **Configure...** in the tray menu or by double-clicking the tray icon. It supports adding, duplicating, removing, enabling, reordering, and configuring profiles and resources.
 
+Use **Export profile...** to save the selected profile as a versioned `*.appsupervisor-profile.json` document, or **Import profile...** to add one of those documents as a new profile. The transfer preserves the profile trigger, timeouts, ordered resources, dependencies, helper health checks, startup macros, notification choices, and every resource-specific setting. Profile and resource internal IDs are regenerated during import and dependency links are remapped; a duplicate visible name receives an `(Imported)` suffix.
+
+Portable profile files contain only the selected profile. Application-wide Home Assistant, OBS, Twitch, SteamVR, Stream Deck, API, and logging configuration is never included, so integration credentials and connection settings remain local. Values that belong to the profile but may be computer-specific—such as the activation process name, executable paths, Windows service names, audio endpoint identities, Stream Deck action IDs, Home Assistant entities, OBS object names, health-check endpoints, and monitor names/coordinates—are preserved rather than silently discarded. The export records applicable warnings, both export and import show them, and every imported profile starts **disabled**. Review or reselect those values before enabling the profile and choosing **Save & Apply**; normal validation still prevents an unusable enabled profile from replacing the active configuration.
+
 The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, SteamVR devices, and live VRChat OSCQuery parameter names. Running, Steam, and Store application pickers show a loading overlay that prevents selecting incomplete results and provide text filtering after results are ready. The running-process picker excludes Windows service processes and hides Microsoft/Windows applications by default; the Store picker similarly hides Microsoft/system applications unless requested. The running and Store picker status text reports visible and filtered counts.
 
 Steam and Microsoft Store catalog discovery retries transient failures up to four total attempts before reporting a distinct **Application discovery error**. If discovery fails while applying a reload, the previous valid configuration and its supervision remain active. The unified resource list uses each helper executable's icon when available and dedicated type pictograms for services, delays, Windows audio, Home Assistant, OBS, Stream Deck, and Twitch resources.
@@ -468,6 +472,8 @@ AppSupervisor requires administrator privileges to manage configured services co
 Configuration is stored in `config.json` beside `AppSupervisor.exe`. If the file is missing, AppSupervisor creates an empty valid configuration. The last verified configuration is also saved as `config.json.old` during normal shutdown.
 
 Both files are excluded from Git and omitted from release packages. Do not share or commit them if they contain a Home Assistant access token or OBS WebSocket password. Twitch OAuth credentials are not written to these files; they are stored separately under the current user's Local App Data and encrypted with Windows DPAPI so only that Windows user can decrypt them.
+
+Portable `*.appsupervisor-profile.json` exports are intended for sharing individual profiles and never contain the application-wide `integrations` object. They can still contain profile-owned values such as executable paths, arguments, Twitch chat messages, entity/object names, or device identifiers, so inspect a profile export before sharing it publicly.
 
 ## Running a packaged build
 

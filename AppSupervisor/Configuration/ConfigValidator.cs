@@ -12,7 +12,23 @@ public static partial class ConfigValidator
     /// </summary>
     /// <param name="profiles">The deserialized profile entries, including possible JSON null entries.</param>
     /// <exception cref="ConfigValidationException">Thrown when one or more entries are invalid.</exception>
-    public static void Validate(IReadOnlyList<SupervisorProfileConfig?> profiles)
+    public static void Validate(IReadOnlyList<SupervisorProfileConfig?> profiles) =>
+        Validate(profiles, requireApplicationFiles: true);
+
+    /// <summary>
+    /// Validates one portable profile as though it were enabled without requiring its source-computer
+    /// executables to exist on the importing computer.
+    /// </summary>
+    internal static void ValidatePortableProfile(SupervisorProfileConfig profile)
+    {
+        SupervisorProfileConfig validationCopy = ConfigJson.Clone(profile);
+        validationCopy.Enabled = true;
+        Validate([validationCopy], requireApplicationFiles: false);
+    }
+
+    private static void Validate(
+        IReadOnlyList<SupervisorProfileConfig?> profiles,
+        bool requireApplicationFiles)
     {
         var errors = new List<string>();
         var profileIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -68,7 +84,8 @@ public static partial class ConfigValidator
                     profileLabel,
                     errors,
                     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                    profile.Enabled
+                    profile.Enabled,
+                    requireApplicationFiles
                 );
             }
 
@@ -202,7 +219,8 @@ public static partial class ConfigValidator
         string profileLabel,
         ICollection<string> errors,
         IDictionary<string, string> activeApplicationPaths,
-        bool profileEnabled)
+        bool profileEnabled,
+        bool requireApplicationFiles)
     {
         for (int applicationIndex = 0; applicationIndex < profile.Applications.Count; applicationIndex++)
         {
@@ -246,7 +264,7 @@ public static partial class ConfigValidator
                 continue;
             }
 
-            if (!File.Exists(fullPath))
+            if (requireApplicationFiles && !File.Exists(fullPath))
                 errors.Add($"{applicationLabel} executable does not exist: {fullPath}");
 
             ValidateAppUri(application, applicationLabel, errors);

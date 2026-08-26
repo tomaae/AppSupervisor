@@ -125,6 +125,7 @@ public sealed partial class ConfigurationEditorForm : Form
     private bool _closeWithoutUnsavedChangesPrompt;
     private Button _validateButton = null!;
     private Button _saveButton = null!;
+    private Button _exportProfileButton = null!;
 
     /// <summary>Loads a detached configuration document and constructs all editor pages.</summary>
     /// <param name="configPath">The active config.json path.</param>
@@ -173,7 +174,8 @@ public sealed partial class ConfigurationEditorForm : Form
         TimeSpan? streamDeckSwitchTestDuration = null,
         Action<InstalledServiceInfo>? automaticServiceWarning = null,
         IHelperTestController? helperTestController = null,
-        Func<ConfigurationRuntimeStatusSnapshot>? runtimeStatusReader = null)
+        Func<ConfigurationRuntimeStatusSnapshot>? runtimeStatusReader = null,
+        IProfileTransferInteraction? profileTransferInteraction = null)
 
     {
 
@@ -198,6 +200,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _automaticServiceWarning = automaticServiceWarning ?? ShowAutomaticServiceWarning;
         _helperTestController = helperTestController;
         _runtimeStatusReader = runtimeStatusReader;
+        _profileTransferInteraction = profileTransferInteraction ?? new ProfileTransferInteraction();
         (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
         _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
@@ -250,6 +253,9 @@ public sealed partial class ConfigurationEditorForm : Form
         panel.Controls.Add(CreateButton("Add profile", AddProfileClicked));
         panel.Controls.Add(CreateButton("Duplicate", DuplicateProfileClicked));
         panel.Controls.Add(CreateButton("Remove", RemoveProfileClicked));
+        panel.Controls.Add(CreateButton("Import profile...", ImportProfileClicked));
+        _exportProfileButton = CreateButton("Export profile...", ExportProfileClicked);
+        panel.Controls.Add(_exportProfileButton);
         return panel;
     }
 
@@ -530,6 +536,7 @@ public sealed partial class ConfigurationEditorForm : Form
             _loadingControls = false;
         }
 
+        _exportProfileButton.Enabled = _profileSelector.SelectedItem is SupervisorProfileConfig;
         LoadSelectedProfile();
     }
 
