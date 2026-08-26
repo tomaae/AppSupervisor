@@ -54,7 +54,7 @@ public partial class TrayApplicationContext
             _configurationEditor = editor;
 
             if (editor.ShowDialog(_dialogOwner) == DialogResult.OK && !_exiting)
-                await LoadConfigurationAsync(showNotification: true);
+                await LoadConfigurationAsync();
         }
         finally
         {

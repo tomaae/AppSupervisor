@@ -275,7 +275,7 @@ Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR moni
 
 The **Diagnostic logs** tab immediately after **Integrations** provides a parsed viewer for every available current-format session log and the legacy `AppSupervisor.log`, ordered newest first. Its record table separates time, severity, and message, while the detail pane retains multiline exception and continuation text. Selecting the tab always rediscovers and reloads the logs; changing the session or using **Refresh** also reloads without blocking the editor.
 
-**Validate** checks the complete configuration without saving. **Save & Apply** validates and writes it, then replaces the running configuration. If the new configuration cannot be applied, the previous valid configuration remains active.
+**Validate** checks the complete configuration without saving. **Save & Apply** validates and writes it, then replaces the running configuration without showing a success notification. If the new configuration cannot be applied, the previous valid configuration remains active and AppSupervisor shows an informative failure notification.
 
 ### Diagnostic logging
 

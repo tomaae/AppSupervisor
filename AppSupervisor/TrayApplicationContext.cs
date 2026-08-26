@@ -684,8 +684,7 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <summary>
     /// Builds a complete replacement configuration and swaps it into use only when loading and validation succeed.
     /// </summary>
-    /// <param name="showNotification">Whether to notify after a successful manual reload.</param>
-    private async Task LoadConfigurationAsync(bool showNotification)
+    private async Task LoadConfigurationAsync()
     {
         var newProfiles = new List<SupervisorProfile>();
         var newApplicationUsageRegistry = new ApplicationUsageRegistry();
@@ -835,15 +834,6 @@ public partial class TrayApplicationContext : ApplicationContext
 
         ResetEnsureClosedTimer();
         ResetLifecycleTimer();
-
-        if (showNotification)
-        {
-            PublishSystemNotification(
-                NotificationSeverity.Information,
-                "AppSupervisor",
-                $"Configuration reloaded. {_profiles.Count} profile(s) active."
-            );
-        }
     }
 
     /// <summary>Disposes a configuration graph that was built successfully but never made active.</summary>
@@ -1063,7 +1053,7 @@ public partial class TrayApplicationContext : ApplicationContext
         // Twitch profile action happens for a long time.
         ResetTwitchAuthorizationTimer();
 
-        await LoadConfigurationAsync(showNotification: false);
+        await LoadConfigurationAsync();
 
         if (!_exiting)
             CheckStartupRegistration();

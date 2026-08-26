@@ -48,6 +48,23 @@ public sealed class ConfigurationLoadFailureClassifierTests
         Assert.Contains("Existing configuration remains active", presentation.MessagePrefix);
     }
 
+    /// <summary>Confirms a failed manual reload retains an informative error notification.</summary>
+    [Fact]
+    public void Classify_ConfigurationReloadFailure_KeepsInformativeErrorNotification()
+    {
+        ConfigurationLoadFailurePresentation presentation =
+            ConfigurationLoadFailureClassifier.Classify(
+                new IOException("config.json could not be read."),
+                hasValidConfiguration: true
+            );
+
+        Assert.Equal("Configuration error", presentation.NotificationTitle);
+        Assert.Equal(
+            "Reload failed. Existing configuration remains active.",
+            presentation.MessagePrefix
+        );
+    }
+
     /// <summary>Confirms malformed JSON remains a genuine configuration error.</summary>
     [Fact]
     public void Classify_JsonFailure_UsesConfigurationError()
