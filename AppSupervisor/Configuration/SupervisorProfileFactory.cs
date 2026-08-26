@@ -22,6 +22,7 @@ public static class SupervisorProfileFactory
             config,
             _ => null,
             new HomeAssistantIntegrationConfig(),
+            new MqttIntegrationConfig(),
             new ObsIntegrationConfig(),
             new TwitchIntegrationConfig()
         );
@@ -36,6 +37,7 @@ public static class SupervisorProfileFactory
         SupervisorProfileConfig config,
         Func<ManagedApplicationConfig, Func<bool>?> closeGuardFactory,
         HomeAssistantIntegrationConfig homeAssistantIntegration,
+        MqttIntegrationConfig mqttIntegration,
         ObsIntegrationConfig obsIntegration,
         TwitchIntegrationConfig twitchIntegration)
     {
@@ -104,6 +106,16 @@ public static class SupervisorProfileFactory
             configuredResources.Add((
                 homeAssistantConfig,
                 new HomeAssistantResource(homeAssistantConfig, homeAssistantIntegration),
+                stableOrder++
+            ));
+        }
+
+        foreach (MqttResourceConfig mqttConfig in
+            config.MqttResources.Where(resource => resource.Enabled))
+        {
+            configuredResources.Add((
+                mqttConfig,
+                new MqttResource(mqttConfig, mqttIntegration),
                 stableOrder++
             ));
         }

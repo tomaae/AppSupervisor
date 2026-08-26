@@ -33,6 +33,9 @@ public class SupervisorProfileConfig
     /// <summary>Gets or sets Home Assistant actions supervised by this profile.</summary>
     public List<HomeAssistantResourceConfig> HomeAssistantResources { get; set; } = [];
 
+    /// <summary>Gets or sets MQTT publishes supervised by this profile.</summary>
+    public List<MqttResourceConfig> MqttResources { get; set; } = [];
+
     /// <summary>Gets or sets one-way OBS actions issued when this profile activates.</summary>
     public List<ObsResourceConfig> ObsResources { get; set; } = [];
 

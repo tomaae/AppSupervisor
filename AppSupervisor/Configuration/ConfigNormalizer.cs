@@ -103,6 +103,24 @@ internal static class ConfigNormalizer
                 }
             }
 
+            if (profile.MqttResources is not null)
+            {
+                foreach (MqttResourceConfig? resource in profile.MqttResources)
+                {
+                    if (resource is null)
+                        continue;
+
+                    NormalizeResource(resource);
+                    resource.Topic ??= "";
+                    resource.Payload ??= "";
+                    resource.VerificationTopic ??= "";
+                    resource.ExpectedState ??= "";
+                    resource.DeactivationTopic ??= "";
+                    resource.DeactivationPayload ??= "";
+                    resource.DeactivationExpectedState ??= "";
+                }
+            }
+
             if (profile.ObsResources is not null)
             {
                 foreach (ObsResourceConfig? resource in profile.ObsResources)

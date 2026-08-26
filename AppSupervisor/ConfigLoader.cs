@@ -60,6 +60,13 @@ public static class ConfigLoader
             integrations.Obs.Password ??= "";
         }
 
+        if (integrations.Mqtt is not null)
+        {
+            integrations.Mqtt.Host = integrations.Mqtt.Host?.Trim() ?? "";
+            integrations.Mqtt.Username ??= "";
+            integrations.Mqtt.Password ??= "";
+        }
+
         if (integrations.SteamVr?.Devices is null)
             return;
 

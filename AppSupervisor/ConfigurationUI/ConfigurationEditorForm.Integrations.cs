@@ -104,7 +104,7 @@ public sealed partial class ConfigurationEditorForm
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 6
+            RowCount = 7
         };
         integrationsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -113,10 +113,12 @@ public sealed partial class ConfigurationEditorForm
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.Controls.Add(BuildSupervisorApiIntegrationGroup(), 0, 0);
         integrationsLayout.Controls.Add(BuildHomeAssistantIntegrationGroup(), 0, 1);
-        integrationsLayout.Controls.Add(BuildObsIntegrationGroup(), 0, 2);
-        integrationsLayout.Controls.Add(BuildTwitchIntegrationGroup(), 0, 3);
+        integrationsLayout.Controls.Add(BuildMqttIntegrationGroup(), 0, 2);
+        integrationsLayout.Controls.Add(BuildObsIntegrationGroup(), 0, 3);
+        integrationsLayout.Controls.Add(BuildTwitchIntegrationGroup(), 0, 4);
         var group = new GroupBox
         {
             Text = "Global — SteamVR device monitoring",
@@ -163,13 +165,14 @@ public sealed partial class ConfigurationEditorForm
 
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
-        integrationsLayout.Controls.Add(group, 0, 4);
-        integrationsLayout.Controls.Add(BuildLoggingIntegrationGroup(), 0, 5);
+        integrationsLayout.Controls.Add(group, 0, 5);
+        integrationsLayout.Controls.Add(BuildLoggingIntegrationGroup(), 0, 6);
         scrolling.Controls.Add(integrationsLayout);
         page.Controls.Add(scrolling);
 
         LoadSupervisorApiIntegration();
         LoadHomeAssistantIntegration();
+        LoadMqttIntegration();
         LoadObsIntegration();
         LoadTwitchIntegration();
         LoadSteamVrIntegration();

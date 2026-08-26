@@ -76,6 +76,11 @@ internal static class ConfigMigration
                 if (resource is not null)
                     yield return resource;
 
+        if (profile.MqttResources is not null)
+            foreach (MqttResourceConfig? resource in profile.MqttResources)
+                if (resource is not null)
+                    yield return resource;
+
         if (profile.ObsResources is not null)
             foreach (ObsResourceConfig? resource in profile.ObsResources)
                 if (resource is not null)

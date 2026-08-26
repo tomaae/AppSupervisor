@@ -16,6 +16,7 @@ public static class IntegrationConfigValidator
         if (integrations.SupervisorApi is null)
             errors.Add("The integrations object must contain a supervisorApi object.");
         ValidateHomeAssistant(integrations.HomeAssistant, profiles, errors);
+        ValidateMqtt(integrations.Mqtt, profiles, errors);
         ValidateTwitch(integrations.Twitch, errors);
         ValidateObs(integrations.Obs, profiles, errors);
         SteamVrIntegrationConfig? steamVr = integrations.SteamVr;
@@ -126,6 +127,43 @@ public static class IntegrationConfigValidator
 
         if (!hasToken)
             errors.Add("Home Assistant token must be provided when the integration is configured or used.");
+    }
+
+    private static void ValidateMqtt(
+        MqttIntegrationConfig? mqtt,
+        IReadOnlyList<SupervisorProfileConfig?>? profiles,
+        ICollection<string> errors)
+    {
+        if (mqtt is null)
+        {
+            errors.Add("The integrations object must contain an mqtt object.");
+            return;
+        }
+
+        bool required = profiles?.Any(profile => profile?.Enabled == true &&
+            profile.MqttResources?.Any(resource => resource?.Enabled == true) == true) == true;
+        bool configured = !string.IsNullOrWhiteSpace(mqtt.Host) || mqtt.Port != 1883 ||
+            mqtt.UseTls || !string.IsNullOrEmpty(mqtt.Username) ||
+            !string.IsNullOrEmpty(mqtt.Password);
+
+        if (!required && !configured)
+            return;
+
+        if (string.IsNullOrWhiteSpace(mqtt.Host))
+        {
+            errors.Add("MQTT broker host must be provided when the integration is configured or used.");
+        }
+        else if (mqtt.Host.Contains("://", StringComparison.Ordinal) ||
+            mqtt.Host.IndexOfAny(['/', '\\']) >= 0)
+        {
+            errors.Add("MQTT broker host must be a DNS name or IP address without a URI scheme or path.");
+        }
+
+        if (mqtt.Port is < 1 or > 65_535)
+            errors.Add("MQTT broker port must be between 1 and 65535.");
+
+        if (!string.IsNullOrEmpty(mqtt.Password) && string.IsNullOrWhiteSpace(mqtt.Username))
+            errors.Add("MQTT username must be provided when a password is configured.");
     }
 
     private static void ValidateTwitch(

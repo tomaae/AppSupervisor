@@ -194,6 +194,7 @@ public sealed class ProfileTransferServiceTests
         const string serviceId = "service-id";
         const string delayId = "delay-id";
         const string homeAssistantId = "home-assistant-id";
+        const string mqttId = "mqtt-id";
         const string obsId = "obs-id";
         const string streamDeckId = "stream-deck-id";
         const string twitchId = "twitch-id";
@@ -292,13 +293,30 @@ public sealed class ProfileTransferServiceTests
                     Persistent = true
                 }
             ],
+            MqttResources =
+            [
+                new MqttResourceConfig
+                {
+                    ResourceId = mqttId,
+                    StartupOrder = 4,
+                    DependencyResourceId = homeAssistantId,
+                    Topic = "portable/device/set",
+                    Payload = "ON",
+                    VerificationTopic = "portable/device/state",
+                    DeactivationBehavior =
+                        MqttDeactivationBehavior.PublishConfiguredPayload,
+                    DeactivationTopic = "portable/device/set",
+                    DeactivationPayload = "OFF",
+                    DeactivationRetain = true
+                }
+            ],
             ObsResources =
             [
                 new ObsResourceConfig
                 {
                     ResourceId = obsId,
-                    StartupOrder = 4,
-                    DependencyResourceId = homeAssistantId,
+                    StartupOrder = 5,
+                    DependencyResourceId = mqttId,
                     Action = ObsActionType.SwitchScene,
                     SceneName = "VR scene"
                 }
@@ -308,7 +326,7 @@ public sealed class ProfileTransferServiceTests
                 new StreamDeckResourceConfig
                 {
                     ResourceId = streamDeckId,
-                    StartupOrder = 5,
+                    StartupOrder = 6,
                     DependencyResourceId = obsId,
                     ActionId = "source-computer-action-id",
                     ActionName = "VR toggle",
@@ -322,7 +340,7 @@ public sealed class ProfileTransferServiceTests
                 new TwitchResourceConfig
                 {
                     ResourceId = twitchId,
-                    StartupOrder = 6,
+                    StartupOrder = 7,
                     DependencyResourceId = streamDeckId,
                     Action = TwitchActionType.SendChatMessage,
                     Message = "Stream started"
@@ -333,7 +351,7 @@ public sealed class ProfileTransferServiceTests
                 new AudioInterfaceResourceConfig
                 {
                     ResourceId = audioId,
-                    StartupOrder = 7,
+                    StartupOrder = 8,
                     DependencyResourceId = twitchId,
                     EndpointId = "source-endpoint-id",
                     DeviceInstanceId = "source-device-instance",

@@ -22,6 +22,7 @@
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="5.2.0.1603" />
     <PackageReference Include="VRChat.OSCQuery" Version="0.0.7" ExcludeAssets="contentFiles" />
   </ItemGroup>
   <ItemGroup>

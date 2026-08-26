@@ -106,6 +106,7 @@ public static partial class ConfigValidator
                 activeHomeAssistantEntities,
                 profile.Enabled
             );
+            ValidateMqttResources(profile, profileLabel, errors);
             ValidateObsResources(profile, profileLabel, errors);
             ValidateStreamDeckResources(profile, profileLabel, errors);
             ValidateTwitchResources(profile, profileLabel, errors, ref activeTwitchProfile);

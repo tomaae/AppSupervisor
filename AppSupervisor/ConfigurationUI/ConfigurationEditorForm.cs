@@ -792,6 +792,7 @@ public sealed partial class ConfigurationEditorForm : Form
             Services = [],
             Delays = [],
             HomeAssistantResources = [],
+            MqttResources = [],
             ObsResources = [],
             StreamDeckResources = [],
             TwitchResources = [],
@@ -1438,6 +1439,10 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <summary>Gets the currently selected Home Assistant action.</summary>
     private HomeAssistantResourceConfig? SelectedHomeAssistant =>
         SelectedResource as HomeAssistantResourceConfig;
+
+    /// <summary>Gets the currently selected MQTT publish.</summary>
+    private MqttResourceConfig? SelectedMqtt =>
+        SelectedResource as MqttResourceConfig;
 
     /// <summary>Gets the currently selected OBS action.</summary>
     private ObsResourceConfig? SelectedObs =>

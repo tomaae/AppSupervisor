@@ -16,6 +16,7 @@ public static partial class ConfigValidator
     {
         if (profile.Applications is null || profile.Services is null ||
             profile.Delays is null || profile.HomeAssistantResources is null ||
+            profile.MqttResources is null ||
             profile.ObsResources is null || profile.StreamDeckResources is null ||
             profile.TwitchResources is null ||
             profile.AudioInterfaces is null)
@@ -47,6 +48,13 @@ public static partial class ConfigValidator
             .Select((resource, index) => (
                 (ManagedResourceConfig?)resource,
                 $"{profileLabel}, Home Assistant entry {index + 1}"
+            ))
+            .Where(item => item.Item1 is not null)
+            .Select(item => (item.Item1!, item.Item2)));
+        resources.AddRange(profile.MqttResources
+            .Select((resource, index) => (
+                (ManagedResourceConfig?)resource,
+                $"{profileLabel}, MQTT entry {index + 1}"
             ))
             .Where(item => item.Item1 is not null)
             .Select(item => (item.Item1!, item.Item2)));

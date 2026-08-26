@@ -16,6 +16,7 @@ namespace AppSupervisor.ConfigurationUI;
 internal static class ResourceListIconRenderer
 {
     internal static readonly Color HomeAssistantColor = Color.FromArgb(24, 188, 242);
+    internal static readonly Color MqttColor = Color.FromArgb(102, 44, 145);
     internal static readonly Color TwitchColor = Color.FromArgb(145, 70, 255);
     internal static readonly Color ObsColor = Color.FromArgb(48, 46, 49);
     internal static readonly Color StreamDeckColor = Color.FromArgb(55, 139, 232);
@@ -96,6 +97,48 @@ internal static class ResourceListIconRenderer
     /// <summary>Draws the Home Assistant house-and-nodes brand mark.</summary>
     internal static void DrawHomeAssistant(Graphics graphics, Rectangle bounds, Color selectionColor, bool selected) =>
         Draw(HomeAssistantGeometry, graphics, bounds, selected ? selectionColor : HomeAssistantColor);
+
+    /// <summary>Draws an MQTT-style publisher with outward radio waves.</summary>
+    internal static void DrawMqtt(
+        Graphics graphics,
+        Rectangle bounds,
+        Color selectionColor,
+        bool selected)
+    {
+        Color color = selected ? selectionColor : MqttColor;
+        float unit = bounds.Width / 24f;
+        using var pen = new Pen(color, Math.Max(1.5f, unit * 2f))
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round
+        };
+        using var brush = new SolidBrush(color);
+        graphics.FillEllipse(
+            brush,
+            bounds.Left + 2f * unit,
+            bounds.Top + 18f * unit,
+            4f * unit,
+            4f * unit
+        );
+        graphics.DrawArc(
+            pen,
+            bounds.Left + 2f * unit,
+            bounds.Top + 9f * unit,
+            13f * unit,
+            13f * unit,
+            270,
+            90
+        );
+        graphics.DrawArc(
+            pen,
+            bounds.Left + 2f * unit,
+            bounds.Top + 2f * unit,
+            20f * unit,
+            20f * unit,
+            270,
+            90
+        );
+    }
 
     /// <summary>Draws the Twitch chat-glyph brand mark.</summary>
     internal static void DrawTwitch(Graphics graphics, Rectangle bounds, Color selectionColor, bool selected) =>

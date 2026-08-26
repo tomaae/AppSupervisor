@@ -12,6 +12,9 @@ public sealed class IntegrationsConfig
     /// <summary>Gets or sets global Home Assistant authentication and endpoint settings.</summary>
     public HomeAssistantIntegrationConfig HomeAssistant { get; set; } = new();
 
+    /// <summary>Gets or sets the global MQTT broker connection and authentication settings.</summary>
+    public MqttIntegrationConfig Mqtt { get; set; } = new();
+
     /// <summary>Gets or sets global OBS WebSocket endpoint and authentication settings.</summary>
     public ObsIntegrationConfig Obs { get; set; } = new();
 

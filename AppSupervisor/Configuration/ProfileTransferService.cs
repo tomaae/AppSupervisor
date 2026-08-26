@@ -233,6 +233,7 @@ public static class ProfileTransferService
             .Concat(profile.Services)
             .Concat(profile.Delays)
             .Concat(profile.HomeAssistantResources)
+            .Concat(profile.MqttResources)
             .Concat(profile.ObsResources)
             .Concat(profile.StreamDeckResources)
             .Concat(profile.TwitchResources)
@@ -356,7 +357,7 @@ internal static class ProfilePortabilityAnalyzer
     internal const string AudioWarning =
         "Windows audio actions preserve endpoint and hardware identifiers; reselect unavailable devices before enabling the profile.";
     internal const string IntegrationWarning =
-        "Home Assistant, OBS, Stream Deck, and Twitch resources require application-wide integration settings; credentials and connection settings are intentionally not included.";
+        "Home Assistant, MQTT, OBS, Stream Deck, and Twitch resources require application-wide integration settings; credentials and connection settings are intentionally not included.";
 
     public static IReadOnlyList<string> Analyze(SupervisorProfileConfig profile)
     {
@@ -375,7 +376,8 @@ internal static class ProfilePortabilityAnalyzer
         }
         if (profile.AudioInterfaces.Any(resource => !resource.UseDefaultDevice))
             warnings.Add(AudioWarning);
-        if (profile.HomeAssistantResources.Count > 0 || profile.ObsResources.Count > 0 ||
+        if (profile.HomeAssistantResources.Count > 0 || profile.MqttResources.Count > 0 ||
+            profile.ObsResources.Count > 0 ||
             profile.StreamDeckResources.Count > 0 || profile.TwitchResources.Count > 0)
         {
             warnings.Add(IntegrationWarning);

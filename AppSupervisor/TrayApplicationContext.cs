@@ -714,8 +714,9 @@ public partial class TrayApplicationContext : ApplicationContext
                                 profile ?? throw new InvalidOperationException(
                                     "The profile close guard was evaluated before profile construction completed."
                                 )
-                            ),
+                        ),
                         newConfig.Integrations.HomeAssistant,
+                        newConfig.Integrations.Mqtt,
                         newConfig.Integrations.Obs,
                         newConfig.Integrations.Twitch
                     );

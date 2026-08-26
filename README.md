@@ -47,7 +47,7 @@ A profile watches one executable name. The optional close and restart timeout ov
 
 ### 2. Build an ordered helper list
 
-Add applications, Windows services, delays, audio interfaces, Home Assistant actions, OBS actions, Stream Deck actions, or Twitch actions. Drag or move helpers into startup order, and make a helper depend on an earlier application or service when readiness matters.
+Add applications, Windows services, delays, audio interfaces, Home Assistant actions, MQTT publishes, OBS actions, Stream Deck actions, or Twitch actions. Drag or move helpers into startup order, and make a helper depend on an earlier application or service when readiness matters.
 
 The left side keeps the entire sequence visible; the right side shows the settings and test actions for the selected helper.
 
@@ -65,7 +65,7 @@ A health check controls its own timing, failure threshold, recovery behavior, pr
 
 ### 4. Configure shared integrations once
 
-Home Assistant, OBS WebSocket, Twitch, SteamVR monitoring, diagnostic logging, and the read-only local API are global settings shared by profiles. Credentials remain masked in the editor but Home Assistant and OBS credentials are stored in the local configuration file.
+Home Assistant, MQTT, OBS WebSocket, Twitch, SteamVR monitoring, diagnostic logging, and the read-only local API are global settings shared by profiles. Credentials remain masked in the editor, but Home Assistant, MQTT, and OBS credentials are stored in the local configuration file.
 
 ![Global Supervisor API, Home Assistant, and OBS WebSocket settings](docs/images/configuration-integrations.jpg)
 
@@ -91,6 +91,7 @@ The tray icon stays compact while showing the important state. The blue clock me
 - [Windows services](#windows-services)
 - [Health checks](#health-checks)
 - [Home Assistant](#home-assistant)
+- [MQTT](#mqtt)
 - [OBS WebSocket](#obs-websocket)
 - [Stream Deck actions](#stream-deck-actions)
 - [Windows audio interfaces](#windows-audio-interfaces)
@@ -105,7 +106,7 @@ The tray icon stays compact while showing the important state. The blue clock me
 
 ## Functionality summary
 
-- Activates profiles when their monitored process starts, then processes applications, services, delays, Windows audio interfaces, Home Assistant, OBS, Stream Deck, and Twitch actions in the configured order.
+- Activates profiles when their monitored process starts, then processes applications, services, delays, Windows audio interfaces, Home Assistant, MQTT, OBS, Stream Deck, and Twitch actions in the configured order.
 - Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts and a universal five-attempt automatic-recovery limit.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
@@ -136,6 +137,7 @@ Resources can include:
 - Windows services.
 - Nonblocking delays between startup entries.
 - Home Assistant actions.
+- MQTT publishes.
 - OBS actions.
 - Stream Deck actions.
 - Twitch broadcaster actions.
@@ -201,7 +203,7 @@ A confirmed failure can optionally trigger a graceful restart of the helper. One
 
 Every continuous automatic restart or recovery sequence is limited to **5 attempts**. A failed attempt must wait **5 seconds** before the next attempt can begin, and the fifth failure stops that automatic sequence. The error notification and tray error identify the current attempt and explicitly report when the `5 of 5` limit is exhausted. Delayed retries are scheduled at their due time instead of keeping the fast lifecycle loop active.
 
-The policy covers helper launches and unexpected-exit restarts, Windows service start/continue recovery, repeated health-check restarts, Windows audio apply/restore work, Home Assistant activation/persistence/reversal, OBS actions, Stream Deck activation/restoration, and Twitch activation/restoration. A profile's configured **Restart timeout** remains the grace period before an unexpectedly missing application or service is first restarted; retries after an actual failed attempt still have the universal 5-second minimum separation.
+The policy covers helper launches and unexpected-exit restarts, Windows service start/continue recovery, repeated health-check restarts, Windows audio apply/restore work, Home Assistant activation/persistence/reversal, MQTT activation/inverse publishes, OBS actions, Stream Deck activation/restoration, and Twitch activation/restoration. A profile's configured **Restart timeout** remains the grace period before an unexpectedly missing application or service is first restarted; retries after an actual failed attempt still have the universal 5-second minimum separation.
 
 The count resets only after the relevant outcome is confirmed: an application process is discoverable, a service reaches `Running`, a health check produces a successful probe after restart, or an integration/audio action (including configured verification) completes successfully. Cancelling the old demand and beginning a new profile lifecycle also starts a fresh sequence. Health probes continue observing an unhealthy helper after restart attempts are exhausted, so a later successful probe can clear the error and reset that check's budget without reloading AppSupervisor.
 
@@ -210,6 +212,20 @@ The count resets only after the relevant outcome is confirmed: an application pr
 Profiles can run `turn_on`, `turn_off`, and `button.press` actions against compatible entities. `light.turn_on` actions also set a brightness from 1% through 100%; verification and persistence check that percentage as well as the `on` state. Stateful actions can be verified after execution and kept persistent while the profile is active. When the profile closes, `turn_on` and `turn_off` actions are reversed; buttons run only during activation.
 
 Home Assistant uses a shared URL and long-lived access token. The token is stored in the local configuration files, so those files must be treated as credentials.
+
+### MQTT
+
+Profiles can publish a UTF-8 payload to an exact MQTT topic as an ordinary ordered resource. Each publish chooses QoS 0, 1, or 2 and whether the broker should retain it. Optional activation verification subscribes before publishing and waits for an exact UTF-8 payload on a configured state topic, so a fast device response is not missed. A state timeout is reported through the resource's notification destinations and follows the normal bounded retry policy.
+
+The **On deactivation** choice defines the resource's state semantics:
+
+- **One-shot** publishes only during activation. Use this for events or commands that have no meaningful inverse.
+- **Publish configured inverse payload** publishes an explicit reverse topic, payload, QoS, and retain setting after the profile closes. It can optionally verify an exact inverse state on the state topic.
+- **Restore captured retained state** subscribes before activation and refuses to publish unless the state topic first supplies a retained message. AppSupervisor saves the exact received bytes, then publishes them with retain enabled and verifies the exact bytes after deactivation. It never guesses a previous state or falls back to a configured approximation.
+
+The editor's **Test action** runs a one-shot once. Reversible actions remain applied for five seconds and then use the same explicit inverse or exact retained-state restoration. If activation was accepted but later verification fails, the preview still attempts its deterministic inverse and clearly reports any cleanup failure.
+
+MQTT uses one global broker host and TCP port, MQTT 3.1.1, optional username/password authentication, and optional TLS. TLS uses normal Windows certificate validation; there is no insecure certificate-bypass option. The editor masks the password and runtime error messages redact it, but the password is stored in the local configuration files. Treat those files as credentials.
 
 ### OBS WebSocket
 
@@ -269,13 +285,13 @@ Open the editor from **Configure...** in the tray menu or by double-clicking the
 
 Use **Export profile...** to save the selected profile as a versioned `*.appsupervisor-profile.json` document, or **Import profile...** to add one of those documents as a new profile. The transfer preserves the profile trigger, timeouts, ordered resources, dependencies, helper health checks, startup macros, notification choices, and every resource-specific setting. Profile and resource internal IDs are regenerated during import and dependency links are remapped; a duplicate visible name receives an `(Imported)` suffix.
 
-Portable profile files contain only the selected profile. Application-wide Home Assistant, OBS, Twitch, SteamVR, Stream Deck, API, and logging configuration is never included, so integration credentials and connection settings remain local. Values that belong to the profile but may be computer-specific—such as the activation process name, executable paths, Windows service names, audio endpoint identities, Stream Deck action IDs, Home Assistant entities, OBS object names, health-check endpoints, and monitor names/coordinates—are preserved rather than silently discarded. The export records applicable warnings, both export and import show them, and every imported profile starts **disabled**. Review or reselect those values before enabling the profile and choosing **Save & Apply**; normal validation still prevents an unusable enabled profile from replacing the active configuration.
+Portable profile files contain only the selected profile. Application-wide Home Assistant, MQTT, OBS, Twitch, SteamVR, Stream Deck, API, and logging configuration is never included, so integration credentials and connection settings remain local. Values that belong to the profile but may be computer-specific—such as the activation process name, executable paths, Windows service names, audio endpoint identities, Stream Deck action IDs, Home Assistant entities, MQTT topics and payloads, OBS object names, health-check endpoints, and monitor names/coordinates—are preserved rather than silently discarded. The export records applicable warnings, both export and import show them, and every imported profile starts **disabled**. Review or reselect those values before enabling the profile and choosing **Save & Apply**; normal validation still prevents an unusable enabled profile from replacing the active configuration.
 
 The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, SteamVR devices, and live VRChat OSCQuery parameter names. Running, Steam, and Store application pickers show a loading overlay that prevents selecting incomplete results and provide text filtering after results are ready. The running-process picker excludes Windows service processes and hides Microsoft/Windows applications by default; the Store picker similarly hides Microsoft/system applications unless requested. The running and Store picker status text reports visible and filtered counts.
 
-Steam and Microsoft Store catalog discovery retries transient failures up to four total attempts before reporting a distinct **Application discovery error**. If discovery fails while applying a reload, the previous valid configuration and its supervision remain active. The unified resource list uses each helper executable's icon when available and dedicated type pictograms for services, delays, Windows audio, Home Assistant, OBS, Stream Deck, and Twitch resources.
+Steam and Microsoft Store catalog discovery retries transient failures up to four total attempts before reporting a distinct **Application discovery error**. If discovery fails while applying a reload, the previous valid configuration and its supervision remain active. The unified resource list uses each helper executable's icon when available and dedicated type pictograms for services, delays, Windows audio, Home Assistant, MQTT, OBS, Stream Deck, and Twitch resources.
 
-Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
+Connections such as Home Assistant, MQTT, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
 
 The **Diagnostic logs** tab immediately after **Integrations** provides a parsed viewer for every available current-format session log and the legacy `AppSupervisor.log`, ordered newest first. Its record table separates time, severity, and message, while the detail pane retains multiline exception and continuation text. Selecting the tab always rediscovers and reloads the logs; changing the session or using **Refresh** also reloads without blocking the editor.
 
@@ -471,7 +487,7 @@ AppSupervisor requires administrator privileges to manage configured services co
 
 Configuration is stored in `config.json` beside `AppSupervisor.exe`. If the file is missing, AppSupervisor creates an empty valid configuration. The last verified configuration is also saved as `config.json.old` during normal shutdown.
 
-Both files are excluded from Git and omitted from release packages. Do not share or commit them if they contain a Home Assistant access token or OBS WebSocket password. Twitch OAuth credentials are not written to these files; they are stored separately under the current user's Local App Data and encrypted with Windows DPAPI so only that Windows user can decrypt them.
+Both files are excluded from Git and omitted from release packages. Do not share or commit them if they contain a Home Assistant access token, MQTT password, or OBS WebSocket password. Twitch OAuth credentials are not written to these files; they are stored separately under the current user's Local App Data and encrypted with Windows DPAPI so only that Windows user can decrypt them.
 
 Portable `*.appsupervisor-profile.json` exports are intended for sharing individual profiles and never contain the application-wide `integrations` object. They can still contain profile-owned values such as executable paths, arguments, Twitch chat messages, entity/object names, or device identifiers, so inspect a profile export before sharing it publicly.
 

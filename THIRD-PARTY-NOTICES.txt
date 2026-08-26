@@ -11,6 +11,8 @@ This distribution includes the following components under the MIT License:
   Copyright (c) 2007 James Newton-King
 - Microsoft.Extensions.Logging.Abstractions 6.0.2
   Copyright (c) Microsoft Corporation.
+- MQTTnet 5.2.0.1603
+  Copyright (c) The .NET Foundation and contributors
 
 MIT License
 -----------
