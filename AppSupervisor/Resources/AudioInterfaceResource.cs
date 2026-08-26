@@ -11,10 +11,11 @@ internal sealed class AudioInterfaceResource :
     IManagedResourceDeactivationState,
     IRecoverableResourceErrorSource
 {
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private readonly AudioInterfaceResourceConfig _configuration;
     private readonly IWindowsAudioController _controller;
     private readonly TimeProvider _timeProvider;
+    private readonly AutomaticRecoveryBudget _applyBudget = new();
+    private readonly AutomaticRecoveryBudget _restoreBudget = new();
     private AudioInterfaceResourceConfig? _activatedEndpointIdentity;
     private AudioEndpointState? _originalState;
     private bool _profileActive;
@@ -56,6 +57,8 @@ internal sealed class AudioInterfaceResource :
             return;
 
         _profileActive = true;
+        _applyBudget.Reset();
+        _restoreBudget.Reset();
         _started = false;
         _restorePending = false;
         _activatedEndpointIdentity = null;
@@ -75,6 +78,7 @@ internal sealed class AudioInterfaceResource :
 
     public void CancelPendingRecovery()
     {
+        _applyBudget.Reset();
     }
 
     public void SuspendMonitoring()
@@ -88,6 +92,8 @@ internal sealed class AudioInterfaceResource :
 
         _profileActive = false;
         _started = false;
+        _applyBudget.Reset();
+        _restoreBudget.Reset();
         _restorePending = _configuration.RestoreOnDeactivate && _originalState is not null;
 
         if (_restorePending)
@@ -139,6 +145,11 @@ internal sealed class AudioInterfaceResource :
 
     private void TryApplyConfiguredState()
     {
+        DateTime nowUtc = UtcNow;
+
+        if (!_applyBudget.TryBeginAttempt(nowUtc))
+            return;
+
         try
         {
             AudioEndpointSnapshot endpoint = _controller.ResolveEndpoint(
@@ -151,18 +162,27 @@ internal sealed class AudioInterfaceResource :
                 new AudioEndpointState(_configuration.VolumePercent / 100f, _configuration.Muted)
             );
             _started = true;
+            _applyBudget.Reset();
             ClearError();
         }
         catch (Exception ex)
         {
             _started = false;
-            _nextAttemptUtc = UtcNow + RetryInterval;
-            ReportError($"Could not set {DisplayName}: {ex.Message}");
+            _applyBudget.RecordFailure(nowUtc);
+            _nextAttemptUtc = _applyBudget.NextAttemptUtc;
+            ReportError(_applyBudget.DescribeFailure(
+                $"Could not set {DisplayName}: {ex.Message}"
+            ));
         }
     }
 
     private void TryRestoreOriginalState()
     {
+        DateTime nowUtc = UtcNow;
+
+        if (!_restoreBudget.TryBeginAttempt(nowUtc))
+            return;
+
         try
         {
             AudioEndpointSnapshot endpoint = _controller.ResolveEndpoint(
@@ -176,13 +196,19 @@ internal sealed class AudioInterfaceResource :
             _restorePending = false;
             _activatedEndpointIdentity = null;
             _originalState = null;
+            _restoreBudget.Reset();
             ClearError();
         }
         catch (Exception ex)
         {
             _restorePending = true;
-            _nextAttemptUtc = UtcNow + RetryInterval;
-            ReportError($"Could not restore {DisplayName}: {ex.Message}");
+            _restoreBudget.RecordFailure(nowUtc);
+            _nextAttemptUtc = _restoreBudget.NextAttemptUtc;
+            if (_restoreBudget.Exhausted)
+                _restorePending = false;
+            ReportError(_restoreBudget.DescribeFailure(
+                $"Could not restore {DisplayName}: {ex.Message}"
+            ));
         }
     }
 

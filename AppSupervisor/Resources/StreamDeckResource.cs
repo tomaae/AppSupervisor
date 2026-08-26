@@ -13,11 +13,11 @@ internal sealed class StreamDeckResource :
     IPauseDrainWork,
     IRecoverableResourceErrorSource
 {
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private readonly object _stateLock = new();
     private readonly StreamDeckResourceConfig _configuration;
     private readonly IStreamDeckMcpClient _client;
     private readonly TimeProvider _timeProvider;
+    private readonly AutomaticRecoveryBudget _recoveryBudget = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private CancellationTokenSource? _operationCancellation;
     private bool _operationQueued;
@@ -58,7 +58,22 @@ internal sealed class StreamDeckResource :
         get
         {
             lock (_stateLock)
-                return !_disposed && (_operationQueued || _operationPending);
+                return !_disposed && (
+                    _operationQueued || _operationPending || NeedsOperationNoLock()
+                );
+        }
+    }
+
+    public DateTime? NextLifecycleDueUtc
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return !_operationQueued && !_operationPending && NeedsOperationNoLock()
+                    ? _nextAttemptUtc
+                    : null;
+            }
         }
     }
 
@@ -74,7 +89,14 @@ internal sealed class StreamDeckResource :
         }
     }
 
-    public bool PauseDrainPending => LifecycleWorkPending;
+    public bool PauseDrainPending
+    {
+        get
+        {
+            lock (_stateLock)
+                return !_disposed && (_operationQueued || _operationPending);
+        }
+    }
 
     public void Activate()
     {
@@ -82,6 +104,9 @@ internal sealed class StreamDeckResource :
         {
             if (_disposed)
                 return;
+
+            if (!_profileActive)
+                _recoveryBudget.Reset();
 
             _profileActive = true;
             _activationComplete = false;
@@ -104,7 +129,8 @@ internal sealed class StreamDeckResource :
                 return ManagedResourceUpdate.None;
             }
 
-            if (_timeProvider.GetUtcNow().UtcDateTime >= _nextAttemptUtc)
+            if (!_recoveryBudget.Exhausted &&
+                _timeProvider.GetUtcNow().UtcDateTime >= _nextAttemptUtc)
                 QueueRequiredOperationNoLock();
 
             return ManagedResourceUpdate.None;
@@ -125,6 +151,7 @@ internal sealed class StreamDeckResource :
         {
             _profileActive = false;
             _activationComplete = false;
+            _recoveryBudget.Reset();
             QueueRequiredOperationNoLock();
         }
     }
@@ -137,8 +164,21 @@ internal sealed class StreamDeckResource :
     {
         lock (_stateLock)
         {
-            if (_disposed || _operationPending || !_operationQueued)
+            if (_disposed || _operationPending)
                 return ManagedResourceUpdate.None;
+
+            if (!_operationQueued && nowUtc >= _nextAttemptUtc)
+                QueueRequiredOperationNoLock();
+
+            if (!_operationQueued)
+                return ManagedResourceUpdate.None;
+
+            if (!_recoveryBudget.TryBeginAttempt(nowUtc))
+            {
+                if (_recoveryBudget.Exhausted)
+                    _operationQueued = false;
+                return ManagedResourceUpdate.None;
+            }
 
             _operationQueued = false;
             _operationPending = true;
@@ -220,6 +260,8 @@ internal sealed class StreamDeckResource :
                     _switchApplied = false;
                 }
 
+                _recoveryBudget.Reset();
+
                 if (_errorActive)
                 {
                     _errorActive = false;
@@ -242,25 +284,29 @@ internal sealed class StreamDeckResource :
         }
         catch (Exception ex)
         {
+            string failureMessage;
             lock (_stateLock)
             {
                 if (_disposed)
                     return;
 
                 CompleteOperationNoLock();
-                _nextAttemptUtc = _timeProvider.GetUtcNow().UtcDateTime + RetryInterval;
+                DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+                _recoveryBudget.RecordFailure(nowUtc);
+                _nextAttemptUtc = _recoveryBudget.NextAttemptUtc;
                 _errorActive = true;
 
-                if (operation == StreamDeckOperation.Restore)
+                if (operation == StreamDeckOperation.Restore && _recoveryBudget.Exhausted)
                     _switchApplied = false;
+
+                failureMessage = _recoveryBudget.DescribeFailure(
+                    $"Stream Deck action '{DisplayName}' " +
+                    $"{(operation == StreamDeckOperation.Restore ? "restoration" : "activation")} " +
+                    $"failed. {ex.Message}"
+                );
             }
 
-            ErrorOccurred?.Invoke(
-                this,
-                $"Stream Deck action '{DisplayName}' " +
-                $"{(operation == StreamDeckOperation.Restore ? "restoration" : "activation")} " +
-                $"failed. {ex.Message}"
-            );
+            ErrorOccurred?.Invoke(this, failureMessage);
         }
     }
 
@@ -274,7 +320,7 @@ internal sealed class StreamDeckResource :
 
     private void QueueRequiredOperationNoLock()
     {
-        if (_disposed || _operationQueued || _operationPending)
+        if (_disposed || _operationQueued || _operationPending || _recoveryBudget.Exhausted)
             return;
 
         if (_profileActive)
@@ -292,6 +338,16 @@ internal sealed class StreamDeckResource :
 
         if (RestoresSwitch && _switchApplied)
             QueueOperationNoLock(StreamDeckOperation.Restore);
+    }
+
+    private bool NeedsOperationNoLock()
+    {
+        if (_recoveryBudget.Exhausted)
+            return false;
+
+        return _profileActive
+            ? !_activationComplete && !(RestoresSwitch && _switchApplied)
+            : RestoresSwitch && _switchApplied;
     }
 
     private void QueueOperationNoLock(StreamDeckOperation operation)

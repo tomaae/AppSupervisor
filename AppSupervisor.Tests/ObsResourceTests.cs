@@ -65,19 +65,47 @@ public sealed class ObsResourceTests
         var client = new FakeObsClient { FailuresRemaining = 1 };
         using var resource = CreateResource(client, time);
         resource.Activate();
-        resource.AdvanceLifecycle(DateTime.UtcNow);
+        resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
         Assert.True(SpinWait.SpinUntil(
-            () => client.Attempts == 1 && !resource.LifecycleWorkPending,
+            () => client.Attempts == 1,
             TimeSpan.FromSeconds(2)
         ));
+        Assert.True(resource.LifecycleWorkPending);
 
         time.Advance(TimeSpan.FromSeconds(6));
-        resource.Supervise();
-        resource.AdvanceLifecycle(DateTime.UtcNow);
+        resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
 
         Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
         Assert.Equal(2, client.Attempts);
         Assert.Single(client.Actions);
+    }
+
+    [Fact]
+    public void FailedActivation_StopsAfterFiveDelayedAttempts()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var client = new FakeObsClient { FailuresRemaining = int.MaxValue };
+        using var resource = CreateResource(client, time);
+        var errors = new List<string>();
+        resource.ErrorOccurred += (_, message) => errors.Add(message);
+        resource.Activate();
+
+        for (int attempt = 1; attempt <= AutomaticRecoveryBudget.MaximumAttempts; attempt++)
+        {
+            resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+            Assert.True(SpinWait.SpinUntil(
+                () => client.Attempts == attempt,
+                TimeSpan.FromSeconds(2)
+            ));
+            time.Advance(AutomaticRecoveryBudget.RetryDelay);
+        }
+
+        resource.Supervise();
+        resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+
+        Assert.Equal(5, client.Attempts);
+        Assert.False(resource.LifecycleWorkPending);
+        Assert.Contains("attempt 5 of 5", errors.Last());
     }
 
     private static ObsResource CreateResource(

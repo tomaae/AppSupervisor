@@ -13,11 +13,11 @@ internal sealed class TwitchResource :
     IPauseDrainWork,
     IRecoverableResourceErrorSource
 {
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private readonly object _stateLock = new();
     private readonly TwitchResourceConfig _configuration;
     private readonly ITwitchApiClient _client;
     private readonly TimeProvider _timeProvider;
+    private readonly AutomaticRecoveryBudget _recoveryBudget = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private CancellationTokenSource? _operationCancellation;
     private TwitchOperation? _queuedOperation;
@@ -52,7 +52,30 @@ internal sealed class TwitchResource :
 
     public bool LifecycleWorkPending
     {
-        get { lock (_stateLock) return !_disposed && (_queuedOperation.HasValue || _pendingOperation.HasValue); }
+        get
+        {
+            lock (_stateLock)
+            {
+                return !_disposed && (
+                    _queuedOperation.HasValue || _pendingOperation.HasValue ||
+                    NeedsOperationNoLock()
+                );
+            }
+        }
+    }
+
+    public DateTime? NextLifecycleDueUtc
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return !_queuedOperation.HasValue && !_pendingOperation.HasValue &&
+                    NeedsOperationNoLock()
+                        ? _nextAttemptUtc
+                        : null;
+            }
+        }
     }
 
     public bool DeactivationPending
@@ -65,7 +88,14 @@ internal sealed class TwitchResource :
         }
     }
 
-    public bool PauseDrainPending => LifecycleWorkPending;
+    public bool PauseDrainPending
+    {
+        get
+        {
+            lock (_stateLock)
+                return !_disposed && (_queuedOperation.HasValue || _pendingOperation.HasValue);
+        }
+    }
 
     public void Activate()
     {
@@ -73,6 +103,9 @@ internal sealed class TwitchResource :
         {
             if (_disposed)
                 return;
+            if (!_profileActive)
+                _recoveryBudget.Reset();
+
             _profileActive = true;
             _activationComplete = false;
             if (!_queuedOperation.HasValue && !_pendingOperation.HasValue)
@@ -92,6 +125,7 @@ internal sealed class TwitchResource :
         {
             if (!_disposed && _profileActive && !_activationComplete &&
                 !_queuedOperation.HasValue && !_pendingOperation.HasValue &&
+                !_recoveryBudget.Exhausted &&
                 _timeProvider.GetUtcNow().UtcDateTime >= _nextAttemptUtc)
             {
                 _queuedOperation = TwitchOperation.Activate;
@@ -109,6 +143,7 @@ internal sealed class TwitchResource :
         {
             _profileActive = false;
             _activationComplete = false;
+            _recoveryBudget.Reset();
             if (IsReversible && _settingApplied && !_queuedOperation.HasValue && !_pendingOperation.HasValue)
                 _queuedOperation = TwitchOperation.Restore;
             else if (!IsReversible && _queuedOperation == TwitchOperation.Activate)
@@ -122,6 +157,7 @@ internal sealed class TwitchResource :
         {
             if (!_disposed && !_profileActive && IsReversible && _settingApplied &&
                 !_queuedOperation.HasValue && !_pendingOperation.HasValue &&
+                !_recoveryBudget.Exhausted &&
                 _timeProvider.GetUtcNow().UtcDateTime >= _nextAttemptUtc)
             {
                 _queuedOperation = TwitchOperation.Restore;
@@ -135,8 +171,15 @@ internal sealed class TwitchResource :
         CancellationToken cancellationToken;
         lock (_stateLock)
         {
-            if (_disposed || _pendingOperation.HasValue || !_queuedOperation.HasValue)
+            if (_disposed || _pendingOperation.HasValue)
                 return ManagedResourceUpdate.None;
+
+            if (!_queuedOperation.HasValue && nowUtc >= _nextAttemptUtc)
+                QueueRequiredOperationNoLock();
+
+            if (!_queuedOperation.HasValue || !_recoveryBudget.TryBeginAttempt(nowUtc))
+                return ManagedResourceUpdate.None;
+
             operation = _queuedOperation.Value;
             _queuedOperation = null;
             _pendingOperation = operation;
@@ -177,6 +220,7 @@ internal sealed class TwitchResource :
                     _settingApplied = false;
                     _originalSettings = null;
                 }
+                _recoveryBudget.Reset();
                 clearError = _errorActive;
                 _errorActive = false;
             }
@@ -190,15 +234,26 @@ internal sealed class TwitchResource :
         }
         catch (Exception ex)
         {
+            string failureMessage;
             lock (_stateLock)
             {
                 if (_disposed)
                     return;
                 CompletePendingNoLock();
-                _nextAttemptUtc = _timeProvider.GetUtcNow().UtcDateTime + RetryInterval;
+                DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+                _recoveryBudget.RecordFailure(nowUtc);
+                _nextAttemptUtc = _recoveryBudget.NextAttemptUtc;
                 _errorActive = true;
+                if (operation == TwitchOperation.Restore && _recoveryBudget.Exhausted)
+                {
+                    _settingApplied = false;
+                    _originalSettings = null;
+                }
+                failureMessage = _recoveryBudget.DescribeFailure(
+                    $"Twitch action '{DisplayName}' failed. {ex.Message}"
+                );
             }
-            ErrorOccurred?.Invoke(this, $"Twitch action '{DisplayName}' failed. {ex.Message}");
+            ErrorOccurred?.Invoke(this, failureMessage);
         }
     }
 
@@ -297,6 +352,30 @@ internal sealed class TwitchResource :
         _pendingOperation = null;
         _operationCancellation?.Dispose();
         _operationCancellation = null;
+    }
+
+    private bool NeedsOperationNoLock()
+    {
+        if (_recoveryBudget.Exhausted)
+            return false;
+
+        return _profileActive
+            ? !_activationComplete
+            : IsReversible && _settingApplied;
+    }
+
+    private void QueueRequiredOperationNoLock()
+    {
+        if (_disposed || _queuedOperation.HasValue || _pendingOperation.HasValue ||
+            _recoveryBudget.Exhausted)
+        {
+            return;
+        }
+
+        if (_profileActive && !_activationComplete)
+            _queuedOperation = TwitchOperation.Activate;
+        else if (!_profileActive && IsReversible && _settingApplied)
+            _queuedOperation = TwitchOperation.Restore;
     }
 
     public void Dispose()

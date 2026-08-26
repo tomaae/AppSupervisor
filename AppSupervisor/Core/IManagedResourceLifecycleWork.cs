@@ -6,6 +6,12 @@ internal interface IManagedResourceLifecycleWork
     /// <summary>Gets whether the resource still owns or awaits a lifecycle transition.</summary>
     bool LifecycleWorkPending { get; }
 
+    /// <summary>
+    /// Gets a future deadline when pending work is deliberately delayed, or <see langword="null"/>
+    /// when another lifecycle pass is immediately useful.
+    /// </summary>
+    DateTime? NextLifecycleDueUtc => null;
+
     /// <summary>Advances pending start, close, or post-launch work without blocking.</summary>
     /// <param name="nowUtc">The current lifecycle-cycle timestamp.</param>
     /// <returns>Whether this pass confirmed an ordinary resource restart.</returns>

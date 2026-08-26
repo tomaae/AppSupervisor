@@ -183,6 +183,45 @@ public sealed class ManagedServiceTests
         Assert.Equal(1, controller.StartCalls);
     }
 
+    [Fact]
+    public void AutomaticStartFailures_StopAfterFiveAttemptsAndResetWhenRunning()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var controller = new FakeServiceController
+        {
+            State = ServiceRuntimeState.Stopped,
+            StartBehavior = () => throw new InvalidOperationException("Start rejected.")
+        };
+        using var service = CreateService(controller, TimeSpan.Zero, time);
+        var errors = new List<string>();
+        service.ErrorOccurred += (_, message) => errors.Add(message);
+        service.Initialize();
+        service.Activate();
+
+        Assert.Equal(1, controller.StartCalls);
+        service.Supervise();
+        for (int attempt = 2; attempt <= AutomaticRecoveryBudget.MaximumAttempts; attempt++)
+        {
+            time.Advance(AutomaticRecoveryBudget.RetryDelay);
+            service.Supervise();
+            Assert.Equal(attempt, controller.StartCalls);
+        }
+
+        time.Advance(TimeSpan.FromMinutes(1));
+        service.Supervise();
+        Assert.Equal(5, controller.StartCalls);
+        Assert.Contains("attempt 5 of 5", errors.Last());
+
+        controller.StartBehavior = () => controller.State = ServiceRuntimeState.Running;
+        controller.State = ServiceRuntimeState.Running;
+        service.Supervise();
+        controller.State = ServiceRuntimeState.Stopped;
+        service.Supervise();
+        service.Supervise();
+
+        Assert.Equal(6, controller.StartCalls);
+    }
+
     /// <summary>
     /// Creates a service resource using a supplied fake controller.
     /// </summary>
@@ -191,7 +230,8 @@ public sealed class ManagedServiceTests
     /// <returns>A managed service bound to the fake controller.</returns>
     private static ManagedService CreateService(
         FakeServiceController controller,
-        TimeSpan restartTimeout)
+        TimeSpan restartTimeout,
+        TimeProvider? timeProvider = null)
     {
         return new ManagedService(
             new ManagedServiceConfig
@@ -204,7 +244,8 @@ public sealed class ManagedServiceTests
                 }
             },
             restartTimeout,
-            _ => controller
+            _ => controller,
+            timeProvider
         );
     }
 
@@ -233,6 +274,8 @@ public sealed class ManagedServiceTests
 
         public Action? StopBehavior { get; set; }
 
+        public Action? StartBehavior { get; set; }
+
         public bool Disposed => Volatile.Read(ref _disposed) != 0;
 
         public int EnsureManualCalls { get; private set; }
@@ -259,7 +302,11 @@ public sealed class ManagedServiceTests
         /// <summary>
         /// Records a start request.
         /// </summary>
-        public void Start() => StartCalls++;
+        public void Start()
+        {
+            StartCalls++;
+            StartBehavior?.Invoke();
+        }
 
         /// <summary>
         /// Changes the fake service to stopped.
@@ -287,5 +334,14 @@ public sealed class ManagedServiceTests
         {
             Volatile.Write(ref _disposed, 1);
         }
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = initial;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan amount) => _utcNow += amount;
     }
 }

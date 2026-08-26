@@ -106,7 +106,7 @@ The tray icon stays compact while showing the important state. The blue clock me
 ## Functionality summary
 
 - Activates profiles when their monitored process starts, then processes applications, services, delays, Windows audio interfaces, Home Assistant, OBS, Stream Deck, and Twitch actions in the configured order.
-- Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts.
+- Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts and a universal five-attempt automatic-recovery limit.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
 - Launches every helper with the helper executable's directory as its working directory so relative files resolve consistently.
@@ -196,6 +196,14 @@ Health checks belong to a helper application and have their own timing, failure 
 Automatic VRChat OSCQuery checks begin only after `VRChat.exe` has run continuously for three minutes, preventing startup discovery from being treated as a health failure. While VRChat is running, **Pick...** can immediately discover the current avatar's available parameter leaf names without waiting for that automatic-check gate. Applying picker choices preserves configured names that the current avatar does not expose.
 
 A confirmed failure can optionally trigger a graceful restart of the helper. One-shot tests do not change live failure state or restart external processes.
+
+### Automatic recovery retry budget
+
+Every continuous automatic restart or recovery sequence is limited to **5 attempts**. A failed attempt must wait **5 seconds** before the next attempt can begin, and the fifth failure stops that automatic sequence. The error notification and tray error identify the current attempt and explicitly report when the `5 of 5` limit is exhausted. Delayed retries are scheduled at their due time instead of keeping the fast lifecycle loop active.
+
+The policy covers helper launches and unexpected-exit restarts, Windows service start/continue recovery, repeated health-check restarts, Windows audio apply/restore work, Home Assistant activation/persistence/reversal, OBS actions, Stream Deck activation/restoration, and Twitch activation/restoration. A profile's configured **Restart timeout** remains the grace period before an unexpectedly missing application or service is first restarted; retries after an actual failed attempt still have the universal 5-second minimum separation.
+
+The count resets only after the relevant outcome is confirmed: an application process is discoverable, a service reaches `Running`, a health check produces a successful probe after restart, or an integration/audio action (including configured verification) completes successfully. Cancelling the old demand and beginning a new profile lifecycle also starts a fresh sequence. Health probes continue observing an unhealthy helper after restart attempts are exhausted, so a later successful probe can clear the error and reset that check's budget without reloading AppSupervisor.
 
 ### Home Assistant
 

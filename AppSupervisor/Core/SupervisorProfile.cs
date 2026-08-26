@@ -138,15 +138,34 @@ public sealed class SupervisorProfile : IDisposable
     internal bool ImmediateLifecycleWorkPending =>
         _resources.Any(resource =>
             resource is IManagedResourceLifecycleWork lifecycle &&
-            lifecycle.LifecycleWorkPending);
+            lifecycle.LifecycleWorkPending &&
+            (lifecycle.NextLifecycleDueUtc is not DateTime dueUtc ||
+                dueUtc <= SupervisorTime.UtcNow));
 
     /// <summary>Gets the next delayed startup deadline, if startup is only waiting for time.</summary>
-    internal DateTime? NextStartupDueUtc =>
-        StartupPending &&
-        _nextStartupIndex < _startupResources.Count &&
-        SupervisorTime.UtcNow < _nextStartupUtc
-            ? _nextStartupUtc
-            : null;
+    internal DateTime? NextStartupDueUtc
+    {
+        get
+        {
+            DateTime nowUtc = SupervisorTime.UtcNow;
+            IEnumerable<DateTime> dueTimes = _resources
+                .OfType<IManagedResourceLifecycleWork>()
+                .Where(lifecycle => lifecycle.LifecycleWorkPending)
+                .Select(lifecycle => lifecycle.NextLifecycleDueUtc)
+                .Where(dueUtc => dueUtc is not null && dueUtc > nowUtc)
+                .Select(dueUtc => dueUtc!.Value);
+
+            if (StartupPending &&
+                _nextStartupIndex < _startupResources.Count &&
+                nowUtc < _nextStartupUtc)
+            {
+                dueTimes = dueTimes.Append(_nextStartupUtc);
+            }
+
+            DateTime[] deadlines = dueTimes.ToArray();
+            return deadlines.Length == 0 ? null : deadlines.Min();
+        }
+    }
 
     /// <summary>Gets whether startup sequencing or a resource transition needs the lifecycle timer.</summary>
     internal bool LifecycleWorkPending =>

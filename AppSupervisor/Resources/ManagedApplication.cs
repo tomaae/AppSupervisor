@@ -20,6 +20,9 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private readonly TimeSpan _restartTimeout;
     private readonly Func<bool>? _shouldRemainRunning;
     private readonly Func<IReadOnlySet<int>>? _processIdProvider;
+    private readonly Func<ProcessStartInfo, Process?> _processStarter;
+    private readonly TimeProvider _timeProvider;
+    private readonly AutomaticRecoveryBudget _recoveryBudget = new();
     private readonly StartupMacroExecutor _startupMacro;
     private readonly string _runtimePath;
 
@@ -61,12 +64,16 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         ManagedApplicationConfig config,
         TimeSpan restartTimeout,
         Func<bool>? shouldRemainRunning,
-        Func<IReadOnlySet<int>>? processIdProvider = null)
+        Func<IReadOnlySet<int>>? processIdProvider = null,
+        TimeProvider? timeProvider = null,
+        Func<ProcessStartInfo, Process?>? processStarter = null)
     {
         Config = config;
         _restartTimeout = restartTimeout;
         _shouldRemainRunning = shouldRemainRunning;
         _processIdProvider = processIdProvider;
+        _timeProvider = timeProvider ?? SupervisorTime.Provider;
+        _processStarter = processStarter ?? Process.Start;
         _runtimePath = JavaLauncherDetector.ResolveRuntimePath(config.Path);
         _startupMacro = new StartupMacroExecutor(
             config.StartupMacros,
@@ -174,6 +181,9 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (_disposed)
             return;
 
+        if (!_activeDemand)
+            _recoveryBudget.Reset();
+
         _activeDemand = true;
         _missingSince = null;
         _failedMultipleProcessIds = null;
@@ -230,6 +240,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         if (processIds.Count > 0)
         {
             _missingSince = null;
+            _recoveryBudget.Reset();
             ClearError();
 
             if (!wasRunning)
@@ -243,14 +254,14 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         if (_missingSince is null)
         {
-            _missingSince = SupervisorTime.UtcNow;
+            _missingSince = UtcNow;
             return ManagedResourceUpdate.None;
         }
 
-        if (SupervisorTime.UtcNow - _missingSince < _restartTimeout)
+        if (_recoveryBudget.Exhausted || UtcNow - _missingSince < _restartTimeout)
             return ManagedResourceUpdate.None;
 
-        _missingSince = SupervisorTime.UtcNow;
+        _missingSince = UtcNow;
         RequestStart(reportAsRestart: true);
         return ManagedResourceUpdate.None;
     }
@@ -265,6 +276,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         );
         _activeDemand = false;
         _missingSince = null;
+        _recoveryBudget.Reset();
         ProcessLifecycleTransitionKind? transition =
             ProcessPathSnapshot.GetOwnedTransition(_runtimePath, this);
 
@@ -307,6 +319,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         _activeDemand = false;
         _missingSince = null;
+        _recoveryBudget.Reset();
         _failedMultipleProcessIds = null;
         CancelMinimizeAfterStart();
 
@@ -471,6 +484,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
                 ResetStartOperation();
                 CompleteOwnedTransition(succeeded: true);
                 _missingSince = null;
+                _recoveryBudget.Reset();
                 ClearError();
 
                 bool macroMinimizes = Config.StartupMacros.Any(action =>
@@ -520,10 +534,21 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         if (!_launchIssued)
         {
+            if (!_recoveryBudget.TryBeginAttempt(nowUtc))
+            {
+                if (_recoveryBudget.Exhausted)
+                {
+                    ResetStartOperation();
+                    CompleteOwnedTransition(succeeded: false);
+                }
+
+                return ManagedResourceUpdate.None;
+            }
+
             try
             {
                 ProcessStartInfo startInfo = ApplicationUri.CreateStartInfo(Config);
-                using Process? startedProcess = Process.Start(startInfo);
+                using Process? startedProcess = _processStarter(startInfo);
 
                 if (startedProcess is null && string.IsNullOrWhiteSpace(Config.AppUri))
                     throw new InvalidOperationException("Windows did not return a process for the start request.");
@@ -533,7 +558,10 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
             }
             catch (Exception ex)
             {
-                ReportError($"Could not start {DisplayName}: {ex.Message}");
+                _recoveryBudget.RecordFailure(nowUtc);
+                ReportError(_recoveryBudget.DescribeFailure(
+                    $"Could not start {DisplayName}: {ex.Message}"
+                ));
                 ResetStartOperation();
                 CompleteOwnedTransition(succeeded: false);
                 return ManagedResourceUpdate.None;
@@ -1079,6 +1107,9 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
         _hasObservedRunningState = true;
         _lastObservedRunning = running;
     }
+
+    /// <summary>Gets suspend-aware time for restart grace periods and retry scheduling.</summary>
+    private DateTime UtcNow => _timeProvider.GetUtcNow().UtcDateTime;
 
     /// <summary>Counts independent application roots while treating same-executable child processes as one instance.</summary>
     /// <param name="processes">Every process whose executable path matches the helper identity.</param>

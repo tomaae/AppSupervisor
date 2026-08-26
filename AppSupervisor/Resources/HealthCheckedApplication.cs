@@ -19,9 +19,13 @@ public sealed class HealthCheckedApplication :
     private readonly IManagedApplicationLifecycle _application;
     private readonly IReadOnlyList<ManagedHealthCheck> _healthChecks;
     private readonly Func<IReadOnlySet<int>> _processIdProvider;
+    private readonly TimeProvider _timeProvider;
+    private readonly Dictionary<ManagedHealthCheck, AutomaticRecoveryBudget> _recoveryBudgets;
 
     private ManagedHealthCheck? _restartCheck;
     private bool _replacementStartRequested;
+    private bool _restartRetryScheduled;
+    private DateTime _restartRetryUtc;
     private bool _disposed;
 
     /// <summary>Creates a health-aware wrapper around one managed application.</summary>
@@ -33,7 +37,8 @@ public sealed class HealthCheckedApplication :
         : this(
             application,
             healthChecks,
-            application.GetRunningProcessIds
+            application.GetRunningProcessIds,
+            SupervisorTime.Provider
         )
     {
     }
@@ -45,11 +50,17 @@ public sealed class HealthCheckedApplication :
     internal HealthCheckedApplication(
         IManagedApplicationLifecycle application,
         IEnumerable<ManagedHealthCheck> healthChecks,
-        Func<IReadOnlySet<int>> processIdProvider)
+        Func<IReadOnlySet<int>> processIdProvider,
+        TimeProvider? timeProvider = null)
     {
         _application = application;
         _healthChecks = healthChecks.ToArray();
         _processIdProvider = processIdProvider;
+        _timeProvider = timeProvider ?? SupervisorTime.Provider;
+        _recoveryBudgets = _healthChecks.ToDictionary(
+            healthCheck => healthCheck,
+            _ => new AutomaticRecoveryBudget()
+        );
         _application.ErrorOccurred += OnApplicationError;
 
         if (_application is IRecoverableResourceErrorSource recoverableSource)
@@ -92,6 +103,12 @@ public sealed class HealthCheckedApplication :
         ((IManagedResourceLifecycleWork)_application).LifecycleWorkPending ||
         _restartCheck is not null;
 
+    DateTime? IManagedResourceLifecycleWork.NextLifecycleDueUtc =>
+        _restartRetryScheduled &&
+        !((IManagedResourceLifecycleWork)_application).LifecycleWorkPending
+            ? _restartRetryUtc
+            : null;
+
     /// <summary>Gets whether a cancelled health probe is still unwinding.</summary>
     bool IPauseDrainWork.PauseDrainPending =>
         _healthChecks.Any(healthCheck => healthCheck.PauseDrainPending);
@@ -125,6 +142,8 @@ public sealed class HealthCheckedApplication :
 
         _restartCheck = null;
         _replacementStartRequested = false;
+        _restartRetryScheduled = false;
+        ResetRecoveryBudgets();
         ResetHealthChecks(clearErrors: true);
         _application.Activate();
     }
@@ -137,7 +156,10 @@ public sealed class HealthCheckedApplication :
             return ManagedResourceUpdate.None;
 
         if (_restartCheck is not null)
+        {
+            BeginScheduledHealthRestart(UtcNow);
             return ManagedResourceUpdate.None;
+        }
 
         ManagedResourceUpdate applicationUpdate = _application.Supervise();
         IReadOnlySet<int> processIds = _processIdProvider();
@@ -153,7 +175,7 @@ public sealed class HealthCheckedApplication :
         if (applicationUpdate == ManagedResourceUpdate.Restarted)
             ResetHealthChecks(clearErrors: false);
 
-        DateTime nowUtc = SupervisorTime.UtcNow;
+        DateTime nowUtc = UtcNow;
 
         foreach (ManagedHealthCheck healthCheck in _healthChecks)
             healthCheck.Poll(processIds, nowUtc);
@@ -169,6 +191,8 @@ public sealed class HealthCheckedApplication :
         );
         _restartCheck = null;
         _replacementStartRequested = false;
+        _restartRetryScheduled = false;
+        ResetRecoveryBudgets();
         ResetHealthChecks(clearErrors: true);
         _application.CancelPendingRecovery();
         SupervisorLog.WriteTrace(
@@ -181,6 +205,8 @@ public sealed class HealthCheckedApplication :
     {
         _restartCheck = null;
         _replacementStartRequested = false;
+        _restartRetryScheduled = false;
+        ResetRecoveryBudgets();
         ResetHealthChecks(clearErrors: true);
         _application.Deactivate();
     }
@@ -191,6 +217,7 @@ public sealed class HealthCheckedApplication :
     /// <summary>Advances the wrapped transition and completes health recovery after exact-path confirmation.</summary>
     ManagedResourceUpdate IManagedResourceLifecycleWork.AdvanceLifecycle(DateTime nowUtc)
     {
+        BeginScheduledHealthRestart(nowUtc);
         ManagedResourceUpdate update =
             ((IManagedResourceLifecycleWork)_application).AdvanceLifecycle(nowUtc);
 
@@ -210,6 +237,7 @@ public sealed class HealthCheckedApplication :
         {
             _restartCheck = null;
             _replacementStartRequested = false;
+            _restartRetryScheduled = false;
             _application.CancelPendingRecovery();
         }
 
@@ -248,6 +276,9 @@ public sealed class HealthCheckedApplication :
     {
         ManagedHealthCheck recoveryCheck = _restartCheck!;
 
+        if (_restartRetryScheduled)
+            return;
+
         if (!_replacementStartRequested)
         {
             if (_restartCheck is null || _application.CloseOperationPending)
@@ -271,12 +302,21 @@ public sealed class HealthCheckedApplication :
 
         _restartCheck = null;
         _replacementStartRequested = false;
+        _restartRetryScheduled = false;
         ResetHealthChecks(clearErrors: false);
+        recoveryCheck.RearmAfterRecoveryAttempt(
+            nowUtc,
+            AutomaticRecoveryBudget.RetryDelay
+        );
+        AutomaticRecoveryBudget budget = _recoveryBudgets[recoveryCheck];
         PublishHealthNotification(
             recoveryCheck,
             NotificationSeverity.Warning,
             "Resource restarted",
-            $"{DisplayName} was restarted because health check '{recoveryCheck.Name}' failed.",
+            $"{DisplayName} was restarted because health check '{recoveryCheck.Name}' failed " +
+            $"(automatic recovery attempt {budget.Attempts} of " +
+            $"{AutomaticRecoveryBudget.MaximumAttempts}). A successful health probe is required " +
+            "to reset the retry count.",
             ResourceErrorState.None
         );
     }
@@ -297,21 +337,22 @@ public sealed class HealthCheckedApplication :
         if (!healthCheck.RestartOnFailure || _restartCheck is not null)
             return;
 
-        _restartCheck = healthCheck;
-        _replacementStartRequested = false;
-        _application.Deactivate();
-
-        if (!_application.CloseOperationPending && _application.IsRunning())
+        AutomaticRecoveryBudget budget = _recoveryBudgets[healthCheck];
+        if (!budget.TryBeginAttempt(UtcNow))
         {
-            _restartCheck = null;
             PublishHealthNotification(
                 healthCheck,
                 NotificationSeverity.Error,
-                "Health-check recovery blocked",
-                $"{DisplayName} - {healthCheck.Name}\nThe helper is still required by another active profile, so AppSupervisor left it running.",
+                "Health-check recovery limit reached",
+                $"{DisplayName} - {healthCheck.Name}\nAutomatic recovery stopped after " +
+                $"{budget.Attempts} of {AutomaticRecoveryBudget.MaximumAttempts} attempts. " +
+                "A successful health probe or a new profile lifecycle is required to reset the limit.",
                 ResourceErrorState.Set
             );
+            return;
         }
+
+        StartHealthRestart(healthCheck);
     }
 
     /// <summary>Publishes confirmed recovery and clears the check's active tray error state.</summary>
@@ -319,6 +360,7 @@ public sealed class HealthCheckedApplication :
     /// <param name="detail">The recovery or deactivation detail.</param>
     private void OnHealthCheckRecovered(ManagedHealthCheck healthCheck, string detail)
     {
+        _recoveryBudgets[healthCheck].Reset();
         PublishHealthNotification(
             healthCheck,
             NotificationSeverity.Information,
@@ -340,13 +382,22 @@ public sealed class HealthCheckedApplication :
         }
 
         ManagedHealthCheck failedRecoveryCheck = _restartCheck;
-        _restartCheck = null;
+        AutomaticRecoveryBudget budget = _recoveryBudgets[failedRecoveryCheck];
+        budget.RecordFailure(UtcNow);
+        _application.CancelPendingRecovery();
         _replacementStartRequested = false;
+        _restartRetryScheduled = !budget.Exhausted;
+        _restartRetryUtc = budget.NextAttemptUtc;
+
+        if (budget.Exhausted)
+            _restartCheck = null;
+
         PublishHealthNotification(
             failedRecoveryCheck,
             NotificationSeverity.Error,
             "Health-check recovery failed",
-            $"{DisplayName} - {failedRecoveryCheck.Name}\n{message}",
+            $"{DisplayName} - {failedRecoveryCheck.Name}\n" +
+            budget.DescribeFailure(message),
             ResourceErrorState.Set
         );
     }
@@ -390,6 +441,56 @@ public sealed class HealthCheckedApplication :
     {
         foreach (ManagedHealthCheck healthCheck in _healthChecks)
             healthCheck.Suspend(clearErrors);
+    }
+
+    private DateTime UtcNow => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private void StartHealthRestart(ManagedHealthCheck healthCheck)
+    {
+        _restartCheck = healthCheck;
+        _replacementStartRequested = false;
+        _restartRetryScheduled = false;
+        _application.Deactivate();
+
+        if (!ReferenceEquals(_restartCheck, healthCheck) || _restartRetryScheduled)
+            return;
+
+        if (!_application.CloseOperationPending && _application.IsRunning())
+        {
+            AutomaticRecoveryBudget budget = _recoveryBudgets[healthCheck];
+            budget.RecordFailure(UtcNow);
+            _restartCheck = null;
+            PublishHealthNotification(
+                healthCheck,
+                NotificationSeverity.Error,
+                "Health-check recovery blocked",
+                $"{DisplayName} - {healthCheck.Name}\nAutomatic recovery attempt " +
+                $"{budget.Attempts} of {AutomaticRecoveryBudget.MaximumAttempts} was blocked. " +
+                "The helper is still required by another active profile, so AppSupervisor left it running.",
+                ResourceErrorState.Set
+            );
+        }
+    }
+
+    private void BeginScheduledHealthRestart(DateTime nowUtc)
+    {
+        if (!_restartRetryScheduled || _restartCheck is not ManagedHealthCheck healthCheck ||
+            nowUtc < _restartRetryUtc)
+        {
+            return;
+        }
+
+        AutomaticRecoveryBudget budget = _recoveryBudgets[healthCheck];
+        if (!budget.TryBeginAttempt(nowUtc))
+            return;
+
+        StartHealthRestart(healthCheck);
+    }
+
+    private void ResetRecoveryBudgets()
+    {
+        foreach (AutomaticRecoveryBudget budget in _recoveryBudgets.Values)
+            budget.Reset();
     }
 
 }

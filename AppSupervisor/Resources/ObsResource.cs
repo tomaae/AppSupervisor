@@ -16,11 +16,11 @@ internal sealed class ObsResource :
     IPauseDrainWork,
     IRecoverableResourceErrorSource
 {
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private readonly object _stateLock = new();
     private readonly ObsResourceConfig _configuration;
     private readonly IObsWebSocketClient _client;
     private readonly TimeProvider _timeProvider;
+    private readonly AutomaticRecoveryBudget _recoveryBudget = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private CancellationTokenSource? _operationCancellation;
     private bool _operationQueued;
@@ -62,7 +62,26 @@ internal sealed class ObsResource :
         get
         {
             lock (_stateLock)
-                return !_disposed && (_operationQueued || _operationPending);
+                return !_disposed && (
+                    _operationQueued ||
+                    _operationPending ||
+                    (_profileActive && !_activationComplete && !_recoveryBudget.Exhausted)
+                );
+        }
+    }
+
+    public DateTime? NextLifecycleDueUtc
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return !_operationQueued && !_operationPending &&
+                    _profileActive && !_activationComplete &&
+                    !_recoveryBudget.Exhausted
+                        ? _nextAttemptUtc
+                        : null;
+            }
         }
     }
 
@@ -91,6 +110,9 @@ internal sealed class ObsResource :
             if (_disposed)
                 return;
 
+            if (!_profileActive)
+                _recoveryBudget.Reset();
+
             _profileActive = true;
             _activationComplete = false;
 
@@ -115,7 +137,8 @@ internal sealed class ObsResource :
                 return ManagedResourceUpdate.None;
             }
 
-            if (_timeProvider.GetUtcNow().UtcDateTime >= _nextAttemptUtc)
+            if (!_recoveryBudget.Exhausted &&
+                _timeProvider.GetUtcNow().UtcDateTime >= _nextAttemptUtc)
                 _operationQueued = true;
 
             return ManagedResourceUpdate.None;
@@ -139,6 +162,7 @@ internal sealed class ObsResource :
         {
             _profileActive = false;
             _activationComplete = false;
+            _recoveryBudget.Reset();
         }
     }
 
@@ -150,8 +174,24 @@ internal sealed class ObsResource :
     {
         lock (_stateLock)
         {
-            if (_disposed || _operationPending || !_operationQueued)
+            if (_disposed || _operationPending)
                 return ManagedResourceUpdate.None;
+
+            if (!_operationQueued && _profileActive && !_activationComplete &&
+                !_recoveryBudget.Exhausted && nowUtc >= _nextAttemptUtc)
+            {
+                _operationQueued = true;
+            }
+
+            if (!_operationQueued)
+                return ManagedResourceUpdate.None;
+
+            if (!_recoveryBudget.TryBeginAttempt(nowUtc))
+            {
+                if (_recoveryBudget.Exhausted)
+                    _operationQueued = false;
+                return ManagedResourceUpdate.None;
+            }
 
             _operationQueued = false;
             _operationPending = true;
@@ -223,6 +263,7 @@ internal sealed class ObsResource :
 
                 CompleteOperationNoLock();
                 _activationComplete = _profileActive;
+                _recoveryBudget.Reset();
 
                 if (_errorActive)
                 {
@@ -244,20 +285,23 @@ internal sealed class ObsResource :
         }
         catch (Exception ex)
         {
+            string failureMessage;
             lock (_stateLock)
             {
                 if (_disposed)
                     return;
 
                 CompleteOperationNoLock();
-                _nextAttemptUtc = _timeProvider.GetUtcNow().UtcDateTime + RetryInterval;
+                DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+                _recoveryBudget.RecordFailure(nowUtc);
+                _nextAttemptUtc = _recoveryBudget.NextAttemptUtc;
                 _errorActive = true;
+                failureMessage = _recoveryBudget.DescribeFailure(
+                    $"OBS action '{DisplayName}' failed. {ex.Message}"
+                );
             }
 
-            ErrorOccurred?.Invoke(
-                this,
-                $"OBS action '{DisplayName}' failed. {ex.Message}"
-            );
+            ErrorOccurred?.Invoke(this, failureMessage);
         }
     }
 

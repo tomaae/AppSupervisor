@@ -17,6 +17,7 @@ public sealed class ManagedHealthCheck : IDisposable
     private DateTime _nextProbeUtc;
     private int _consecutiveFailures;
     private bool _unhealthy;
+    private bool _recoveryConfirmationPending;
     private bool _hasResult;
     private string _lastDetail = "";
     private bool _discardProbeResult;
@@ -74,6 +75,19 @@ public sealed class ManagedHealthCheck : IDisposable
     internal void AdvancePauseDrain()
     {
         FinalizeDiscardedProbeIfCompleted();
+    }
+
+    /// <summary>
+    /// Starts a fresh post-restart verification window without clearing the active unhealthy
+    /// notification; a repeated confirmed failure may therefore request the next bounded restart.
+    /// </summary>
+    internal void RearmAfterRecoveryAttempt(DateTime nowUtc, TimeSpan minimumDelay)
+    {
+        Suspend(clearError: false);
+        _unhealthy = false;
+        _recoveryConfirmationPending = true;
+        _activeSinceUtc = nowUtc;
+        _nextProbeUtc = nowUtc + minimumDelay;
     }
 
     /// <summary>Advances completion processing and starts a new probe only when its interval has elapsed.</summary>
@@ -135,11 +149,14 @@ public sealed class ManagedHealthCheck : IDisposable
         _hasResult = false;
         _lastDetail = "";
 
-        if (clearError && _unhealthy)
+        if (clearError && (_unhealthy || _recoveryConfirmationPending))
             Recovered?.Invoke(this, "The check is no longer applicable.");
 
         if (clearError)
+        {
             _unhealthy = false;
+            _recoveryConfirmationPending = false;
+        }
 
         SupervisorLog.WriteTrace(
             $"Health check '{Name}': suspend completed; probePending={_probeTask is not null}."
@@ -240,9 +257,10 @@ public sealed class ManagedHealthCheck : IDisposable
         {
             _consecutiveFailures = 0;
 
-            if (_unhealthy)
+            if (_unhealthy || _recoveryConfirmationPending)
             {
                 _unhealthy = false;
+                _recoveryConfirmationPending = false;
                 Recovered?.Invoke(this, result.Detail);
             }
 

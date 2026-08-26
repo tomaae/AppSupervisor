@@ -1,5 +1,6 @@
 using AppSupervisor.Resources;
 using AppSupervisor.StreamDeck;
+using AppSupervisor.Core;
 
 namespace AppSupervisor.Tests;
 
@@ -78,23 +79,61 @@ public sealed class StreamDeckResourceTests
         Assert.False(resource.IsStarted());
     }
 
+    [Fact]
+    public void FailedAction_StopsAfterFiveDelayedAttempts()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var client = new FakeClient { FailActions = true };
+        using var resource = new StreamDeckResource(
+            CreateConfiguration(),
+            client,
+            time
+        );
+        var errors = new List<string>();
+        resource.ErrorOccurred += (_, message) => errors.Add(message);
+        resource.Activate();
+
+        for (int attempt = 1; attempt <= AutomaticRecoveryBudget.MaximumAttempts; attempt++)
+        {
+            resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+            Assert.True(SpinWait.SpinUntil(
+                () => client.Attempts == attempt,
+                TimeSpan.FromSeconds(2)
+            ));
+            time.Advance(AutomaticRecoveryBudget.RetryDelay);
+        }
+
+        resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+        Assert.Equal(5, client.Attempts);
+        Assert.False(resource.LifecycleWorkPending);
+        Assert.Contains("attempt 5 of 5", errors.Last());
+    }
+
     private static StreamDeckResource CreateResource(
         FakeClient client,
         bool isSwitch = false,
         bool restoreSwitch = false) => new(
-        new StreamDeckResourceConfig
+        CreateConfiguration(isSwitch, restoreSwitch),
+        client
+    );
+
+    private static StreamDeckResourceConfig CreateConfiguration(
+        bool isSwitch = false,
+        bool restoreSwitch = false) => new()
         {
             ActionId = "4979ce49-d88b-49cb-9a80-1e95eb45d8f9",
             ActionName = "Start VR",
             IsSwitch = isSwitch,
             RestoreSwitchOnDeactivate = restoreSwitch
-        },
-        client
-    );
+        };
 
     private sealed class FakeClient : IStreamDeckMcpClient
     {
         public List<StreamDeckResourceConfig> Actions { get; } = [];
+
+        public int Attempts { get; private set; }
+
+        public bool FailActions { get; set; }
 
         public Task<IReadOnlyList<StreamDeckMcpAction>> LoadActionsAsync(
             CancellationToken cancellationToken) =>
@@ -104,8 +143,22 @@ public sealed class StreamDeckResourceTests
             StreamDeckResourceConfig configuration,
             CancellationToken cancellationToken)
         {
+            Attempts++;
+
+            if (FailActions)
+                throw new InvalidOperationException("Stream Deck rejected the action.");
+
             Actions.Add(configuration);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = initial;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan amount) => _utcNow += amount;
     }
 }

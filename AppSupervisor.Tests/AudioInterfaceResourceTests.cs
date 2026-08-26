@@ -1,5 +1,6 @@
 using AppSupervisor.Resources;
 using AppSupervisor.WindowsAudio;
+using AppSupervisor.Core;
 
 namespace AppSupervisor.Tests;
 
@@ -85,6 +86,44 @@ public sealed class AudioInterfaceResourceTests
         Assert.Equal(new AudioEndpointState(0.42f, true), controller.LastSetState);
     }
 
+    [Fact]
+    public void ApplyFailure_StopsAfterFiveAttemptsAndNewActivationResetsBudget()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var controller = new FakeAudioController(
+            [Endpoint("endpoint", "instance")],
+            new AudioEndpointState(0.25f, true)
+        )
+        {
+            FailSet = true
+        };
+        using var resource = new AudioInterfaceResource(
+            CreateConfiguration(restore: false),
+            controller,
+            time
+        );
+        var errors = new List<string>();
+        resource.ErrorOccurred += (_, message) => errors.Add(message);
+
+        resource.Activate();
+        for (int attempt = 2; attempt <= AutomaticRecoveryBudget.MaximumAttempts; attempt++)
+        {
+            time.Advance(AutomaticRecoveryBudget.RetryDelay);
+            resource.Supervise();
+        }
+
+        time.Advance(TimeSpan.FromMinutes(1));
+        resource.Supervise();
+        Assert.Equal(5, controller.SetCount);
+        Assert.Contains("attempt 5 of 5", errors.Last());
+
+        controller.FailSet = false;
+        resource.Activate();
+
+        Assert.True(resource.IsStarted());
+        Assert.Equal(6, controller.SetCount);
+    }
+
     private static AudioInterfaceResourceConfig CreateConfiguration(bool restore) => new()
     {
         EndpointId = "old-endpoint",
@@ -119,6 +158,8 @@ public sealed class AudioInterfaceResourceTests
 
         public AudioEndpointState? LastSetState { get; private set; }
 
+        public bool FailSet { get; set; }
+
         public IReadOnlyList<AudioEndpointSnapshot> GetActiveEndpoints() => Endpoints;
 
         public AudioEndpointSnapshot ResolveEndpoint(AudioInterfaceResourceConfig configuration)
@@ -137,8 +178,21 @@ public sealed class AudioInterfaceResourceTests
         public void SetState(string endpointId, AudioEndpointState state)
         {
             SetCount++;
+
+            if (FailSet)
+                throw new InvalidOperationException("Audio endpoint rejected the change.");
+
             LastSetEndpointId = endpointId;
             LastSetState = state;
         }
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = initial;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan amount) => _utcNow += amount;
     }
 }

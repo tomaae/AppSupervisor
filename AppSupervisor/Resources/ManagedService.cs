@@ -18,6 +18,8 @@ public sealed class ManagedService :
 
     private readonly TimeSpan _restartTimeout;
     private readonly Func<string, IWindowsServiceController> _controllerFactory;
+    private readonly TimeProvider _timeProvider;
+    private readonly AutomaticRecoveryBudget _recoveryBudget = new();
 
     private IWindowsServiceController? _controller;
     private DateTime? _missingSince;
@@ -27,6 +29,8 @@ public sealed class ManagedService :
     private bool _activeDemand;
     private bool _disposed;
     private bool _startAfterStop;
+    private bool _startAwaitingConfirmation;
+    private bool _continueAwaitingConfirmation;
     private bool _stopCommandSent;
     private bool _stopPending;
     private Task? _stopCommandTask;
@@ -60,11 +64,13 @@ public sealed class ManagedService :
     internal ManagedService(
         ManagedServiceConfig config,
         TimeSpan restartTimeout,
-        Func<string, IWindowsServiceController> controllerFactory)
+        Func<string, IWindowsServiceController> controllerFactory,
+        TimeProvider? timeProvider = null)
     {
         Config = config;
         _restartTimeout = restartTimeout;
         _controllerFactory = controllerFactory;
+        _timeProvider = timeProvider ?? SupervisorTime.Provider;
     }
 
     /// <summary>Occurs when the service cannot complete a requested lifecycle operation.</summary>
@@ -163,6 +169,9 @@ public sealed class ManagedService :
         if (!_available || _disposed)
             return;
 
+        if (!_activeDemand)
+            _recoveryBudget.Reset();
+
         _activeDemand = true;
         _missingSince = null;
 
@@ -180,6 +189,7 @@ public sealed class ManagedService :
         switch (state.Value)
         {
             case ServiceRuntimeState.Running:
+                ConfirmRunning();
                 ClearPendingOperation();
                 break;
 
@@ -224,14 +234,17 @@ public sealed class ManagedService :
         {
             case ServiceRuntimeState.Running:
                 _missingSince = null;
+                ConfirmRunning();
                 ClearPendingOperation();
                 return ManagedResourceUpdate.None;
 
             case ServiceRuntimeState.Stopped:
+                RecordUnconfirmedStartFailure();
                 ClearPendingOperation();
                 return SuperviseStoppedService();
 
             case ServiceRuntimeState.Paused:
+                RecordUnconfirmedContinueFailure();
                 ClearPendingOperation();
                 TryContinue();
                 return ManagedResourceUpdate.None;
@@ -259,6 +272,7 @@ public sealed class ManagedService :
         _activeDemand = false;
         _missingSince = null;
         _startAfterStop = false;
+        _recoveryBudget.Reset();
     }
 
     /// <summary>
@@ -281,6 +295,7 @@ public sealed class ManagedService :
         _activeDemand = false;
         _missingSince = null;
         _startAfterStop = false;
+        _recoveryBudget.Reset();
 
         ServiceRuntimeState? state = TryGetState();
 
@@ -294,7 +309,7 @@ public sealed class ManagedService :
         }
 
         _stopPending = true;
-        _stopStartedUtc = SupervisorTime.UtcNow;
+        _stopStartedUtc = UtcNow;
         _stopCommandSent = state == ServiceRuntimeState.StopPending;
 
         if (state is ServiceRuntimeState.Running or ServiceRuntimeState.Paused)
@@ -375,14 +390,16 @@ public sealed class ManagedService :
 
         if (_missingSince is null)
         {
-            _missingSince = SupervisorTime.UtcNow;
+            _missingSince = UtcNow;
             return ManagedResourceUpdate.None;
         }
 
-        if (SupervisorTime.UtcNow - _missingSince < _restartTimeout)
+        if (_recoveryBudget.Exhausted ||
+            UtcNow - _missingSince < _restartTimeout ||
+            UtcNow < _recoveryBudget.NextAttemptUtc)
             return ManagedResourceUpdate.None;
 
-        _missingSince = SupervisorTime.UtcNow;
+        _missingSince = UtcNow;
 
         return TryStart()
             ? ManagedResourceUpdate.Restarted
@@ -421,7 +438,7 @@ public sealed class ManagedService :
         }
 
         if (_stopStartedUtc is not null &&
-            SupervisorTime.UtcNow - _stopStartedUtc >= TimeSpan.FromSeconds(OperationTimeoutSeconds))
+            UtcNow - _stopStartedUtc >= TimeSpan.FromSeconds(OperationTimeoutSeconds))
         {
             ReportError(
                 ServiceErrorRecovery.Stopped,
@@ -443,7 +460,7 @@ public sealed class ManagedService :
         _stopPending = true;
         _stopCommandSent = true;
         _startAfterStop = restartAfterStop;
-        _stopStartedUtc ??= SupervisorTime.UtcNow;
+        _stopStartedUtc ??= UtcNow;
     }
 
     /// <summary>
@@ -452,17 +469,30 @@ public sealed class ManagedService :
     /// <returns><see langword="true"/> when Windows accepts the start request.</returns>
     private bool TryStart()
     {
+        DateTime nowUtc = UtcNow;
+
+        if (!_recoveryBudget.TryBeginAttempt(nowUtc))
+            return false;
+
         try
         {
             _controller!.Start();
             _missingSince = null;
-            _pendingOperationSince = SupervisorTime.UtcNow;
+            _pendingOperationSince = nowUtc;
+            _startAwaitingConfirmation = true;
+            _continueAwaitingConfirmation = false;
             RememberState(ServiceRuntimeState.StartPending);
             return true;
         }
         catch (Exception ex)
         {
-            ReportError(ServiceErrorRecovery.Running, $"Could not start service '{Config.ServiceName}'. {ex.Message}");
+            _recoveryBudget.RecordFailure(nowUtc);
+            ReportError(
+                ServiceErrorRecovery.Running,
+                _recoveryBudget.DescribeFailure(
+                    $"Could not start service '{Config.ServiceName}'. {ex.Message}"
+                )
+            );
             return false;
         }
     }
@@ -528,15 +558,28 @@ public sealed class ManagedService :
     /// </summary>
     private void TryContinue()
     {
+        DateTime nowUtc = UtcNow;
+
+        if (!_recoveryBudget.TryBeginAttempt(nowUtc))
+            return;
+
         try
         {
             _controller!.Continue();
-            _pendingOperationSince = SupervisorTime.UtcNow;
+            _pendingOperationSince = nowUtc;
+            _continueAwaitingConfirmation = true;
+            _startAwaitingConfirmation = false;
             RememberState(ServiceRuntimeState.ContinuePending);
         }
         catch (Exception ex)
         {
-            ReportError(ServiceErrorRecovery.Running, $"Could not continue paused service '{Config.ServiceName}'. {ex.Message}");
+            _recoveryBudget.RecordFailure(nowUtc);
+            ReportError(
+                ServiceErrorRecovery.Running,
+                _recoveryBudget.DescribeFailure(
+                    $"Could not continue paused service '{Config.ServiceName}'. {ex.Message}"
+                )
+            );
         }
     }
 
@@ -586,7 +629,7 @@ public sealed class ManagedService :
     /// </summary>
     private void TrackPendingOperation()
     {
-        _pendingOperationSince ??= SupervisorTime.UtcNow;
+        _pendingOperationSince ??= UtcNow;
     }
 
     /// <summary>
@@ -597,14 +640,14 @@ public sealed class ManagedService :
     {
         TrackPendingOperation();
 
-        if (SupervisorTime.UtcNow - _pendingOperationSince < TimeSpan.FromSeconds(OperationTimeoutSeconds))
+        if (UtcNow - _pendingOperationSince < TimeSpan.FromSeconds(OperationTimeoutSeconds))
             return;
 
         ReportError(
             state == ServiceRuntimeState.StopPending ? ServiceErrorRecovery.Stopped : ServiceErrorRecovery.Running,
             $"Service '{Config.ServiceName}' remained in {state} for more than {OperationTimeoutSeconds} seconds."
         );
-        _pendingOperationSince = SupervisorTime.UtcNow;
+        _pendingOperationSince = UtcNow;
     }
 
     /// <summary>
@@ -625,6 +668,49 @@ public sealed class ManagedService :
         _startAfterStop = false;
         _stopStartedUtc = null;
     }
+
+    /// <summary>Confirms the target service state and clears every consecutive recovery attempt.</summary>
+    private void ConfirmRunning()
+    {
+        _startAwaitingConfirmation = false;
+        _continueAwaitingConfirmation = false;
+        _recoveryBudget.Reset();
+    }
+
+    /// <summary>Turns an accepted start that returned to Stopped into one failed recovery attempt.</summary>
+    private void RecordUnconfirmedStartFailure()
+    {
+        if (!_startAwaitingConfirmation)
+            return;
+
+        _startAwaitingConfirmation = false;
+        _recoveryBudget.RecordFailure(UtcNow);
+        ReportError(
+            ServiceErrorRecovery.Running,
+            _recoveryBudget.DescribeFailure(
+                $"Service '{Config.ServiceName}' did not reach the Running state after Windows accepted its start request."
+            )
+        );
+    }
+
+    /// <summary>Turns an accepted continue that returned to Paused into one failed recovery attempt.</summary>
+    private void RecordUnconfirmedContinueFailure()
+    {
+        if (!_continueAwaitingConfirmation)
+            return;
+
+        _continueAwaitingConfirmation = false;
+        _recoveryBudget.RecordFailure(UtcNow);
+        ReportError(
+            ServiceErrorRecovery.Running,
+            _recoveryBudget.DescribeFailure(
+                $"Service '{Config.ServiceName}' remained paused after Windows accepted its continue request."
+            )
+        );
+    }
+
+    /// <summary>Gets suspend-aware time for service operation deadlines and recovery scheduling.</summary>
+    private DateTime UtcNow => _timeProvider.GetUtcNow().UtcDateTime;
 
     /// <summary>
     /// Raises a user-visible service error without throwing from the shared timer tick.

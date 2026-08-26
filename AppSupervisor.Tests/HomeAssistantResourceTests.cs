@@ -209,6 +209,43 @@ public sealed class HomeAssistantResourceTests
         Assert.True(resource.IsStarted());
     }
 
+    [Fact]
+    public void ActivationFailure_StopsAfterFiveAttemptsAndNewLifecycleResetsBudget()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var client = new FakeHomeAssistantClient { FailCalls = true };
+        using var resource = CreateResource(
+            client,
+            service: "switch.turn_on",
+            timeProvider: time
+        );
+        var errors = new List<string>();
+        resource.ErrorOccurred += (_, message) => errors.Add(message);
+        resource.Activate();
+
+        for (int attempt = 1; attempt <= AutomaticRecoveryBudget.MaximumAttempts; attempt++)
+        {
+            resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+            Assert.True(SpinWait.SpinUntil(
+                () => client.Calls.Count == attempt,
+                TimeSpan.FromSeconds(2)
+            ));
+            time.Advance(AutomaticRecoveryBudget.RetryDelay);
+        }
+
+        resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+        Assert.Equal(5, client.Calls.Count);
+        Assert.False(resource.LifecycleWorkPending);
+        Assert.Contains("attempt 5 of 5", errors.Last());
+
+        client.FailCalls = false;
+        resource.Activate();
+        resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+
+        Assert.True(SpinWait.SpinUntil(resource.IsStarted, TimeSpan.FromSeconds(2)));
+        Assert.Equal(6, client.Calls.Count);
+    }
+
     private static HomeAssistantResource CreateResource(
         FakeHomeAssistantClient client,
         string service,
@@ -245,6 +282,8 @@ public sealed class HomeAssistantResourceTests
 
         public int StateQueries { get; private set; }
 
+        public bool FailCalls { get; set; }
+
         public Task CallServiceAsync(
             string service,
             string entityId,
@@ -253,6 +292,9 @@ public sealed class HomeAssistantResourceTests
         {
             Calls.Add($"{service}:{entityId}");
             BrightnessPercentages.Add(brightnessPercent);
+
+            if (FailCalls)
+                throw new InvalidOperationException("Home Assistant rejected the action.");
 
             if (service.EndsWith(".turn_on", StringComparison.Ordinal))
             {

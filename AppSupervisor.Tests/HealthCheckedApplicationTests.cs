@@ -120,11 +120,85 @@ public sealed class HealthCheckedApplicationTests
         );
     }
 
+    [Fact]
+    public void PersistentlyUnhealthyHelper_StopsAfterFiveRestartAttempts()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var application = new FakeApplicationLifecycle
+        {
+            Running = true,
+            CompleteLaunchImmediately = true
+        };
+        using HealthCheckedApplication wrapper = CreateWrapper(application, time);
+        var notifications = new List<ResourceNotification>();
+        wrapper.NotificationRequested += (_, notification) => notifications.Add(notification);
+
+        ConfirmHealthFailure(wrapper);
+
+        for (int attempt = 1; attempt <= AutomaticRecoveryBudget.MaximumAttempts; attempt++)
+        {
+            application.Running = false;
+            ((IManagedResourceLifecycleWork)wrapper).AdvanceLifecycle(
+                time.GetUtcNow().UtcDateTime
+            );
+            Assert.Equal(attempt, application.ActivateCalls);
+
+            time.Advance(AutomaticRecoveryBudget.RetryDelay);
+            ConfirmHealthFailure(wrapper);
+        }
+
+        Assert.Equal(5, application.ActivateCalls);
+        Assert.Equal(5, application.DeactivateCalls);
+        Assert.Contains(
+            notifications,
+            notification => notification.Title == "Health-check recovery limit reached" &&
+                notification.Message.Contains("5 of 5", StringComparison.Ordinal)
+        );
+    }
+
+    [Fact]
+    public void SuccessfulPostRestartProbe_ResetsHealthRecoveryAttemptCount()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var probe = new MutableProbe { Healthy = false };
+        var application = new FakeApplicationLifecycle
+        {
+            Running = true,
+            CompleteLaunchImmediately = true
+        };
+        using HealthCheckedApplication wrapper = CreateWrapper(application, time, probe);
+        var notifications = new List<ResourceNotification>();
+        wrapper.NotificationRequested += (_, notification) => notifications.Add(notification);
+
+        ConfirmHealthFailure(wrapper);
+        application.Running = false;
+        ((IManagedResourceLifecycleWork)wrapper).AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+
+        probe.Healthy = true;
+        time.Advance(AutomaticRecoveryBudget.RetryDelay);
+        wrapper.Supervise();
+        wrapper.Supervise();
+        Assert.Contains(notifications, notification =>
+            notification.Title == "Health check recovered");
+
+        probe.Healthy = false;
+        time.Advance(TimeSpan.FromSeconds(1));
+        ConfirmHealthFailure(wrapper);
+        application.Running = false;
+        ((IManagedResourceLifecycleWork)wrapper).AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+
+        ResourceNotification restart = notifications.Last(notification =>
+            notification.Title == "Resource restarted");
+        Assert.Contains("attempt 1 of 5", restart.Message);
+    }
+
     /// <summary>Creates a health-aware application with one immediately failing, restart-enabled check.</summary>
     /// <param name="application">The fake application lifecycle controlled by the test.</param>
     /// <returns>A wrapper using deterministic process discovery.</returns>
     private static HealthCheckedApplication CreateWrapper(
-        FakeApplicationLifecycle application)
+        FakeApplicationLifecycle application,
+        TimeProvider? timeProvider = null,
+        IHealthProbe? probe = null)
     {
         var healthCheck = new ManagedHealthCheck(
             new HealthCheckConfig
@@ -143,7 +217,7 @@ public sealed class HealthCheckedApplicationTests
                     Target = [NotificationTarget.Popup]
                 }
             },
-            new FailingProbe(),
+            probe ?? new FailingProbe(),
             new AlwaysActiveCondition()
         );
 
@@ -152,7 +226,8 @@ public sealed class HealthCheckedApplicationTests
             [healthCheck],
             () => application.Running
                 ? new HashSet<int> { 42 }
-                : new HashSet<int>()
+                : new HashSet<int>(),
+            timeProvider
         );
     }
 
@@ -285,5 +360,31 @@ public sealed class HealthCheckedApplicationTests
         public void Dispose()
         {
         }
+    }
+
+    private sealed class MutableProbe : IHealthProbe
+    {
+        public bool Healthy { get; set; }
+
+        public Task<HealthProbeResult> CheckAsync(
+            IReadOnlySet<int> ownerProcessIds,
+            CancellationToken cancellationToken) => Task.FromResult(
+                Healthy
+                    ? HealthProbeResult.Success("Healthy.")
+                    : HealthProbeResult.Failure("Unhealthy.")
+            );
+
+        public void Reset() { }
+
+        public void Dispose() { }
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = initial;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan amount) => _utcNow += amount;
     }
 }

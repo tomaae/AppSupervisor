@@ -1,5 +1,6 @@
 using AppSupervisor.Resources;
 using AppSupervisor.Twitch;
+using AppSupervisor.Core;
 
 namespace AppSupervisor.Tests;
 
@@ -70,6 +71,40 @@ public sealed class TwitchResourceTests
         Assert.False(resource.DeactivationPending);
     }
 
+    [Fact]
+    public void FailedChatAction_StopsAfterFiveDelayedAttempts()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var client = new FakeTwitchClient { FailMessages = true };
+        using var resource = new TwitchResource(
+            new TwitchResourceConfig
+            {
+                Action = TwitchActionType.SendChatMessage,
+                Message = "Hello"
+            },
+            client,
+            time
+        );
+        var errors = new List<string>();
+        resource.ErrorOccurred += (_, message) => errors.Add(message);
+        resource.Activate();
+
+        for (int attempt = 1; attempt <= AutomaticRecoveryBudget.MaximumAttempts; attempt++)
+        {
+            resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+            Assert.True(SpinWait.SpinUntil(
+                () => client.MessageAttempts == attempt,
+                TimeSpan.FromSeconds(2)
+            ));
+            time.Advance(AutomaticRecoveryBudget.RetryDelay);
+        }
+
+        resource.AdvanceLifecycle(time.GetUtcNow().UtcDateTime);
+        Assert.Equal(5, client.MessageAttempts);
+        Assert.False(resource.LifecycleWorkPending);
+        Assert.Contains("attempt 5 of 5", errors.Last());
+    }
+
     private sealed class FakeTwitchClient : ITwitchApiClient
     {
         public TwitchChatSettings Settings { get; set; } =
@@ -77,6 +112,8 @@ public sealed class TwitchResourceTests
         public List<TwitchChatSettingsUpdate> Updates { get; } = [];
         public List<string> Messages { get; } = [];
         public List<int> Commercials { get; } = [];
+        public int MessageAttempts { get; private set; }
+        public bool FailMessages { get; set; }
 
         public Task<TwitchChatSettings> GetChatSettingsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(Settings);
@@ -89,6 +126,11 @@ public sealed class TwitchResourceTests
 
         public Task SendChatMessageAsync(string message, CancellationToken cancellationToken)
         {
+            MessageAttempts++;
+
+            if (FailMessages)
+                throw new InvalidOperationException("Twitch rejected the message.");
+
             Messages.Add(message);
             return Task.CompletedTask;
         }
@@ -100,5 +142,14 @@ public sealed class TwitchResourceTests
         }
 
         public void Dispose() { }
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = initial;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan amount) => _utcNow += amount;
     }
 }

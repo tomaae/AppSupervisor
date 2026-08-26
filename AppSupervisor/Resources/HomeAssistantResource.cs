@@ -24,10 +24,14 @@ internal sealed class HomeAssistantResource :
     private readonly HomeAssistantResourceConfig _configuration;
     private readonly IHomeAssistantClient _client;
     private readonly TimeProvider _timeProvider;
+    private readonly Dictionary<HomeAssistantOperation, AutomaticRecoveryBudget> _recoveryBudgets =
+        Enum.GetValues<HomeAssistantOperation>()
+            .ToDictionary(operation => operation, _ => new AutomaticRecoveryBudget());
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly Queue<HomeAssistantOperation> _operations = new();
     private CancellationTokenSource? _operationCancellation;
     private HomeAssistantOperation? _currentOperation;
+    private HomeAssistantOperation? _retryOperation;
     private bool _operationPending;
     private bool _profileActive;
     private bool _activationComplete;
@@ -70,7 +74,22 @@ internal sealed class HomeAssistantResource :
         get
         {
             lock (_stateLock)
-                return !_disposed && (_operationPending || _operations.Count > 0);
+                return !_disposed && (
+                    _operationPending || _operations.Count > 0 || _retryOperation.HasValue
+                );
+        }
+    }
+
+    public DateTime? NextLifecycleDueUtc
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return !_operationPending && _operations.Count == 0 && _retryOperation.HasValue
+                    ? _nextOperationUtc
+                    : null;
+            }
         }
     }
 
@@ -79,7 +98,9 @@ internal sealed class HomeAssistantResource :
         get
         {
             lock (_stateLock)
-                return !_profileActive && (_operationPending || _operations.Count > 0);
+                return !_profileActive && (
+                    _operationPending || _operations.Count > 0 || _retryOperation.HasValue
+                );
         }
     }
 
@@ -103,6 +124,8 @@ internal sealed class HomeAssistantResource :
             _profileActive = true;
             _persistenceSuspended = false;
             _activationComplete = false;
+            _recoveryBudgets[HomeAssistantOperation.Activation].Reset();
+            _recoveryBudgets[HomeAssistantOperation.Persistence].Reset();
             EnqueueNoLock(HomeAssistantOperation.Activation);
         }
     }
@@ -127,9 +150,11 @@ internal sealed class HomeAssistantResource :
 
             if (!_operationPending && _operations.Count == 0 && UtcNow >= _nextOperationUtc)
             {
-                if (!_activationComplete)
+                if (!_activationComplete &&
+                    !_recoveryBudgets[HomeAssistantOperation.Activation].Exhausted)
                     EnqueueNoLock(HomeAssistantOperation.Activation);
-                else if (_configuration.Persistent && !_persistenceSuspended && IsStateful)
+                else if (_configuration.Persistent && !_persistenceSuspended && IsStateful &&
+                    !_recoveryBudgets[HomeAssistantOperation.Persistence].Exhausted)
                     EnqueueNoLock(HomeAssistantOperation.Persistence);
             }
 
@@ -146,6 +171,11 @@ internal sealed class HomeAssistantResource :
         {
             _persistenceSuspended = true;
             RemoveQueuedPersistenceNoLock();
+            if (_retryOperation is HomeAssistantOperation.Activation or
+                HomeAssistantOperation.Persistence)
+            {
+                _retryOperation = null;
+            }
         }
     }
 
@@ -160,7 +190,9 @@ internal sealed class HomeAssistantResource :
             _profileActive = false;
             _activationComplete = false;
             _persistenceSuspended = true;
+            _recoveryBudgets[HomeAssistantOperation.Deactivation].Reset();
             RemoveQueuedPersistenceNoLock();
+            _retryOperation = null;
 
             if (ReverseService is not null)
                 EnqueueNoLock(HomeAssistantOperation.Deactivation);
@@ -174,10 +206,23 @@ internal sealed class HomeAssistantResource :
     {
         lock (_stateLock)
         {
-            if (_disposed || _operationPending || _operations.Count == 0)
+            if (_disposed || _operationPending)
                 return ManagedResourceUpdate.None;
 
-            StartOperationNoLock(_operations.Dequeue());
+            if (_retryOperation is HomeAssistantOperation retryOperation)
+            {
+                if (nowUtc < _nextOperationUtc)
+                    return ManagedResourceUpdate.None;
+
+                _retryOperation = null;
+                StartOperationNoLock(retryOperation, nowUtc);
+                return ManagedResourceUpdate.None;
+            }
+
+            if (_operations.Count == 0)
+                return ManagedResourceUpdate.None;
+
+            StartOperationNoLock(_operations.Dequeue(), nowUtc);
             return ManagedResourceUpdate.None;
         }
     }
@@ -188,6 +233,11 @@ internal sealed class HomeAssistantResource :
         {
             _persistenceSuspended = true;
             RemoveQueuedPersistenceNoLock();
+            if (_retryOperation is HomeAssistantOperation.Activation or
+                HomeAssistantOperation.Persistence)
+            {
+                _retryOperation = null;
+            }
         }
     }
 
@@ -200,6 +250,7 @@ internal sealed class HomeAssistantResource :
         {
             _persistenceSuspended = true;
             RemoveQueuedPersistenceNoLock();
+            _retryOperation = null;
         }
     }
 
@@ -213,6 +264,7 @@ internal sealed class HomeAssistantResource :
 
             _disposed = true;
             _operations.Clear();
+            _retryOperation = null;
             _lifetimeCancellation.Cancel();
             _operationCancellation?.Cancel();
             _operationCancellation?.Dispose();
@@ -271,8 +323,12 @@ internal sealed class HomeAssistantResource :
             _operations.Enqueue(operation);
     }
 
-    private void StartOperationNoLock(HomeAssistantOperation operation)
+    private void StartOperationNoLock(HomeAssistantOperation operation, DateTime nowUtc)
     {
+        AutomaticRecoveryBudget budget = _recoveryBudgets[operation];
+        if (!budget.TryBeginAttempt(nowUtc))
+            return;
+
         _operationCancellation?.Dispose();
         _operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _lifetimeCancellation.Token
@@ -318,6 +374,7 @@ internal sealed class HomeAssistantResource :
 
                 CompleteCurrentOperationNoLock();
                 _nextOperationUtc = UtcNow + PersistenceInterval;
+                _recoveryBudgets[operation].Reset();
 
                 if (operation == HomeAssistantOperation.Activation)
                     _activationComplete = true;
@@ -344,21 +401,26 @@ internal sealed class HomeAssistantResource :
         }
         catch (Exception ex)
         {
+            string failureMessage;
             lock (_stateLock)
             {
                 if (_disposed || _currentOperation != operation)
                     return;
 
                 CompleteCurrentOperationNoLock();
-                _nextOperationUtc = UtcNow + PersistenceInterval;
+                DateTime nowUtc = UtcNow;
+                AutomaticRecoveryBudget budget = _recoveryBudgets[operation];
+                budget.RecordFailure(nowUtc);
+                _nextOperationUtc = budget.NextAttemptUtc;
+                _retryOperation = budget.Exhausted ? null : operation;
                 _errorActive = true;
+                failureMessage = budget.DescribeFailure(
+                    $"Home Assistant action '{GetServiceName(operation)}' failed for " +
+                    $"'{_configuration.EntityId}'. {ex.Message}"
+                );
             }
 
-            ErrorOccurred?.Invoke(
-                this,
-                $"Home Assistant action '{GetServiceName(operation)}' failed for " +
-                $"'{_configuration.EntityId}'. {ex.Message}"
-            );
+            ErrorOccurred?.Invoke(this, failureMessage);
         }
     }
 
