@@ -215,9 +215,11 @@ public sealed partial class ConfigurationEditorForm : Form
         _tabs.TabPages.Add(BuildProfilePage());
         _tabs.TabPages.Add(BuildResourcesPage());
         _tabs.TabPages.Add(BuildIntegrationsPage());
+        _tabs.TabPages.Add(BuildDiagnosticLogsPage());
         WireEvents();
         InitializeHelperTesting();
         InitializeRuntimeStatus();
+        InitializeDiagnosticLogs();
 
         BeginRefreshInstalledServices(showErrors: false);
 

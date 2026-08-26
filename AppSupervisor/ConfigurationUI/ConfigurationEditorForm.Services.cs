@@ -198,6 +198,7 @@ public sealed partial class ConfigurationEditorForm
     {
         if (disposing)
         {
+            DisposeDiagnosticLogs();
             DisposeRuntimeStatus();
             DisposeHelperTesting();
             _addResourceMenu.Dispose();

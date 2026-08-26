@@ -273,6 +273,8 @@ Steam and Microsoft Store catalog discovery retries transient failures up to fou
 
 Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR monitoring, are configured globally rather than inside a profile.
 
+The **Diagnostic logs** tab immediately after **Integrations** provides a parsed viewer for every available current-format session log and the legacy `AppSupervisor.log`, ordered newest first. Its record table separates time, severity, and message, while the detail pane retains multiline exception and continuation text. Selecting the tab always rediscovers and reloads the logs; changing the session or using **Refresh** also reloads without blocking the editor.
+
 **Validate** checks the complete configuration without saving. **Save & Apply** validates and writes it, then replaces the running configuration. If the new configuration cannot be applied, the previous valid configuration remains active.
 
 ### Diagnostic logging
@@ -280,6 +282,8 @@ Connections such as Home Assistant, OBS WebSocket, and Twitch, plus SteamVR moni
 Each AppSupervisor run creates a uniquely named `AppSupervisor_yyMMdd-HHmmss.log` session log beside `AppSupervisor.exe` and `config.json`. Records use local ISO 8601 timestamps with the UTC offset and stable `TRACE`, `INFO`, `WARN`, and `ERROR` labels. Multiline content is indented, and ordinary prose is wrapped for readable viewing without splitting quoted paths or long unbroken values.
 
 Choose the minimum **Log level** under **Integrations → Global — Diagnostic logging**. `Info` is the default, `Trace` includes detailed execution flow, and `Warning` or `Error` reduce routine output. On the first write in a session, AppSupervisor removes current-format and legacy `AppSupervisor.log` files older than five days. Logging is best-effort and never interrupts supervision or shutdown.
+
+The viewer reads growing files with sharing that does not block logging or rotation. Missing, rotated, inaccessible, partially written, and malformed logs produce contained status or malformed rows rather than an editor failure. To keep browsing responsive even after unusually noisy sessions, it reads the newest 16 MB of a selected file and displays at most the newest 10,000 parsed records; the status line reports either limit when applied.
 
 ### Supervisor API
 
