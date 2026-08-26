@@ -1,6 +1,7 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
 using AppSupervisor.ServiceControl;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace AppSupervisor.Tests;
@@ -27,8 +28,6 @@ public sealed class ConfigurationEditorProfileTransferTests
                 {
                     using var form = CreateForm(configPath, interaction);
                     form.CreateControl();
-                    form.Show();
-                    Application.DoEvents();
                     Control[] controls = EnumerateControls(form).ToArray();
                     Button exportButton = Assert.Single(
                         controls.OfType<Button>(),
@@ -49,7 +48,7 @@ public sealed class ConfigurationEditorProfileTransferTests
 
                     Assert.True(exportButton.Enabled);
                     Assert.False(validateButton.Enabled);
-                    exportButton.PerformClick();
+                    Click(exportButton);
 
                     Assert.True(File.Exists(exportPath));
                     string json = File.ReadAllText(exportPath);
@@ -62,7 +61,7 @@ public sealed class ConfigurationEditorProfileTransferTests
                         message.Icon == MessageBoxIcon.Information);
 
                     interaction.ImportPath = exportPath;
-                    importButton.PerformClick();
+                    Click(importButton);
 
                     Assert.Equal(2, selector.Items.Count);
                     SupervisorProfileConfig imported = Assert.IsType<SupervisorProfileConfig>(
@@ -113,8 +112,6 @@ public sealed class ConfigurationEditorProfileTransferTests
                 {
                     using var form = CreateForm(configPath, interaction);
                     form.CreateControl();
-                    form.Show();
-                    Application.DoEvents();
                     Control[] controls = EnumerateControls(form).ToArray();
                     Button importButton = Assert.Single(
                         controls.OfType<Button>(),
@@ -129,7 +126,7 @@ public sealed class ConfigurationEditorProfileTransferTests
                         combo => combo.Items.Cast<object>().Any(item => item is SupervisorProfileConfig)
                     );
 
-                    importButton.PerformClick();
+                    Click(importButton);
 
                     Assert.Single(selector.Items);
                     Assert.False(validateButton.Enabled);
@@ -247,6 +244,15 @@ public sealed class ConfigurationEditorProfileTransferTests
             foreach (Control descendant in EnumerateControls(child))
                 yield return descendant;
         }
+    }
+
+    private static void Click(Button button)
+    {
+        MethodInfo onClick = typeof(Control).GetMethod(
+            "OnClick",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        ) ?? throw new MissingMethodException(typeof(Control).FullName, "OnClick");
+        onClick.Invoke(button, [EventArgs.Empty]);
     }
 
     private static string CreateTemporaryDirectory()
