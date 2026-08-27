@@ -66,6 +66,7 @@ public sealed partial class ConfigurationEditorForm
     private CancellationTokenSource? _diagnosticLogOperationCancellation;
     private bool _updatingDiagnosticLogSessions;
     private bool _diagnosticLogsDisposed;
+    private int _diagnosticLogSelectionVersion;
 
     /// <summary>Builds the session selector, structured record grid, and multiline detail pane.</summary>
     private TabPage BuildDiagnosticLogsPage()
@@ -377,6 +378,7 @@ public sealed partial class ConfigurationEditorForm
     /// <summary>Sets the virtual grid's immutable row source and selects the newest record.</summary>
     private void ShowDiagnosticLogRecords(IReadOnlyList<DiagnosticLogRecord> records)
     {
+        int selectionVersion = ++_diagnosticLogSelectionVersion;
         _diagnosticLogRecords.CurrentCell = null;
         _diagnosticLogRecords.RowCount = 0;
         _displayedDiagnosticLogRecords = records;
@@ -388,9 +390,33 @@ public sealed partial class ConfigurationEditorForm
             return;
 
         int newestIndex = records.Count - 1;
-        _diagnosticLogRecords.CurrentCell = _diagnosticLogRecords.Rows[newestIndex].Cells[0];
-        _diagnosticLogRecords.FirstDisplayedScrollingRowIndex = newestIndex;
         ShowDiagnosticLogRecord(newestIndex);
+        QueueDiagnosticLogRecordSelection(selectionVersion, newestIndex);
+    }
+
+    /// <summary>
+    /// Selects the newest virtual row on the next UI message, after WinForms finishes any
+    /// DataGridView handle creation triggered by showing the tab.
+    /// </summary>
+    private void QueueDiagnosticLogRecordSelection(int version, int rowIndex)
+    {
+        if (_diagnosticLogsDisposed || IsDisposed || Disposing || !IsHandleCreated)
+            return;
+
+        BeginInvoke((Action)(() =>
+        {
+            if (_diagnosticLogsDisposed || IsDisposed || Disposing ||
+                version != _diagnosticLogSelectionVersion ||
+                rowIndex < 0 || rowIndex >= _diagnosticLogRecords.RowCount ||
+                _diagnosticLogRecords.ColumnCount == 0)
+            {
+                return;
+            }
+
+            _diagnosticLogRecords.CurrentCell =
+                _diagnosticLogRecords.Rows[rowIndex].Cells[0];
+            _diagnosticLogRecords.FirstDisplayedScrollingRowIndex = rowIndex;
+        }));
     }
 
     /// <summary>Supplies values only for virtual rows that WinForms needs to paint.</summary>
