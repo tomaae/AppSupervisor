@@ -18,6 +18,7 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
     private const int TrackingSystemNameProperty = 1000;
     private const int ModelNumberProperty = 1001;
     private const int SerialNumberProperty = 1002;
+    private const int ControllerTypeProperty = 7000;
     private const string SettingsInterfaceVersion = "FnTable:IVRSettings_003";
     private const string TrackersSettingsSection = "trackers";
 
@@ -202,7 +203,17 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
         if (deviceClass == SteamVrDeviceClass.Controller)
             return MapControllerRole(_getControllerRole?.Invoke(deviceIndex) ?? 0);
 
-        if (deviceClass != SteamVrDeviceClass.GenericTracker || _getSettingsString is null)
+        if (deviceClass != SteamVrDeviceClass.GenericTracker)
+            return SteamVrDeviceRole.None;
+
+        SteamVrDeviceRole controllerTypeRole = MapTrackerControllerType(
+            ReadStringProperty(deviceIndex, ControllerTypeProperty)
+        );
+
+        if (controllerTypeRole != SteamVrDeviceRole.None)
+            return controllerTypeRole;
+
+        if (_getSettingsString is null)
             return SteamVrDeviceRole.None;
 
         string trackingSystem = ReadStringProperty(deviceIndex, TrackingSystemNameProperty);
@@ -251,12 +262,40 @@ internal sealed class OpenVrDeviceSource : ISteamVrDeviceSource
         "TrackerRole_RightElbow" => SteamVrDeviceRole.RightElbow,
         "TrackerRole_LeftKnee" => SteamVrDeviceRole.LeftKnee,
         "TrackerRole_RightKnee" => SteamVrDeviceRole.RightKnee,
+        "TrackerRole_LeftWrist" => SteamVrDeviceRole.LeftWrist,
+        "TrackerRole_RightWrist" => SteamVrDeviceRole.RightWrist,
+        "TrackerRole_LeftAnkle" => SteamVrDeviceRole.LeftAnkle,
+        "TrackerRole_RightAnkle" => SteamVrDeviceRole.RightAnkle,
         "TrackerRole_Waist" => SteamVrDeviceRole.Waist,
         "TrackerRole_Chest" => SteamVrDeviceRole.Chest,
         "TrackerRole_Camera" => SteamVrDeviceRole.Camera,
         "TrackerRole_Keyboard" => SteamVrDeviceRole.Keyboard,
         _ => SteamVrDeviceRole.None
     };
+
+    /// <summary>Maps SteamVR's role-specific tracker input profile to its assignment.</summary>
+    internal static SteamVrDeviceRole MapTrackerControllerType(string controllerType) =>
+        controllerType switch
+        {
+            "vive_tracker_handed" => SteamVrDeviceRole.Handed,
+            "vive_tracker_left_foot" => SteamVrDeviceRole.LeftFoot,
+            "vive_tracker_right_foot" => SteamVrDeviceRole.RightFoot,
+            "vive_tracker_left_shoulder" => SteamVrDeviceRole.LeftShoulder,
+            "vive_tracker_right_shoulder" => SteamVrDeviceRole.RightShoulder,
+            "vive_tracker_left_elbow" => SteamVrDeviceRole.LeftElbow,
+            "vive_tracker_right_elbow" => SteamVrDeviceRole.RightElbow,
+            "vive_tracker_left_knee" => SteamVrDeviceRole.LeftKnee,
+            "vive_tracker_right_knee" => SteamVrDeviceRole.RightKnee,
+            "vive_tracker_left_wrist" => SteamVrDeviceRole.LeftWrist,
+            "vive_tracker_right_wrist" => SteamVrDeviceRole.RightWrist,
+            "vive_tracker_left_ankle" => SteamVrDeviceRole.LeftAnkle,
+            "vive_tracker_right_ankle" => SteamVrDeviceRole.RightAnkle,
+            "vive_tracker_waist" => SteamVrDeviceRole.Waist,
+            "vive_tracker_chest" => SteamVrDeviceRole.Chest,
+            "vive_tracker_camera" => SteamVrDeviceRole.Camera,
+            "vive_tracker_keyboard" => SteamVrDeviceRole.Keyboard,
+            _ => SteamVrDeviceRole.None
+        };
 
     private string ReadStringProperty(uint deviceIndex, int property)
     {
