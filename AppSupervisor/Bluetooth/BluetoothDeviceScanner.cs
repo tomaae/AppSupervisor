@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Enumeration;
+using Windows.Storage.Streams;
 
 namespace AppSupervisor.Bluetooth;
 
@@ -11,6 +14,7 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
     private static readonly string[] RequestedProperties =
     [
         "System.Devices.Aep.DeviceAddress",
+        "System.Devices.Aep.Bluetooth.Le.AddressType",
         "System.Devices.Aep.IsConnected",
         "System.Devices.Aep.IsPresent",
         "System.Devices.FriendlyName",
@@ -18,10 +22,14 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
     ];
 
     private readonly TimeSpan _discoveryDuration;
+    private readonly bool _resolveNames;
 
-    internal BluetoothDeviceScanner(TimeSpan? discoveryDuration = null)
+    internal BluetoothDeviceScanner(
+        TimeSpan? discoveryDuration = null,
+        bool resolveNames = true)
     {
         _discoveryDuration = discoveryDuration ?? TimeSpan.FromSeconds(10);
+        _resolveNames = resolveNames;
     }
 
     /// <inheritdoc />
@@ -82,7 +90,8 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
         {
             // Active scanning requests scan responses, which are where many peripherals
             // publish their shortened or complete local name.
-            ScanningMode = BluetoothLEScanningMode.Active
+            ScanningMode = BluetoothLEScanningMode.Active,
+            AllowExtendedAdvertisements = true
         };
         var completed = new TaskCompletionSource<BluetoothScanStatus>(
             TaskCreationOptions.RunContinuationsAsynchronously
@@ -217,7 +226,7 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
         return status;
     }
 
-    private static async Task AddSnapshotAsync(
+    private async Task AddSnapshotAsync(
         BluetoothDeviceKind kind,
         DeviceInformation device,
         ConcurrentDictionary<string, BluetoothDeviceSnapshot> discovered)
@@ -244,7 +253,7 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 ReadStringProperty(device, "System.ItemNameDisplay")
             );
 
-            if (address.Length == 0 || (paired && name.Length == 0))
+            if (address.Length == 0 || (_resolveNames && paired && name.Length == 0))
             {
                 (string resolvedAddress, bool resolvedConnected, string resolvedName) =
                     await ResolveDeviceAsync(
@@ -255,6 +264,17 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 address = address.Length == 0 ? resolvedAddress : address;
                 isConnected = resolvedConnected;
                 name = SelectDisplayName(address, name, resolvedName);
+            }
+
+            if (_resolveNames && kind == BluetoothDeviceKind.LowEnergy && name.Length == 0)
+            {
+                (isConnected, string addressName) =
+                    await ResolveLowEnergyDeviceByAddressAsync(
+                        address,
+                        ReadBluetoothAddressType(device),
+                        isConnected
+                    ).ConfigureAwait(false);
+                name = SelectDisplayName(address, addressName);
             }
 
             if (address.Length == 0)
@@ -292,12 +312,13 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
             string address = FormatAddress(advertisement.BluetoothAddress);
             var snapshot = new BluetoothDeviceSnapshot(
                 $"ble-advertisement:{address}",
-                SelectDisplayName(address, advertisement.Advertisement.LocalName),
+                SelectDisplayName(address, ReadAdvertisementName(advertisement.Advertisement)),
                 address,
                 BluetoothDeviceKind.LowEnergy,
                 IsPaired: false,
                 IsConnected: false,
-                IsPresent: true
+                IsPresent: true,
+                SignalStrengthDbm: advertisement.RawSignalStrengthInDBm
             );
             MergeSnapshot(discovered, snapshot);
         }
@@ -325,9 +346,104 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 Name = ChoosePreferredName(existing.Name, snapshot.Name, snapshot.Address),
                 IsPaired = existing.IsPaired || snapshot.IsPaired,
                 IsConnected = existing.IsConnected || snapshot.IsConnected,
-                IsPresent = existing.IsPresent || snapshot.IsPresent
+                IsPresent = existing.IsPresent || snapshot.IsPresent,
+                SignalStrengthDbm = snapshot.SignalStrengthDbm ?? existing.SignalStrengthDbm
             }
         );
+    }
+
+    private static async Task<(bool Connected, string Name)>
+        ResolveLowEnergyDeviceByAddressAsync(
+            string address,
+            BluetoothAddressType addressType,
+            bool connected)
+    {
+        if (!ulong.TryParse(address, NumberStyles.HexNumber, CultureInfo.InvariantCulture,
+            out ulong bluetoothAddress))
+        {
+            return (connected, "");
+        }
+
+        try
+        {
+            using BluetoothLEDevice? device = await BluetoothLEDevice.FromBluetoothAddressAsync(
+                bluetoothAddress,
+                addressType
+            );
+            return device is null
+                ? (connected, "")
+                : (
+                    connected ||
+                        device.ConnectionStatus == BluetoothConnectionStatus.Connected,
+                    device.Name
+                );
+        }
+        catch (Exception exception)
+        {
+            SupervisorLog.WriteTrace(
+                $"Bluetooth discovery could not resolve LE device '{address}' by address: " +
+                    exception.Message
+            );
+            return (connected, "");
+        }
+    }
+
+    private static BluetoothAddressType ReadBluetoothAddressType(DeviceInformation device)
+    {
+        if (!device.Properties.TryGetValue(
+                "System.Devices.Aep.Bluetooth.Le.AddressType",
+                out object? value
+            ))
+        {
+            return BluetoothAddressType.Unspecified;
+        }
+
+        try
+        {
+            return Convert.ToByte(value, CultureInfo.InvariantCulture) == 1
+                ? BluetoothAddressType.Random
+                : BluetoothAddressType.Public;
+        }
+        catch (Exception)
+        {
+            return BluetoothAddressType.Unspecified;
+        }
+    }
+
+    private static string ReadAdvertisementName(BluetoothLEAdvertisement advertisement)
+    {
+        if (!string.IsNullOrWhiteSpace(advertisement.LocalName))
+            return advertisement.LocalName;
+
+        foreach (byte dataType in new[]
+                 {
+                     BluetoothLEAdvertisementDataTypes.CompleteLocalName,
+                     BluetoothLEAdvertisementDataTypes.ShortenedLocalName
+                 })
+        {
+            foreach (BluetoothLEAdvertisementDataSection section in
+                     advertisement.GetSectionsByType(dataType))
+            {
+                try
+                {
+                    using DataReader reader = DataReader.FromBuffer(section.Data);
+                    var bytes = new byte[section.Data.Length];
+                    reader.ReadBytes(bytes);
+                    string name = Encoding.UTF8.GetString(bytes).TrimEnd('\0').Trim();
+                    if (name.Length > 0)
+                        return name;
+                }
+                catch (Exception exception)
+                {
+                    SupervisorLog.WriteTrace(
+                        $"Bluetooth discovery could not decode an advertised name: " +
+                            exception.Message
+                    );
+                }
+            }
+        }
+
+        return "";
     }
 
     private static async Task<(string Address, bool Connected, string Name)> ResolveDeviceAsync(
@@ -382,11 +498,29 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 continue;
             }
 
+            if (normalizedAddress.Length > 0 &&
+                (HasAddressSuffix(trimmed, "Bluetooth ", normalizedAddress) ||
+                 HasAddressSuffix(trimmed, "Bluetooth LE ", normalizedAddress)))
+            {
+                continue;
+            }
+
             return trimmed;
         }
 
         return "";
     }
+
+    private static bool HasAddressSuffix(
+        string candidate,
+        string prefix,
+        string normalizedAddress) =>
+        candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(
+            NormalizeAddress(candidate[prefix.Length..]),
+            normalizedAddress,
+            StringComparison.Ordinal
+        );
 
     internal static string NormalizeAddress(string? address)
     {

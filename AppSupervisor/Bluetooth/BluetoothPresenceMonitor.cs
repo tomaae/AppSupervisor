@@ -25,7 +25,9 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
             device => device.DeviceId,
             StringComparer.OrdinalIgnoreCase
         );
-        _scanner = scanner ?? new BluetoothDeviceScanner();
+        // Continuous presence matching needs addresses and sightings, not the slower
+        // optional name enrichment used by the configuration editor.
+        _scanner = scanner ?? new BluetoothDeviceScanner(resolveNames: false);
         _scanInterval = scanInterval ?? TimeSpan.FromSeconds(configuration.ScanIntervalSeconds);
         _presenceTimeout = presenceTimeout ??
             TimeSpan.FromSeconds(configuration.PresenceTimeoutSeconds);

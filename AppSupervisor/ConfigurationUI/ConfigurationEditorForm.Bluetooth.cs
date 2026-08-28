@@ -207,7 +207,14 @@ public sealed partial class ConfigurationEditorForm
             DataPropertyName = nameof(BluetoothDeviceEditorRow.Status),
             HeaderText = "Last discovery",
             ReadOnly = true,
-            Width = 125
+            Width = 115
+        });
+        _bluetoothDevices.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            DataPropertyName = nameof(BluetoothDeviceEditorRow.Signal),
+            HeaderText = "Signal",
+            ReadOnly = true,
+            Width = 75
         });
         _bluetoothDevices.DataSource = _bluetoothDeviceRows;
     }
@@ -275,20 +282,8 @@ public sealed partial class ConfigurationEditorForm
 
             try
             {
-                int namedDevices = 0;
-                int unnamedDevices = 0;
-
                 foreach (BluetoothDeviceSnapshot device in discovered)
                 {
-                    bool hasUsableName = BluetoothDeviceScanner.HasUsableName(
-                        device.Name,
-                        device.Address
-                    );
-                    if (hasUsableName)
-                        namedDevices++;
-                    else
-                        unnamedDevices++;
-
                     BluetoothDeviceEditorRow? existing = _bluetoothDeviceRows.FirstOrDefault(row =>
                         row.Kind == device.Kind &&
                         string.Equals(row.Address, device.Address, StringComparison.OrdinalIgnoreCase)
@@ -296,34 +291,11 @@ public sealed partial class ConfigurationEditorForm
 
                     if (existing is null)
                     {
-                        // Anonymous BLE beacons are common and cannot be identified reliably.
-                        // Keep them out of the global registry until Windows supplies a name.
-                        if (hasUsableName)
-                            _bluetoothDeviceRows.Add(BluetoothDeviceEditorRow.FromSnapshot(device));
+                        _bluetoothDeviceRows.Add(BluetoothDeviceEditorRow.FromSnapshot(device));
                         continue;
                     }
 
-                    existing.Name = BluetoothDeviceScanner.ChoosePreferredName(
-                        existing.Name,
-                        device.Name,
-                        existing.Address
-                    );
-                    existing.Status = BluetoothDeviceEditorRow.GetStatus(device);
-                }
-
-                if (namedDevices == 0 && unnamedDevices > 0)
-                {
-                    MessageBox.Show(
-                        this,
-                        $"Windows detected {unnamedDevices} Bluetooth " +
-                            $"device{(unnamedDevices == 1 ? "" : "s")}, but none advertised " +
-                            "an identifying name, so AppSupervisor did not register them. " +
-                            "Keep the intended devices in discovery mode and try again; if they " +
-                            "remain unnamed, pair them in Windows first.",
-                        "Only unnamed Bluetooth devices found",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information
-                    );
+                    existing.UpdateFromSnapshot(device);
                 }
             }
             finally
@@ -413,6 +385,7 @@ public sealed partial class ConfigurationEditorForm
         public string Address { get; set; } = "";
         public BluetoothDeviceKind Kind { get; set; }
         public string Status { get; set; } = "Not checked";
+        public string Signal { get; set; } = "—";
         public string KindText => Kind == BluetoothDeviceKind.Classic ? "Classic" : "Low Energy";
         public string FormattedAddress => string.Join(":", Enumerable.Range(0, 6)
             .Select(index => Address.Length == 12 ? Address.Substring(index * 2, 2) : "??"));
@@ -420,18 +393,46 @@ public sealed partial class ConfigurationEditorForm
         public static BluetoothDeviceEditorRow FromConfig(BluetoothDeviceConfig device) => new()
         {
             DeviceId = device.DeviceId,
-            Name = device.Name,
+            Name = BluetoothDeviceScanner.HasUsableName(device.Name, device.Address)
+                ? device.Name
+                : CreateUnidentifiedName(device.Kind, device.Address),
             Address = device.Address,
             Kind = device.Kind
         };
 
         public static BluetoothDeviceEditorRow FromSnapshot(BluetoothDeviceSnapshot device) => new()
         {
-            Name = device.Name,
+            Name = BluetoothDeviceScanner.HasUsableName(device.Name, device.Address)
+                ? device.Name
+                : CreateUnidentifiedName(device.Kind, device.Address),
             Address = device.Address,
             Kind = device.Kind,
-            Status = GetStatus(device)
+            Status = GetStatus(device),
+            Signal = GetSignal(device)
         };
+
+        public void UpdateFromSnapshot(BluetoothDeviceSnapshot device)
+        {
+            string generatedName = CreateUnidentifiedName(Kind, Address);
+            Name = string.Equals(Name, generatedName, StringComparison.Ordinal)
+                ? BluetoothDeviceScanner.ChoosePreferredName("", device.Name, Address)
+                : BluetoothDeviceScanner.ChoosePreferredName(Name, device.Name, Address);
+            if (Name.Length == 0)
+                Name = generatedName;
+
+            Status = GetStatus(device);
+            Signal = GetSignal(device);
+        }
+
+        private static string CreateUnidentifiedName(BluetoothDeviceKind kind, string address)
+        {
+            string transport = kind == BluetoothDeviceKind.Classic ? "Classic" : "LE";
+            string suffix = address.Length >= 4 ? address[^4..] : "????";
+            return $"Unidentified {transport} device ({suffix})";
+        }
+
+        private static string GetSignal(BluetoothDeviceSnapshot device) =>
+            device.SignalStrengthDbm is short signal ? $"{signal} dBm" : "—";
 
         public static string GetStatus(BluetoothDeviceSnapshot device) => device.IsConnected
             ? "Connected"

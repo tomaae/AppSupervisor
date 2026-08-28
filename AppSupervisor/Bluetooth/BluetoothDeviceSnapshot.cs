@@ -8,4 +8,5 @@ internal sealed record BluetoothDeviceSnapshot(
     BluetoothDeviceKind Kind,
     bool IsPaired,
     bool IsConnected,
-    bool IsPresent);
+    bool IsPresent,
+    short? SignalStrengthDbm = null);

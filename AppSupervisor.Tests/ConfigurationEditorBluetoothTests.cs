@@ -130,7 +130,7 @@ public sealed class ConfigurationEditorBluetoothTests
     }
 
     [Fact]
-    public void DiscoverButton_DoesNotRegisterUnnamedBluetoothNoise()
+    public void DiscoverButton_RegistersUnnamedDeviceWithExplicitPlaceholder()
     {
         string directory = CreateConfiguration(out string configPath);
         Exception? threadException = null;
@@ -185,13 +185,13 @@ public sealed class ConfigurationEditorBluetoothTests
                         Thread.Sleep(10);
                     }
 
-                    Assert.Equal(2, grid.Rows.Count);
-                    Assert.DoesNotContain(
+                    Assert.Equal(3, grid.Rows.Count);
+                    Assert.Contains(
                         grid.Rows.Cast<DataGridViewRow>(),
                         row => string.Equals(
                             row.Cells[0].Value?.ToString(),
-                            "4C2299AC31BA",
-                            StringComparison.OrdinalIgnoreCase
+                            "Unidentified LE device (31BA)",
+                            StringComparison.Ordinal
                         )
                     );
                 }

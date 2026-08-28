@@ -72,6 +72,8 @@ public sealed class BluetoothPresenceTests
     [InlineData("4C2299AC31BA", "4C2299AC31BA")]
     [InlineData("4C:22:99:AC:31:BA", "4C2299AC31BA")]
     [InlineData(" 4c-22-99-ac-31-ba ", "4C2299AC31BA")]
+    [InlineData("Bluetooth 4c:22:99:ac:31:ba", "4C2299AC31BA")]
+    [InlineData("Bluetooth LE 4c:22:99:ac:31:ba", "4C2299AC31BA")]
     public void SelectDisplayName_RejectsAddressPlaceholders(string name, string address)
     {
         Assert.Equal("", BluetoothDeviceScanner.SelectDisplayName(address, name));
