@@ -1,4 +1,11 @@
+param(
+    [switch]$NoPause
+)
+
 $ErrorActionPreference = "Stop"
+$pauseOnExit = -not $NoPause -and
+    [Environment]::UserInteractive -and
+    (-not [Console]::IsInputRedirected)
 
 $pluginRoot = [IO.Path]::GetFullPath($PSScriptRoot)
 
@@ -32,7 +39,13 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Stream Deck plugin packaging failed with exit code $LASTEXITCODE."
     }
+
+    Write-Host "Stream Deck package completed: ..\artifacts\StreamDeck\com.tomaae.appsupervisor.streamDeckPlugin"
 }
 finally {
     Pop-Location
+
+    if ($pauseOnExit) {
+        [void](Read-Host "Press Enter to close this window")
+    }
 }

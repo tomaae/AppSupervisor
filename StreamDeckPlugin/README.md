@@ -31,4 +31,7 @@ it with Elgato's CLI, and writes the installable package to:
 artifacts/StreamDeck/com.tomaae.appsupervisor.streamDeckPlugin
 ```
 
+Interactive runs wait for Enter before closing so the final output remains visible. Automated
+callers can use `.\StreamDeckPlugin\Build.ps1 -NoPause`; redirected CI runs never pause.
+
 The generated `bin` directory and installer artifact are intentionally excluded from Git.

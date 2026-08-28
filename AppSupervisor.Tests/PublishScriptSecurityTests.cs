@@ -28,6 +28,43 @@ public sealed class PublishScriptSecurityTests
         Assert.Contains("THIRD-PARTY-NOTICES.txt", script, StringComparison.Ordinal);
     }
 
+    /// <summary>Confirms interactive publishing keeps its console visible without blocking automation.</summary>
+    [Fact]
+    public void Script_InteractiveConsolePausesWithAutomationOptOut()
+    {
+        string script = File.ReadAllText(FindPublishScript());
+
+        Assert.Contains("[switch]$NoPause", script, StringComparison.Ordinal);
+        Assert.Contains("[Console]::IsInputRedirected", script, StringComparison.Ordinal);
+        Assert.Contains("finally", script, StringComparison.Ordinal);
+        Assert.Contains(
+            "Press Enter to close this window",
+            script,
+            StringComparison.Ordinal
+        );
+    }
+
+    /// <summary>Confirms Stream Deck packaging provides the same interactive pause contract.</summary>
+    [Fact]
+    public void StreamDeckBuildScript_InteractiveConsolePausesWithAutomationOptOut()
+    {
+        string repositoryRoot = Path.GetDirectoryName(FindPublishScript())!;
+        string script = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "StreamDeckPlugin",
+            "Build.ps1"
+        ));
+
+        Assert.Contains("[switch]$NoPause", script, StringComparison.Ordinal);
+        Assert.Contains("[Console]::IsInputRedirected", script, StringComparison.Ordinal);
+        Assert.Contains("finally", script, StringComparison.Ordinal);
+        Assert.Contains(
+            "Press Enter to close this window",
+            script,
+            StringComparison.Ordinal
+        );
+    }
+
     /// <summary>Finds Publish.ps1 by walking from the test output directory to the repository root.</summary>
     /// <returns>The full path to the repository packaging script.</returns>
     private static string FindPublishScript()

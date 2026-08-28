@@ -491,7 +491,8 @@ To install the development package:
 
 Building the installer from source requires Node.js 24 or later. Run
 `.\StreamDeckPlugin\Build.ps1`; it installs the locked dependencies, runs plugin tests, bundles and
-validates the plugin, and writes the installer under `artifacts/StreamDeck/`.
+validates the plugin, and writes the installer under `artifacts/StreamDeck/`. Interactive runs wait
+for Enter before closing; automation can pass `-NoPause`.
 
 ### Administrator and startup behavior
 
@@ -549,6 +550,8 @@ The script restores the solution, runs the Release tests, publishes the Windows 
 artifacts/AppSupervisor/
 artifacts/AppSupervisor-win-x64.zip
 ```
+
+When run in an interactive console, the script waits for Enter before closing so its final output or error remains visible. Automated callers can use `.\Publish.ps1 -NoPause`; redirected CI runs never pause.
 
 ## License
 

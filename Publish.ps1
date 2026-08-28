@@ -1,4 +1,13 @@
+param(
+    [switch]$NoPause
+)
+
 $ErrorActionPreference = "Stop"
+$pauseOnExit = -not $NoPause -and
+    [Environment]::UserInteractive -and
+    (-not [Console]::IsInputRedirected)
+
+try {
 
 $workspaceRoot = [IO.Path]::GetFullPath($PSScriptRoot)
 $solutionPath = Join-Path $workspaceRoot "AppSupervisor.slnx"
@@ -165,3 +174,10 @@ Get-ChildItem -LiteralPath $currentExtractedPackage -File |
 Write-Host "Package archive: $archivePath"
 Get-Item -LiteralPath $archivePath |
     Select-Object Name, Length
+
+}
+finally {
+    if ($pauseOnExit) {
+        [void](Read-Host "Press Enter to close this window")
+    }
+}
