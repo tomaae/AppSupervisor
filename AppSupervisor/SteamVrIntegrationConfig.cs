@@ -60,28 +60,30 @@ public enum SteamVrDeviceClass
 public enum SteamVrDeviceRole
 {
     /// <summary>No role is currently assigned or the role could not be determined.</summary>
-    None,
+    // These numeric values cross the isolated SteamVR capture process boundary.
+    // Keep existing values stable and append new roles instead of reordering them.
+    None = 0,
 
-    LeftHand,
-    RightHand,
-    OptOut,
-    Treadmill,
-    Stylus,
-    Handed,
-    LeftFoot,
-    RightFoot,
-    LeftShoulder,
-    RightShoulder,
-    LeftElbow,
-    RightElbow,
-    LeftKnee,
-    RightKnee,
-    LeftWrist,
-    RightWrist,
-    LeftAnkle,
-    RightAnkle,
-    Waist,
-    Chest,
-    Camera,
-    Keyboard
+    LeftHand = 1,
+    RightHand = 2,
+    OptOut = 3,
+    Treadmill = 4,
+    Stylus = 5,
+    Handed = 6,
+    LeftFoot = 7,
+    RightFoot = 8,
+    LeftShoulder = 9,
+    RightShoulder = 10,
+    LeftElbow = 11,
+    RightElbow = 12,
+    LeftKnee = 13,
+    RightKnee = 14,
+    Waist = 15,
+    Chest = 16,
+    Camera = 17,
+    Keyboard = 18,
+    LeftWrist = 19,
+    RightWrist = 20,
+    LeftAnkle = 21,
+    RightAnkle = 22
 }

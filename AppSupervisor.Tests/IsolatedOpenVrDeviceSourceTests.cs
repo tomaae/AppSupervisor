@@ -6,6 +6,34 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies the native OpenVR child-process transport without loading OpenVR in the test process.</summary>
 public sealed class IsolatedOpenVrDeviceSourceTests
 {
+    [Theory]
+    [InlineData(15, SteamVrDeviceRole.Waist)]
+    [InlineData(16, SteamVrDeviceRole.Chest)]
+    [InlineData(17, SteamVrDeviceRole.Camera)]
+    [InlineData(18, SteamVrDeviceRole.Keyboard)]
+    [InlineData(19, SteamVrDeviceRole.LeftWrist)]
+    [InlineData(20, SteamVrDeviceRole.RightWrist)]
+    [InlineData(21, SteamVrDeviceRole.LeftAnkle)]
+    [InlineData(22, SteamVrDeviceRole.RightAnkle)]
+    public void ParseCaptureOutput_StableRoleWireValue_ReturnsExpectedRole(
+        int wireValue,
+        SteamVrDeviceRole expectedRole)
+    {
+        string output = $$"""
+            {"SteamVrActive":true,"SteamVrStartedUtc":null,"Devices":[{"SerialNumber":"LHR-TEST","ModelNumber":"Tracker","DeviceClass":1,"Connected":true,"Role":{{wireValue}}}],"Error":null}
+            """;
+
+        SteamVrSnapshot snapshot = IsolatedOpenVrDeviceSource.ParseCaptureOutput(
+            output,
+            "",
+            exitCode: 0,
+            vrServerRunning: true
+        );
+
+        SteamVrDeviceSnapshot device = Assert.Single(snapshot.Devices);
+        Assert.Equal(expectedRole, device.Role);
+    }
+
     /// <summary>Confirms valid JSON is retained even when native cleanup later gives the child a failure exit code.</summary>
     [Fact]
     public void ParseCaptureOutput_ValidSnapshotWithFailedExit_ReturnsSnapshot()
