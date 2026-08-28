@@ -17,4 +17,8 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="M*.cs;N*.cs;O*.cs;P*.cs;R*.cs;S*.cs;T*.cs;V*.cs;W*.cs;X*.cs" />
+    <Compile Include="WinFormsTestCollection.cs" />
+  </ItemGroup>
 </Project>
