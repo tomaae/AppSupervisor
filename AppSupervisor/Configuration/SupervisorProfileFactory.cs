@@ -1,4 +1,5 @@
 using AppSupervisor.Core;
+using AppSupervisor.Bluetooth;
 using AppSupervisor.Resources;
 using AppSupervisor.Triggers;
 
@@ -24,7 +25,9 @@ public static class SupervisorProfileFactory
             new HomeAssistantIntegrationConfig(),
             new MqttIntegrationConfig(),
             new ObsIntegrationConfig(),
-            new TwitchIntegrationConfig()
+            new TwitchIntegrationConfig(),
+            new BluetoothIntegrationConfig(),
+            NullBluetoothPresenceSource.Instance
         );
 
     /// <summary>
@@ -39,9 +42,34 @@ public static class SupervisorProfileFactory
         HomeAssistantIntegrationConfig homeAssistantIntegration,
         MqttIntegrationConfig mqttIntegration,
         ObsIntegrationConfig obsIntegration,
-        TwitchIntegrationConfig twitchIntegration)
+        TwitchIntegrationConfig twitchIntegration,
+        BluetoothIntegrationConfig bluetoothIntegration,
+        IBluetoothPresenceSource bluetoothPresenceSource)
     {
-        var trigger = new ProcessTrigger(config.MonitorProcess);
+        BluetoothDeviceConfig? bluetoothDevice = config.TriggerType ==
+            ProfileTriggerType.BluetoothDevice
+                ? bluetoothIntegration.Devices.SingleOrDefault(device => string.Equals(
+                    device.DeviceId,
+                    config.MonitorBluetoothDeviceId,
+                    StringComparison.OrdinalIgnoreCase
+                ))
+                : null;
+        ITrigger trigger = config.TriggerType switch
+        {
+            ProfileTriggerType.Process => new ProcessTrigger(config.MonitorProcess),
+            ProfileTriggerType.BluetoothDevice when bluetoothDevice is not null =>
+                new BluetoothPresenceTrigger(
+                    bluetoothDevice.DeviceId,
+                    bluetoothPresenceSource
+                ),
+            ProfileTriggerType.BluetoothDevice => throw new InvalidOperationException(
+                $"Profile '{config.Name}' references an unregistered Bluetooth device."
+            ),
+            _ => throw new InvalidOperationException(
+                $"Profile '{config.Name}' uses an unsupported trigger type."
+            )
+        };
+        string triggerDisplayName = bluetoothDevice?.Name ?? config.MonitorProcess;
 
         int restartTimeoutSeconds =
             config.RestartTimeoutSeconds ?? DefaultRestartTimeoutSeconds;
@@ -180,7 +208,7 @@ public static class SupervisorProfileFactory
 
         return new SupervisorProfile(
             config.Name,
-            config.MonitorProcess,
+            triggerDisplayName,
             trigger,
             startupResources,
             TimeSpan.FromSeconds(closeTimeoutSeconds)

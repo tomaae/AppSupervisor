@@ -89,7 +89,7 @@ public sealed partial class ConfigurationEditorForm
             AutoSize = true,
             MaximumSize = new Size(680, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "Messages and advertisements run once at activation. Chat modes capture their original Twitch values, remain applied while the monitored app is running, and restore those exact values after it closes."
+            Text = "Messages and advertisements run once at activation. Chat modes capture their original Twitch values, remain applied while the profile is active, and restore those exact values when it deactivates."
         });
         scrolling.Controls.Add(layout);
         _twitchEditorPanel.Controls.Add(scrolling);

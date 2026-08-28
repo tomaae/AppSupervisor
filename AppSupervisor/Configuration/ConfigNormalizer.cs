@@ -5,7 +5,7 @@ namespace AppSupervisor.Configuration;
 /// </summary>
 internal static class ConfigNormalizer
 {
-    /// <summary>Trims identifiers, paths, process names, and OSC parameter names in every non-null profile.</summary>
+    /// <summary>Trims identifiers, paths, trigger values, and OSC parameter names in every non-null profile.</summary>
     public static void Normalize(IReadOnlyList<SupervisorProfileConfig?> profiles)
     {
         foreach (SupervisorProfileConfig? profile in profiles)
@@ -16,6 +16,9 @@ internal static class ConfigNormalizer
             profile.ProfileId = NormalizeText(profile.ProfileId);
             profile.Name = NormalizeText(profile.Name);
             profile.MonitorProcess = NormalizeText(profile.MonitorProcess);
+            profile.MonitorBluetoothDeviceId = NormalizeText(
+                profile.MonitorBluetoothDeviceId
+            );
 
             if (profile.Applications is not null)
             {

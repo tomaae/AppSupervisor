@@ -26,7 +26,7 @@ public sealed partial class ConfigurationEditorForm
     private readonly NotificationTargetsControl _streamDeckNotifications = new();
     private readonly CheckBox _streamDeckRestoreSwitch = new()
     {
-        Text = "Toggle switch back when monitored app closes",
+        Text = "Toggle switch back when profile deactivates",
         AutoSize = true
     };
     private readonly Label _streamDeckStatus = new()
@@ -60,7 +60,7 @@ public sealed partial class ConfigurationEditorForm
             AutoSize = true,
             MaximumSize = new Size(680, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "Actions come from Stream Deck's MCP Actions profile. Buttons run once. A two-state switch can optionally be toggled back when the monitored app closes. AppSupervisor invokes the official action through Elgato MCP and does not simulate a key press."
+            Text = "Actions come from Stream Deck's MCP Actions profile. Buttons run once. A two-state switch can optionally be toggled back when the profile deactivates. AppSupervisor invokes the official action through Elgato MCP and does not simulate a key press."
         });
         scrolling.Controls.Add(layout);
         _streamDeckEditorPanel.Controls.Add(scrolling);

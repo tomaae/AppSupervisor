@@ -154,7 +154,7 @@ public sealed class ConfigurationEditorResourceLayoutTests
                     CheckBox leaveRunning = Assert.Single(
                         controls.OfType<CheckBox>(),
                         checkBox => checkBox.Visible &&
-                            checkBox.Text == "Leave helper running after monitored app closes"
+                            checkBox.Text == "Leave helper running after profile deactivates"
                     );
                     CheckBox ensureClosed = Assert.Single(
                         controls.OfType<CheckBox>(),

@@ -21,6 +21,9 @@ public sealed class IntegrationsConfig
     /// <summary>Gets or sets the global Twitch broadcaster authorization identity.</summary>
     public TwitchIntegrationConfig Twitch { get; set; } = new();
 
+    /// <summary>Gets or sets global Bluetooth device registration and presence timing.</summary>
+    public BluetoothIntegrationConfig Bluetooth { get; set; } = new();
+
     /// <summary>Gets or sets SteamVR tracked-device monitoring.</summary>
     public SteamVrIntegrationConfig SteamVr { get; set; } = new();
 }

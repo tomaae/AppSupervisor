@@ -1,6 +1,6 @@
 namespace AppSupervisor;
 
-/// <summary>Configures one monitored-process profile and its ordered managed resources.</summary>
+/// <summary>Configures one process- or Bluetooth-triggered profile and its ordered managed resources.</summary>
 public class SupervisorProfileConfig
 {
     /// <summary>Gets or sets the stable internal identifier used by API routes.</summary>
@@ -12,10 +12,16 @@ public class SupervisorProfileConfig
     /// <summary>Gets or sets whether the profile participates in supervision.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>Gets or sets the kind of condition that activates this profile.</summary>
+    public ProfileTriggerType TriggerType { get; set; } = ProfileTriggerType.Process;
+
     /// <summary>Gets or sets the executable filename whose running state activates the profile.</summary>
     public string MonitorProcess { get; set; } = "";
 
-    /// <summary>Gets or sets how long the monitor process may remain absent before resources are closed.</summary>
+    /// <summary>Gets or sets the globally registered Bluetooth device that activates this profile.</summary>
+    public string MonitorBluetoothDeviceId { get; set; } = "";
+
+    /// <summary>Gets or sets how long the selected trigger may remain absent before resources are closed.</summary>
     public int? CloseTimeoutSeconds { get; set; }
 
     /// <summary>Gets or sets how long an unexpectedly absent resource may remain absent before restart.</summary>

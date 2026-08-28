@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AppSupervisor.Bluetooth;
 using AppSupervisor.Configuration;
 
 namespace AppSupervisor;
@@ -65,6 +66,19 @@ public static class ConfigLoader
             integrations.Mqtt.Host = integrations.Mqtt.Host?.Trim() ?? "";
             integrations.Mqtt.Username ??= "";
             integrations.Mqtt.Password ??= "";
+        }
+
+        if (integrations.Bluetooth?.Devices is not null)
+        {
+            foreach (BluetoothDeviceConfig? device in integrations.Bluetooth.Devices)
+            {
+                if (device is null)
+                    continue;
+
+                device.DeviceId = device.DeviceId?.Trim() ?? "";
+                device.Name = device.Name?.Trim() ?? "";
+                device.Address = BluetoothDeviceScanner.NormalizeAddress(device.Address);
+            }
         }
 
         if (integrations.SteamVr?.Devices is null)

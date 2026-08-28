@@ -20,7 +20,9 @@ internal sealed record SupervisorApiProfileSnapshot(
     string InternalId,
     bool Enabled,
     string Status,
+    string TriggerType,
     string MonitorProcess,
+    string MonitorBluetoothDeviceId,
     IReadOnlyList<SupervisorApiHelperSnapshot> Helpers);
 
 internal sealed record SupervisorApiHelperSnapshot(
@@ -192,7 +194,11 @@ internal static class SupervisorApiSnapshotFactory
                 profileConfig.ProfileId,
                 profileConfig.Enabled,
                 profileStatus,
+                profileConfig.TriggerType == ProfileTriggerType.Process
+                    ? "process"
+                    : "bluetoothDevice",
                 profileConfig.MonitorProcess,
+                profileConfig.MonitorBluetoothDeviceId,
                 helpers
             ));
         }

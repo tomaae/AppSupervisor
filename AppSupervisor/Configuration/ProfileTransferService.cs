@@ -344,8 +344,10 @@ internal sealed class ProfileTransferDocument
 
 internal static class ProfilePortabilityAnalyzer
 {
-    internal const string TriggerWarning =
+    internal const string ProcessTriggerWarning =
         "The activation process name must match an application installed on the importing computer.";
+    internal const string BluetoothTriggerWarning =
+        "The Bluetooth activation device must be registered in the importing computer's global Bluetooth integration; the global registry is intentionally not included.";
     internal const string ApplicationWarning =
         "Helper executable paths, launch URIs, arguments, and Windows package identities may need to be reselected on another computer.";
     internal const string ServiceWarning =
@@ -361,7 +363,12 @@ internal static class ProfilePortabilityAnalyzer
 
     public static IReadOnlyList<string> Analyze(SupervisorProfileConfig profile)
     {
-        var warnings = new List<string> { TriggerWarning };
+        var warnings = new List<string>
+        {
+            profile.TriggerType == ProfileTriggerType.BluetoothDevice
+                ? BluetoothTriggerWarning
+                : ProcessTriggerWarning
+        };
 
         if (profile.Applications.Count > 0)
             warnings.Add(ApplicationWarning);

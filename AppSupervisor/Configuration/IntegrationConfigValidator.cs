@@ -1,4 +1,5 @@
 using AppSupervisor.Notifications;
+using AppSupervisor.Bluetooth;
 
 namespace AppSupervisor.Configuration;
 
@@ -19,6 +20,7 @@ public static class IntegrationConfigValidator
         ValidateMqtt(integrations.Mqtt, profiles, errors);
         ValidateTwitch(integrations.Twitch, errors);
         ValidateObs(integrations.Obs, profiles, errors);
+        ValidateBluetooth(integrations.Bluetooth, profiles, errors);
         SteamVrIntegrationConfig? steamVr = integrations.SteamVr;
 
         if (steamVr is null)
@@ -96,6 +98,95 @@ public static class IntegrationConfigValidator
 
         if (obs.Port is < 1 or > 65_535)
             errors.Add("OBS WebSocket port must be between 1 and 65535.");
+    }
+
+    private static void ValidateBluetooth(
+        BluetoothIntegrationConfig? bluetooth,
+        IReadOnlyList<SupervisorProfileConfig?>? profiles,
+        ICollection<string> errors)
+    {
+        if (bluetooth is null)
+        {
+            errors.Add("The integrations object must contain a bluetooth object.");
+            return;
+        }
+
+        if (bluetooth.ScanIntervalSeconds is < 10 or > 300)
+            errors.Add("Bluetooth scanIntervalSeconds must be between 10 and 300.");
+        if (bluetooth.PresenceTimeoutSeconds is < 10 or > 900)
+            errors.Add("Bluetooth presenceTimeoutSeconds must be between 10 and 900.");
+        else if (bluetooth.PresenceTimeoutSeconds < bluetooth.ScanIntervalSeconds)
+        {
+            errors.Add(
+                "Bluetooth presenceTimeoutSeconds must be at least scanIntervalSeconds."
+            );
+        }
+
+        if (bluetooth.Devices is null)
+        {
+            errors.Add("Bluetooth integration must contain a devices array.");
+            return;
+        }
+
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var addresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int index = 0; index < bluetooth.Devices.Count; index++)
+        {
+            BluetoothDeviceConfig? device = bluetooth.Devices[index];
+            string label = $"Bluetooth device entry {index + 1}";
+
+            if (device is null)
+            {
+                errors.Add($"{label} cannot be null.");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(device.DeviceId))
+                errors.Add($"{label} must have a non-empty deviceId.");
+            else if (!ids.Add(device.DeviceId.Trim()))
+                errors.Add($"Bluetooth deviceId '{device.DeviceId}' is duplicated.");
+
+            if (string.IsNullOrWhiteSpace(device.Name))
+                errors.Add($"{label} must have a non-empty name.");
+
+            if (!Enum.IsDefined(device.Kind))
+                errors.Add($"{label} has an unsupported kind.");
+
+            string address = BluetoothDeviceScanner.NormalizeAddress(device.Address);
+            if (address.Length == 0)
+            {
+                errors.Add(
+                    $"{label} address must contain exactly twelve hexadecimal digits."
+                );
+            }
+            else if (!addresses.Add($"{device.Kind}:{address}"))
+            {
+                errors.Add(
+                    $"Bluetooth {device.Kind} address '{address}' is duplicated."
+                );
+            }
+        }
+
+        if (profiles is null)
+            return;
+
+        foreach (SupervisorProfileConfig? profile in profiles)
+        {
+            if (profile is null || profile.TriggerType != ProfileTriggerType.BluetoothDevice)
+                continue;
+
+            string deviceId = profile.MonitorBluetoothDeviceId?.Trim() ?? "";
+            if (deviceId.Length > 0 && !ids.Contains(deviceId))
+            {
+                string profileName = string.IsNullOrWhiteSpace(profile.Name)
+                    ? "An unnamed profile"
+                    : $"Profile '{profile.Name}'";
+                errors.Add(
+                    $"{profileName} references Bluetooth deviceId '{deviceId}', which is not registered globally."
+                );
+            }
+        }
     }
 
     private static void ValidateHomeAssistant(

@@ -99,7 +99,9 @@ internal sealed class SupervisorApiServer : IDisposable
                 selectedProfile.InternalId,
                 selectedProfile.Enabled,
                 selectedProfile.Status,
+                selectedProfile.TriggerType,
                 selectedProfile.MonitorProcess,
+                selectedProfile.MonitorBluetoothDeviceId,
                 helpers = selectedProfile.Helpers.Select(helper => new
                 {
                     helper.Name,

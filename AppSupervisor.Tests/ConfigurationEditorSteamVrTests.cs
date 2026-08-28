@@ -81,7 +81,9 @@ public sealed class ConfigurationEditorSteamVrTests
                     Application.DoEvents();
 
                     DataGridView devices = Assert.Single(
-                        EnumerateControls(tabs.SelectedTab).OfType<DataGridView>()
+                        EnumerateControls(tabs.SelectedTab).OfType<DataGridView>(),
+                        grid => grid.Columns.Cast<DataGridViewColumn>().Any(column =>
+                            column.HeaderText == "Assignment")
                     );
                     DataGridViewRow row = Assert.Single(
                         devices.Rows.Cast<DataGridViewRow>()

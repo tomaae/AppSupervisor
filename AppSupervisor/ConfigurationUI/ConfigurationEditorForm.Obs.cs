@@ -91,7 +91,7 @@ public sealed partial class ConfigurationEditorForm
             AutoSize = true,
             MaximumSize = new Size(680, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "The configured action runs once when the profile activates. AppSupervisor never restores or toggles the OBS state when the monitored app closes. Test action also leaves the requested state in place."
+            Text = "The configured action runs once when the profile activates. AppSupervisor never restores or toggles the OBS state when the profile deactivates. Test action also leaves the requested state in place."
         });
         scrolling.Controls.Add(layout);
         _obsEditorPanel.Controls.Add(scrolling);

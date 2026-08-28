@@ -33,7 +33,7 @@ public sealed partial class ConfigurationEditorForm
     };
     private readonly CheckBox _audioRestoreOnDeactivate = new()
     {
-        Text = "Restore original volume and mute when monitored app closes",
+        Text = "Restore original volume and mute when profile deactivates",
         AutoSize = true
     };
     private readonly NotificationTargetsControl _audioNotifications = new();

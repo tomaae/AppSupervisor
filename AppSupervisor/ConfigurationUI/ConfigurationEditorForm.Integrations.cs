@@ -104,9 +104,10 @@ public sealed partial class ConfigurationEditorForm
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 7
+            RowCount = 8
         };
         integrationsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         integrationsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -119,6 +120,7 @@ public sealed partial class ConfigurationEditorForm
         integrationsLayout.Controls.Add(BuildMqttIntegrationGroup(), 0, 2);
         integrationsLayout.Controls.Add(BuildObsIntegrationGroup(), 0, 3);
         integrationsLayout.Controls.Add(BuildTwitchIntegrationGroup(), 0, 4);
+        integrationsLayout.Controls.Add(BuildBluetoothIntegrationGroup(), 0, 5);
         var group = new GroupBox
         {
             Text = "Global — SteamVR device monitoring",
@@ -165,8 +167,8 @@ public sealed partial class ConfigurationEditorForm
 
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
-        integrationsLayout.Controls.Add(group, 0, 5);
-        integrationsLayout.Controls.Add(BuildLoggingIntegrationGroup(), 0, 6);
+        integrationsLayout.Controls.Add(group, 0, 6);
+        integrationsLayout.Controls.Add(BuildLoggingIntegrationGroup(), 0, 7);
         scrolling.Controls.Add(integrationsLayout);
         page.Controls.Add(scrolling);
 
@@ -175,6 +177,7 @@ public sealed partial class ConfigurationEditorForm
         LoadMqttIntegration();
         LoadObsIntegration();
         LoadTwitchIntegration();
+        LoadBluetoothIntegration();
         LoadSteamVrIntegration();
         LoadLoggingIntegration();
         _steamVrEnabled.CheckedChanged += SteamVrSettingsChanged;
@@ -183,6 +186,11 @@ public sealed partial class ConfigurationEditorForm
         _steamVrNotifications.TargetsChanged += SteamVrSettingsChanged;
         _steamVrDevices.CellValueChanged += SteamVrDeviceCellValueChanged;
         _steamVrDevices.CurrentCellDirtyStateChanged += SteamVrDeviceCellDirtyStateChanged;
+        _bluetoothScanInterval.ValueChanged += BluetoothSettingsChanged;
+        _bluetoothScanInterval.TextChanged += BluetoothSettingsChanged;
+        _bluetoothPresenceTimeout.ValueChanged += BluetoothSettingsChanged;
+        _bluetoothPresenceTimeout.TextChanged += BluetoothSettingsChanged;
+        _bluetoothDevices.CellValueChanged += BluetoothDeviceCellValueChanged;
         return page;
     }
 

@@ -1,5 +1,6 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.ConfigurationUI;
+using AppSupervisor.Bluetooth;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
 using AppSupervisor.SteamVr;
@@ -50,6 +51,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private AppSupervisorConfig _configuration = new();
     private List<SupervisorProfile> _profiles = [];
     private ApplicationUsageRegistry _applicationUsageRegistry = new();
+    private BluetoothPresenceMonitor? _bluetoothPresenceMonitor;
     private readonly object _runtimeStateLock = new();
     private readonly object _trayStateLock = new();
     private readonly Dictionary<SupervisorProfile, ActiveTrayError> _reportedProfileTickErrors = [];
@@ -688,6 +690,7 @@ public partial class TrayApplicationContext : ApplicationContext
     {
         var newProfiles = new List<SupervisorProfile>();
         var newApplicationUsageRegistry = new ApplicationUsageRegistry();
+        BluetoothPresenceMonitor? newBluetoothPresenceMonitor = null;
         AppSupervisorConfig newConfig;
         int loadGeneration = ++_configurationLoadGeneration;
 
@@ -700,6 +703,10 @@ public partial class TrayApplicationContext : ApplicationContext
                 newApplicationUsageRegistry.Dispose();
                 return;
             }
+
+            newBluetoothPresenceMonitor = new BluetoothPresenceMonitor(
+                newConfig.Integrations.Bluetooth
+            );
 
             await Task.Run(() =>
             {
@@ -718,7 +725,9 @@ public partial class TrayApplicationContext : ApplicationContext
                         newConfig.Integrations.HomeAssistant,
                         newConfig.Integrations.Mqtt,
                         newConfig.Integrations.Obs,
-                        newConfig.Integrations.Twitch
+                        newConfig.Integrations.Twitch,
+                        newConfig.Integrations.Bluetooth,
+                        newBluetoothPresenceMonitor
                     );
                     profile.ResourceRestarted += OnResourceRestarted;
                     profile.ErrorOccurred += OnSupervisionError;
@@ -737,11 +746,19 @@ public partial class TrayApplicationContext : ApplicationContext
         {
             if (_exiting || loadGeneration != _configurationLoadGeneration)
             {
-                DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+                DisposeReplacementRuntime(
+                    newProfiles,
+                    newApplicationUsageRegistry,
+                    newBluetoothPresenceMonitor
+                );
                 return;
             }
 
-            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            DisposeReplacementRuntime(
+                newProfiles,
+                newApplicationUsageRegistry,
+                newBluetoothPresenceMonitor
+            );
             try
             {
                 await ExecuteSupervisionAsync(() => HandleConfigurationLoadFailure(ex));
@@ -754,7 +771,11 @@ public partial class TrayApplicationContext : ApplicationContext
 
         if (_exiting || loadGeneration != _configurationLoadGeneration)
         {
-            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            DisposeReplacementRuntime(
+                newProfiles,
+                newApplicationUsageRegistry,
+                newBluetoothPresenceMonitor
+            );
             return;
         }
 
@@ -768,11 +789,14 @@ public partial class TrayApplicationContext : ApplicationContext
 
                 List<SupervisorProfile> oldProfiles = _profiles;
                 ApplicationUsageRegistry oldApplicationUsageRegistry = _applicationUsageRegistry;
+                BluetoothPresenceMonitor? oldBluetoothPresenceMonitor =
+                    _bluetoothPresenceMonitor;
 
                 _configuration = newConfig;
                 SupervisorLog.SetMinimumLevel(newConfig.Integrations.LogLevel);
                 _profiles = newProfiles;
                 _applicationUsageRegistry = newApplicationUsageRegistry;
+                _bluetoothPresenceMonitor = newBluetoothPresenceMonitor;
                 _hasValidConfiguration = true;
                 _configurationLoadError = false;
                 _configurationLoadErrorTrayStatus = "Configuration error";
@@ -802,6 +826,7 @@ public partial class TrayApplicationContext : ApplicationContext
                 oldApplicationUsageRegistry.CleanupFailed -= OnInactiveApplicationCleanupFailed;
                 oldApplicationUsageRegistry.CleanupRecovered -= OnInactiveApplicationCleanupRecovered;
                 oldApplicationUsageRegistry.Dispose();
+                oldBluetoothPresenceMonitor?.Dispose();
 
                 foreach (SupervisorProfile newProfile in _profiles)
                     newProfile.InitializeResources();
@@ -823,13 +848,21 @@ public partial class TrayApplicationContext : ApplicationContext
         }
         catch (OperationCanceledException) when (_exiting)
         {
-            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            DisposeReplacementRuntime(
+                newProfiles,
+                newApplicationUsageRegistry,
+                newBluetoothPresenceMonitor
+            );
             return;
         }
 
         if (!applied)
         {
-            DisposeReplacementRuntime(newProfiles, newApplicationUsageRegistry);
+            DisposeReplacementRuntime(
+                newProfiles,
+                newApplicationUsageRegistry,
+                newBluetoothPresenceMonitor
+            );
             return;
         }
 
@@ -842,12 +875,14 @@ public partial class TrayApplicationContext : ApplicationContext
     /// <param name="applicationUsageRegistry">The detached cross-profile helper registry.</param>
     private static void DisposeReplacementRuntime(
         IEnumerable<SupervisorProfile> profiles,
-        ApplicationUsageRegistry applicationUsageRegistry)
+        ApplicationUsageRegistry applicationUsageRegistry,
+        BluetoothPresenceMonitor? bluetoothPresenceMonitor)
     {
         foreach (SupervisorProfile profile in profiles)
             profile.Dispose();
 
         applicationUsageRegistry.Dispose();
+        bluetoothPresenceMonitor?.Dispose();
     }
 
     /// <summary>Publishes one immutable API document without performing any system queries.</summary>
@@ -1250,7 +1285,7 @@ public partial class TrayApplicationContext : ApplicationContext
         else
         {
             icon = _appIcon;
-            text = "AppSupervisor - Waiting for monitored applications";
+            text = "AppSupervisor - Waiting for profile triggers";
             streamDeckState = StreamDeckVisualState.Idle;
             streamDeckTitle = "Waiting";
         }
@@ -1447,6 +1482,8 @@ public partial class TrayApplicationContext : ApplicationContext
                 profile.Dispose();
 
             _profiles.Clear();
+            _bluetoothPresenceMonitor?.Dispose();
+            _bluetoothPresenceMonitor = null;
             DisposeSteamVrIntegration();
         });
 

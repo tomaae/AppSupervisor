@@ -69,7 +69,7 @@ public static partial class ConfigValidator
                 errors.Add($"Profile name '{profile.Name}' is duplicated.");
             }
 
-            ValidateMonitorProcess(profile, profileLabel, errors);
+            ValidateTrigger(profile, profileLabel, errors);
             ValidateTimeoutValue(profile.CloseTimeoutSeconds, "closeTimeoutSeconds", profileLabel, errors);
             ValidateTimeoutValue(profile.RestartTimeoutSeconds, "restartTimeoutSeconds", profileLabel, errors);
 
@@ -120,16 +120,34 @@ public static partial class ConfigValidator
     }
 
     /// <summary>
-    /// Validates that a profile contains a usable process name for its activation trigger.
+    /// Validates that a profile contains the settings required by its activation trigger.
     /// </summary>
     /// <param name="profile">The profile being validated.</param>
     /// <param name="profileLabel">The user-readable profile identifier used in errors.</param>
     /// <param name="errors">The collection that receives validation errors.</param>
-    private static void ValidateMonitorProcess(
+    private static void ValidateTrigger(
         SupervisorProfileConfig profile,
         string profileLabel,
         ICollection<string> errors)
     {
+        if (!Enum.IsDefined(profile.TriggerType))
+        {
+            errors.Add($"{profileLabel} has an unsupported triggerType.");
+            return;
+        }
+
+        if (profile.TriggerType == ProfileTriggerType.BluetoothDevice)
+        {
+            if (string.IsNullOrWhiteSpace(profile.MonitorBluetoothDeviceId))
+            {
+                errors.Add(
+                    $"{profileLabel} must select a monitorBluetoothDeviceId for its Bluetooth trigger."
+                );
+            }
+
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(profile.MonitorProcess))
         {
             errors.Add($"{profileLabel} must have a non-empty monitorProcess.");

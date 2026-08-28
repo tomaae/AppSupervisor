@@ -161,7 +161,7 @@ public sealed class ConfigurationEditorAddResourceTests
                     CheckBox restoreSwitch = Assert.Single(
                         EnumerateControls(form).OfType<CheckBox>(),
                         checkBox => checkBox.Text ==
-                            "Toggle switch back when monitored app closes"
+                            "Toggle switch back when profile deactivates"
                     );
                     Assert.True(restoreSwitch.Enabled);
                     restoreSwitch.Checked = true;

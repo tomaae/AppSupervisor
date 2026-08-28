@@ -205,6 +205,12 @@ public sealed partial class ConfigurationEditorForm
             foreach (Icon icon in _resourceApplicationIcons.Values)
                 icon.Dispose();
             _resourceApplicationIcons.Clear();
+            if (!_bluetoothDiscoveryDisposed)
+            {
+                _bluetoothDiscoveryDisposed = true;
+                _bluetoothDiscoveryCancellation.Cancel();
+                _bluetoothDiscoveryCancellation.Dispose();
+            }
         }
 
         if (disposing && !_serviceRefreshDisposed)

@@ -1,4 +1,5 @@
 using AppSupervisor.Configuration;
+using AppSupervisor.Bluetooth;
 using AppSupervisor.Core;
 using AppSupervisor.Notifications;
 using AppSupervisor.HomeAssistant;
@@ -43,6 +44,13 @@ public sealed partial class ConfigurationEditorForm : Form
     private readonly CheckBox _profileEnabled = new() { Text = "Profile enabled", AutoSize = true };
     private readonly TextBox _profileName = new() { Dock = DockStyle.Fill };
     private readonly TextBox _monitorProcess = new() { Dock = DockStyle.Fill };
+    private readonly TableLayoutPanel _monitorProcessPanel = new()
+    {
+        Dock = DockStyle.Fill,
+        AutoSize = true,
+        ColumnCount = 3,
+        Margin = Padding.Empty
+    };
     private readonly NullableSecondsControl _closeTimeout = new();
     private readonly NullableSecondsControl _restartTimeout = new();
 
@@ -66,7 +74,7 @@ public sealed partial class ConfigurationEditorForm : Form
     };
     private readonly CheckBox _applicationLeaveRunning = new()
     {
-        Text = "Leave helper running after monitored app closes",
+        Text = "Leave helper running after profile deactivates",
         AutoSize = true
     };
     private readonly CheckBox _applicationMinimize = new()
@@ -175,7 +183,8 @@ public sealed partial class ConfigurationEditorForm : Form
         Action<InstalledServiceInfo>? automaticServiceWarning = null,
         IHelperTestController? helperTestController = null,
         Func<ConfigurationRuntimeStatusSnapshot>? runtimeStatusReader = null,
-        IProfileTransferInteraction? profileTransferInteraction = null)
+        IProfileTransferInteraction? profileTransferInteraction = null,
+        IBluetoothDeviceScanner? bluetoothDeviceScanner = null)
 
     {
 
@@ -201,6 +210,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _helperTestController = helperTestController;
         _runtimeStatusReader = runtimeStatusReader;
         _profileTransferInteraction = profileTransferInteraction ?? new ProfileTransferInteraction();
+        _bluetoothDeviceScanner = bluetoothDeviceScanner ?? new BluetoothDeviceScanner();
         (_configuration, _loadError) = LoadConfigurationForEditing(_configPath);
         _profiles = _configuration.Profiles;
         _loadedWriteTimeUtc = GetWriteTimeUtc(_configPath);
@@ -309,22 +319,17 @@ public sealed partial class ConfigurationEditorForm : Form
         TableLayoutPanel layout = CreateEditorTable();
         AddEditorRow(layout, "", _profileEnabled);
         AddEditorRow(layout, "Name", _profileName);
+        AddEditorRow(layout, "Activation trigger", BuildProfileTriggerSelector());
 
-        var monitorPanel = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            ColumnCount = 3,
-            Margin = Padding.Empty
-        };
-        monitorPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        monitorPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        monitorPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _monitorProcessPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _monitorProcessPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _monitorProcessPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         _monitorProcess.Margin = Padding.Empty;
-        monitorPanel.Controls.Add(_monitorProcess, 0, 0);
-        monitorPanel.Controls.Add(CreateButton("Browse...", BrowseMonitorProcessClicked), 1, 0);
-        monitorPanel.Controls.Add(CreateButton("Pick running...", PickMonitorProcessClicked), 2, 0);
-        AddEditorRow(layout, "Monitor process", monitorPanel);
+        _monitorProcessPanel.Controls.Add(_monitorProcess, 0, 0);
+        _monitorProcessPanel.Controls.Add(CreateButton("Browse...", BrowseMonitorProcessClicked), 1, 0);
+        _monitorProcessPanel.Controls.Add(CreateButton("Pick running...", PickMonitorProcessClicked), 2, 0);
+        AddEditorRow(layout, "Monitor process", _monitorProcessPanel);
+        AddEditorRow(layout, "Bluetooth device", _monitorBluetoothDevice);
         AddEditorRow(layout, "Close timeout", _closeTimeout);
         AddEditorRow(layout, "Restart timeout", _restartTimeout);
         AddEditorRow(layout, "", new Label
@@ -332,7 +337,7 @@ public sealed partial class ConfigurationEditorForm : Form
             AutoSize = true,
             MaximumSize = new Size(720, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "The profile is active while the monitor process is running. Resources start in order, remain supervised while it is active, and close after the configured close timeout when it stops. Add a Delay as the first resource when startup should wait."
+            Text = "The profile is active while its selected process is running or its registered Bluetooth device is present. Resources start in order, remain supervised while it is active, and close after the configured close timeout when the trigger disappears. Add a Delay as the first resource when startup should wait."
         });
         page.Controls.Add(layout);
         return page;
@@ -486,7 +491,9 @@ public sealed partial class ConfigurationEditorForm : Form
 
         _profileEnabled.CheckedChanged += ProfileFieldChanged;
         _profileName.TextChanged += ProfileFieldChanged;
+        _profileTriggerType.SelectedIndexChanged += ProfileFieldChanged;
         _monitorProcess.TextChanged += ProfileFieldChanged;
+        _monitorBluetoothDevice.SelectedIndexChanged += ProfileFieldChanged;
         _closeTimeout.ValueChanged += ProfileFieldChanged;
         _restartTimeout.ValueChanged += ProfileFieldChanged;
 
@@ -551,7 +558,10 @@ public sealed partial class ConfigurationEditorForm : Form
             _tabs.Enabled = true;
             _profileEnabled.Checked = profile?.Enabled ?? false;
             _profileName.Text = profile?.Name ?? "";
+            _profileTriggerType.SelectedItem = profile?.TriggerType ?? ProfileTriggerType.Process;
             _monitorProcess.Text = profile?.MonitorProcess ?? "";
+            BindProfileBluetoothDeviceSelector(profile?.MonitorBluetoothDeviceId);
+            UpdateProfileTriggerControlAvailability();
             _closeTimeout.Value = profile?.CloseTimeoutSeconds;
             _restartTimeout.Value = profile?.RestartTimeoutSeconds;
             BindResourceList(profile);
@@ -658,9 +668,15 @@ public sealed partial class ConfigurationEditorForm : Form
 
         profile.Enabled = _profileEnabled.Checked;
         profile.Name = _profileName.Text;
+        profile.TriggerType = _profileTriggerType.SelectedItem is ProfileTriggerType triggerType
+            ? triggerType
+            : ProfileTriggerType.Process;
         profile.MonitorProcess = _monitorProcess.Text;
+        profile.MonitorBluetoothDeviceId =
+            (_monitorBluetoothDevice.SelectedItem as BluetoothDeviceEditorRow)?.DeviceId ?? "";
         profile.CloseTimeoutSeconds = _closeTimeout.Value;
         profile.RestartTimeoutSeconds = _restartTimeout.Value;
+        UpdateProfileTriggerControlAvailability();
         _profileSelector.Refresh();
         UpdateStatus();
     }
