@@ -129,6 +129,89 @@ public sealed class ConfigurationEditorBluetoothTests
         Assert.Null(threadException);
     }
 
+    [Fact]
+    public void DiscoverButton_DoesNotRegisterUnnamedBluetoothNoise()
+    {
+        string directory = CreateConfiguration(out string configPath);
+        Exception? threadException = null;
+
+        try
+        {
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    var scanner = new StubScanner(
+                    [
+                        new BluetoothDeviceSnapshot(
+                            "windows-speaker",
+                            "Speaker",
+                            "112233445566",
+                            BluetoothDeviceKind.Classic,
+                            IsPaired: false,
+                            IsConnected: false,
+                            IsPresent: true
+                        ),
+                        new BluetoothDeviceSnapshot(
+                            "anonymous-beacon",
+                            "4C2299AC31BA",
+                            "4C2299AC31BA",
+                            BluetoothDeviceKind.LowEnergy,
+                            IsPaired: false,
+                            IsConnected: false,
+                            IsPresent: true
+                        )
+                    ]);
+                    using var form = CreateForm(configPath, scanner);
+                    form.ShowInTaskbar = false;
+                    form.Opacity = 0;
+                    form.Show();
+                    Application.DoEvents();
+                    TabControl tabs = Assert.Single(EnumerateControls(form).OfType<TabControl>());
+                    tabs.SelectedTab = tabs.TabPages.Cast<TabPage>()
+                        .Single(page => page.Text == "Integrations");
+                    Application.DoEvents();
+                    Button discover = EnumerateControls(form).OfType<Button>()
+                        .Single(button => button.Text == "Discover nearby devices");
+                    DataGridView grid = EnumerateControls(form).OfType<DataGridView>()
+                        .Single(candidate => candidate.Columns.Cast<DataGridViewColumn>()
+                            .Any(column => column.HeaderText == "Registered name"));
+
+                    discover.PerformClick();
+                    DateTime timeoutUtc = DateTime.UtcNow.AddSeconds(3);
+                    while (!discover.Enabled && DateTime.UtcNow < timeoutUtc)
+                    {
+                        Application.DoEvents();
+                        Thread.Sleep(10);
+                    }
+
+                    Assert.Equal(2, grid.Rows.Count);
+                    Assert.DoesNotContain(
+                        grid.Rows.Cast<DataGridViewRow>(),
+                        row => string.Equals(
+                            row.Cells[0].Value?.ToString(),
+                            "4C2299AC31BA",
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                    );
+                }
+                catch (Exception exception)
+                {
+                    threadException = exception;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "Bluetooth discovery editor test timed out.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        Assert.Null(threadException);
+    }
+
     private static ConfigurationEditorForm CreateForm(
         string configPath,
         IBluetoothDeviceScanner scanner) => new(

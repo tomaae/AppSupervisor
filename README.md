@@ -259,6 +259,8 @@ Windows can replace an audio endpoint ID after a driver update, reconnect, or de
 
 Use **Integrations → Global — Bluetooth device presence** to discover nearby or paired Bluetooth Classic and Low Energy devices and register them once for the whole application. A profile can then select **Bluetooth device presence** as its activation trigger and reference any registered device. Several profiles may reuse the same registration.
 
+Discovery uses Windows friendly/display names and actively requests Bluetooth Low Energy scan responses so peripherals can provide their advertised local name. Address-only BLE broadcasts are common background noise; AppSupervisor reports them but does not automatically add them to the global registry. If an intended device remains unnamed, pair it in Windows first and run discovery again. A name edited in AppSupervisor is preserved by later scans.
+
 Registrations store AppSupervisor's own stable device ID plus the remote device's 48-bit Bluetooth address and transport. They do not depend on the USB adapter's Windows identity, so replacing a Bluetooth dongle does not invalidate profile references. Discovery and monitoring never pair, connect to, or control a remote device.
 
 Connected devices and devices that Windows reports as present count as nearby. Bluetooth Classic devices normally need to be connected or discoverable; Low Energy devices can be observed through advertisements. The global scan interval controls how often Windows discovery runs, and the presence timeout keeps a brief missed scan or advertisement from immediately deactivating profiles. The presence timeout must be at least the scan interval.

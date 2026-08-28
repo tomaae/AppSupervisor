@@ -68,6 +68,45 @@ public sealed class BluetoothPresenceTests
         Assert.Equal(expected, BluetoothDeviceScanner.NormalizeAddress(input));
     }
 
+    [Theory]
+    [InlineData("4C2299AC31BA", "4C2299AC31BA")]
+    [InlineData("4C:22:99:AC:31:BA", "4C2299AC31BA")]
+    [InlineData(" 4c-22-99-ac-31-ba ", "4C2299AC31BA")]
+    public void SelectDisplayName_RejectsAddressPlaceholders(string name, string address)
+    {
+        Assert.Equal("", BluetoothDeviceScanner.SelectDisplayName(address, name));
+        Assert.False(BluetoothDeviceScanner.HasUsableName(name, address));
+    }
+
+    [Fact]
+    public void SelectDisplayName_UsesFirstHumanReadableCandidate()
+    {
+        Assert.Equal(
+            "Pixel Buds",
+            BluetoothDeviceScanner.SelectDisplayName(
+                "4C2299AC31BA",
+                "4C:22:99:AC:31:BA",
+                "  Pixel Buds  ",
+                "Fallback"
+            )
+        );
+    }
+
+    [Fact]
+    public void ChoosePreferredName_PreservesEditedNameAndUpgradesAddressFallback()
+    {
+        const string address = "4C2299AC31BA";
+
+        Assert.Equal(
+            "My headset",
+            BluetoothDeviceScanner.ChoosePreferredName("My headset", "Headset", address)
+        );
+        Assert.Equal(
+            "Headset",
+            BluetoothDeviceScanner.ChoosePreferredName(address, "Headset", address)
+        );
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         DateTime timeoutUtc = DateTime.UtcNow.AddSeconds(3);

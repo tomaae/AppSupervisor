@@ -275,8 +275,20 @@ public sealed partial class ConfigurationEditorForm
 
             try
             {
+                int namedDevices = 0;
+                int unnamedDevices = 0;
+
                 foreach (BluetoothDeviceSnapshot device in discovered)
                 {
+                    bool hasUsableName = BluetoothDeviceScanner.HasUsableName(
+                        device.Name,
+                        device.Address
+                    );
+                    if (hasUsableName)
+                        namedDevices++;
+                    else
+                        unnamedDevices++;
+
                     BluetoothDeviceEditorRow? existing = _bluetoothDeviceRows.FirstOrDefault(row =>
                         row.Kind == device.Kind &&
                         string.Equals(row.Address, device.Address, StringComparison.OrdinalIgnoreCase)
@@ -284,16 +296,34 @@ public sealed partial class ConfigurationEditorForm
 
                     if (existing is null)
                     {
-                        _bluetoothDeviceRows.Add(BluetoothDeviceEditorRow.FromSnapshot(device));
+                        // Anonymous BLE beacons are common and cannot be identified reliably.
+                        // Keep them out of the global registry until Windows supplies a name.
+                        if (hasUsableName)
+                            _bluetoothDeviceRows.Add(BluetoothDeviceEditorRow.FromSnapshot(device));
                         continue;
                     }
 
-                    if (string.IsNullOrWhiteSpace(existing.Name) ||
-                        string.Equals(existing.Name, existing.Address, StringComparison.OrdinalIgnoreCase))
-                    {
-                        existing.Name = device.Name;
-                    }
+                    existing.Name = BluetoothDeviceScanner.ChoosePreferredName(
+                        existing.Name,
+                        device.Name,
+                        existing.Address
+                    );
                     existing.Status = BluetoothDeviceEditorRow.GetStatus(device);
+                }
+
+                if (namedDevices == 0 && unnamedDevices > 0)
+                {
+                    MessageBox.Show(
+                        this,
+                        $"Windows detected {unnamedDevices} Bluetooth " +
+                            $"device{(unnamedDevices == 1 ? "" : "s")}, but none advertised " +
+                            "an identifying name, so AppSupervisor did not register them. " +
+                            "Keep the intended devices in discovery mode and try again; if they " +
+                            "remain unnamed, pair them in Windows first.",
+                        "Only unnamed Bluetooth devices found",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information
+                    );
                 }
             }
             finally

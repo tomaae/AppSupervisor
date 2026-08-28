@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Windows.Devices.Bluetooth;
+using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Enumeration;
 
 namespace AppSupervisor.Bluetooth;
@@ -11,7 +12,9 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
     [
         "System.Devices.Aep.DeviceAddress",
         "System.Devices.Aep.IsConnected",
-        "System.Devices.Aep.IsPresent"
+        "System.Devices.Aep.IsPresent",
+        "System.Devices.FriendlyName",
+        "System.ItemNameDisplay"
     ];
 
     private readonly TimeSpan _discoveryDuration;
@@ -52,7 +55,8 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 paired: false,
                 discovered,
                 cancellationToken
-            )
+            ),
+            ScanAdvertisementsAsync(discovered, cancellationToken)
         ).ConfigureAwait(false);
 
         if (discovered.IsEmpty && statuses.All(status => status == BluetoothScanStatus.Aborted))
@@ -68,6 +72,58 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
             .ThenBy(device => device.Address, StringComparer.OrdinalIgnoreCase)
             .ThenBy(device => device.Kind)
             .ToArray();
+    }
+
+    private async Task<BluetoothScanStatus> ScanAdvertisementsAsync(
+        ConcurrentDictionary<string, BluetoothDeviceSnapshot> discovered,
+        CancellationToken cancellationToken)
+    {
+        var watcher = new BluetoothLEAdvertisementWatcher
+        {
+            // Active scanning requests scan responses, which are where many peripherals
+            // publish their shortened or complete local name.
+            ScanningMode = BluetoothLEScanningMode.Active
+        };
+        var completed = new TaskCompletionSource<BluetoothScanStatus>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        watcher.Received += (_, advertisement) =>
+            AddAdvertisementSnapshot(advertisement, discovered);
+        watcher.Stopped += (_, _) => completed.TrySetResult(
+            watcher.Status == BluetoothLEAdvertisementWatcherStatus.Aborted
+                ? BluetoothScanStatus.Aborted
+                : BluetoothScanStatus.Completed
+        );
+
+        BluetoothScanStatus status;
+
+        try
+        {
+            watcher.Start();
+            Task duration = Task.Delay(_discoveryDuration, cancellationToken);
+            Task winner = await Task.WhenAny(completed.Task, duration).ConfigureAwait(false);
+
+            if (winner == completed.Task)
+            {
+                status = await completed.Task.ConfigureAwait(false);
+            }
+            else
+            {
+                await duration.ConfigureAwait(false);
+                status = BluetoothScanStatus.Completed;
+            }
+        }
+        finally
+        {
+            if (watcher.Status == BluetoothLEAdvertisementWatcherStatus.Started)
+                watcher.Stop();
+        }
+
+        if (!completed.Task.IsCompleted)
+            await completed.Task.ConfigureAwait(false);
+
+        return status;
     }
 
     private async Task<BluetoothScanStatus> ScanPairingStateAsync(
@@ -180,40 +236,40 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 device,
                 "System.Devices.Aep.IsPresent"
             );
+            bool paired = device.Pairing.IsPaired;
+            string name = SelectDisplayName(
+                address,
+                ReadStringProperty(device, "System.Devices.FriendlyName"),
+                device.Name,
+                ReadStringProperty(device, "System.ItemNameDisplay")
+            );
 
-            if (address.Length == 0)
+            if (address.Length == 0 || (paired && name.Length == 0))
             {
-                (address, isConnected) = await ResolveAddressAsync(
-                    kind,
-                    device.Id,
-                    isConnected
-                ).ConfigureAwait(false);
+                (string resolvedAddress, bool resolvedConnected, string resolvedName) =
+                    await ResolveDeviceAsync(
+                        kind,
+                        device.Id,
+                        isConnected
+                    ).ConfigureAwait(false);
+                address = address.Length == 0 ? resolvedAddress : address;
+                isConnected = resolvedConnected;
+                name = SelectDisplayName(address, name, resolvedName);
             }
 
             if (address.Length == 0)
                 return;
 
-            bool paired = device.Pairing.IsPaired;
             var snapshot = new BluetoothDeviceSnapshot(
                 device.Id,
-                string.IsNullOrWhiteSpace(device.Name) ? address : device.Name.Trim(),
+                name,
                 address,
                 kind,
                 paired,
                 isConnected,
                 isPresent || isConnected
             );
-            discovered.AddOrUpdate(
-                $"{kind}:{address}",
-                snapshot,
-                (_, existing) => existing with
-                {
-                    Name = snapshot.Name,
-                    IsPaired = existing.IsPaired || snapshot.IsPaired,
-                    IsConnected = existing.IsConnected || snapshot.IsConnected,
-                    IsPresent = existing.IsPresent || snapshot.IsPresent
-                }
-            );
+            MergeSnapshot(discovered, snapshot);
         }
         catch (Exception exception)
         {
@@ -223,7 +279,58 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
         }
     }
 
-    private static async Task<(string Address, bool Connected)> ResolveAddressAsync(
+    private static void AddAdvertisementSnapshot(
+        BluetoothLEAdvertisementReceivedEventArgs advertisement,
+        ConcurrentDictionary<string, BluetoothDeviceSnapshot> discovered)
+    {
+        try
+        {
+            // -127 is Windows' synthetic out-of-range notification, not a live sighting.
+            if (advertisement.RawSignalStrengthInDBm <= -127 || advertisement.BluetoothAddress == 0)
+                return;
+
+            string address = FormatAddress(advertisement.BluetoothAddress);
+            var snapshot = new BluetoothDeviceSnapshot(
+                $"ble-advertisement:{address}",
+                SelectDisplayName(address, advertisement.Advertisement.LocalName),
+                address,
+                BluetoothDeviceKind.LowEnergy,
+                IsPaired: false,
+                IsConnected: false,
+                IsPresent: true
+            );
+            MergeSnapshot(discovered, snapshot);
+        }
+        catch (Exception exception)
+        {
+            SupervisorLog.WriteTrace(
+                $"Bluetooth discovery skipped an LE advertisement: {exception.Message}"
+            );
+        }
+    }
+
+    private static void MergeSnapshot(
+        ConcurrentDictionary<string, BluetoothDeviceSnapshot> discovered,
+        BluetoothDeviceSnapshot snapshot)
+    {
+        discovered.AddOrUpdate(
+            $"{snapshot.Kind}:{snapshot.Address}",
+            snapshot,
+            (_, existing) => existing with
+            {
+                WindowsDeviceId = existing.WindowsDeviceId.StartsWith(
+                    "ble-advertisement:",
+                    StringComparison.Ordinal
+                ) ? snapshot.WindowsDeviceId : existing.WindowsDeviceId,
+                Name = ChoosePreferredName(existing.Name, snapshot.Name, snapshot.Address),
+                IsPaired = existing.IsPaired || snapshot.IsPaired,
+                IsConnected = existing.IsConnected || snapshot.IsConnected,
+                IsPresent = existing.IsPresent || snapshot.IsPresent
+            }
+        );
+    }
+
+    private static async Task<(string Address, bool Connected, string Name)> ResolveDeviceAsync(
         BluetoothDeviceKind kind,
         string deviceId,
         bool connected)
@@ -232,16 +339,53 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
         {
             using BluetoothDevice? device = await BluetoothDevice.FromIdAsync(deviceId);
             return device is null
-                ? ("", connected)
+                ? ("", connected, "")
                 : (FormatAddress(device.BluetoothAddress),
-                    connected || device.ConnectionStatus == BluetoothConnectionStatus.Connected);
+                    connected || device.ConnectionStatus == BluetoothConnectionStatus.Connected,
+                    device.Name);
         }
 
         using BluetoothLEDevice? lowEnergyDevice = await BluetoothLEDevice.FromIdAsync(deviceId);
         return lowEnergyDevice is null
-            ? ("", connected)
+            ? ("", connected, "")
             : (FormatAddress(lowEnergyDevice.BluetoothAddress),
-                connected || lowEnergyDevice.ConnectionStatus == BluetoothConnectionStatus.Connected);
+                connected || lowEnergyDevice.ConnectionStatus == BluetoothConnectionStatus.Connected,
+                lowEnergyDevice.Name);
+    }
+
+    internal static bool HasUsableName(string? name, string address) =>
+        SelectDisplayName(address, name).Length > 0;
+
+    internal static string ChoosePreferredName(
+        string? existingName,
+        string? candidateName,
+        string address)
+    {
+        string existing = SelectDisplayName(address, existingName);
+        return existing.Length > 0 ? existing : SelectDisplayName(address, candidateName);
+    }
+
+    internal static string SelectDisplayName(string address, params string?[] candidates)
+    {
+        string normalizedAddress = NormalizeAddress(address);
+
+        foreach (string? candidate in candidates)
+        {
+            string trimmed = candidate?.Trim() ?? "";
+            if (trimmed.Length == 0)
+                continue;
+
+            string normalizedCandidate = NormalizeAddress(trimmed);
+            if (normalizedAddress.Length > 0 &&
+                string.Equals(normalizedCandidate, normalizedAddress, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return trimmed;
+        }
+
+        return "";
     }
 
     internal static string NormalizeAddress(string? address)
