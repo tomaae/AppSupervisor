@@ -8,9 +8,11 @@ internal sealed class PickerLoadingOverlay : Panel
 
     /// <summary>Attaches a centered loading message above the list hosted by one fill panel.</summary>
     /// <param name="host">The panel containing the picker result list.</param>
-    public PickerLoadingOverlay(Control host)
+    /// <param name="message">The activity message shown above the progress bar.</param>
+    public PickerLoadingOverlay(Control host, string message = "Loading...")
     {
         ArgumentNullException.ThrowIfNull(host);
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
         _host = host;
         _boldFont = new Font(host.Font, host.Font.Style | FontStyle.Bold);
         AutoSize = true;
@@ -35,7 +37,7 @@ internal sealed class PickerLoadingOverlay : Panel
             Font = _boldFont,
             ForeColor = SystemColors.ControlText,
             Margin = new Padding(0, 0, 0, 8),
-            Text = "Loading...",
+            Text = message,
             UseMnemonic = false
         }, 0, 0);
         layout.Controls.Add(new ProgressBar

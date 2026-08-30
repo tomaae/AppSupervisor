@@ -130,6 +130,88 @@ public sealed class ConfigurationEditorBluetoothTests
     }
 
     [Fact]
+    public void DiscoverButton_ShowsBluetoothLoadingOverlayUntilDiscoveryCompletes()
+    {
+        string directory = CreateConfiguration(out string configPath);
+        Exception? threadException = null;
+
+        try
+        {
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    var scanner = new BlockingScanner();
+                    using var form = CreateForm(configPath, scanner);
+                    form.ShowInTaskbar = false;
+                    form.Opacity = 0;
+                    form.Show();
+                    Application.DoEvents();
+                    TabControl tabs = Assert.Single(EnumerateControls(form).OfType<TabControl>());
+                    tabs.SelectedTab = tabs.TabPages.Cast<TabPage>()
+                        .Single(page => page.Text == "Integrations");
+                    Application.DoEvents();
+                    Button discover = EnumerateControls(form).OfType<Button>()
+                        .Single(button => button.Text == "Discover nearby devices");
+                    PickerLoadingOverlay overlay = Assert.Single(
+                        EnumerateControls(form).OfType<PickerLoadingOverlay>()
+                    );
+
+                    Assert.False(overlay.Visible);
+                    discover.PerformClick();
+                    Application.DoEvents();
+
+                    Assert.True(overlay.Visible);
+                    Assert.False(discover.Enabled);
+                    Assert.Equal(
+                        "Looking for Bluetooth devices...",
+                        Assert.Single(EnumerateControls(overlay).OfType<Label>()).Text
+                    );
+                    Assert.Equal(
+                        ProgressBarStyle.Marquee,
+                        Assert.Single(EnumerateControls(overlay).OfType<ProgressBar>()).Style
+                    );
+
+                    scanner.Complete(
+                    [
+                        new BluetoothDeviceSnapshot(
+                            "windows-speaker",
+                            "Speaker",
+                            "112233445566",
+                            BluetoothDeviceKind.Classic,
+                            IsPaired: false,
+                            IsConnected: false,
+                            IsPresent: true
+                        )
+                    ]);
+                    DateTime timeoutUtc = DateTime.UtcNow.AddSeconds(3);
+                    while ((!discover.Enabled || overlay.Visible) && DateTime.UtcNow < timeoutUtc)
+                    {
+                        Application.DoEvents();
+                        Thread.Sleep(10);
+                    }
+
+                    Assert.True(discover.Enabled);
+                    Assert.False(overlay.Visible);
+                }
+                catch (Exception exception)
+                {
+                    threadException = exception;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "Bluetooth loading-overlay test timed out.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        Assert.Null(threadException);
+    }
+
+    [Fact]
     public void DiscoverButton_RegistersUnnamedDeviceWithExplicitPlaceholder()
     {
         string directory = CreateConfiguration(out string configPath);
@@ -283,5 +365,17 @@ public sealed class ConfigurationEditorBluetoothTests
             Interlocked.Increment(ref _callCount);
             return Task.FromResult(result);
         }
+    }
+
+    private sealed class BlockingScanner : IBluetoothDeviceScanner
+    {
+        private readonly TaskCompletionSource<IReadOnlyList<BluetoothDeviceSnapshot>> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IReadOnlyList<BluetoothDeviceSnapshot>> DiscoverAsync(
+            CancellationToken cancellationToken) => _completion.Task.WaitAsync(cancellationToken);
+
+        public void Complete(IReadOnlyList<BluetoothDeviceSnapshot> result) =>
+            _completion.TrySetResult(result);
     }
 }

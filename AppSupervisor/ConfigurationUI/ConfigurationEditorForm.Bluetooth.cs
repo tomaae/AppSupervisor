@@ -46,6 +46,7 @@ public sealed partial class ConfigurationEditorForm
         RowHeadersVisible = false
     };
     private Button _discoverBluetoothDevicesButton = null!;
+    private PickerLoadingOverlay _bluetoothDiscoveryOverlay = null!;
 
     private Control BuildProfileTriggerSelector()
     {
@@ -155,6 +156,11 @@ public sealed partial class ConfigurationEditorForm
         buttons.Controls.Add(CreateButton("Remove selected", RemoveBluetoothDevicesClicked));
         devicePanel.Controls.Add(_bluetoothDevices);
         devicePanel.Controls.Add(buttons);
+        _bluetoothDiscoveryOverlay = new PickerLoadingOverlay(
+            devicePanel,
+            "Looking for Bluetooth devices..."
+        );
+        _bluetoothDiscoveryOverlay.HideLoading();
         group.Controls.Add(devicePanel);
         group.Controls.Add(settings);
         return group;
@@ -270,6 +276,7 @@ public sealed partial class ConfigurationEditorForm
     private async void DiscoverBluetoothDevicesClicked(object? sender, EventArgs e)
     {
         _discoverBluetoothDevicesButton.Enabled = false;
+        _bluetoothDiscoveryOverlay.ShowLoading();
 
         try
         {
@@ -335,6 +342,8 @@ public sealed partial class ConfigurationEditorForm
         }
         finally
         {
+            if (!_bluetoothDiscoveryOverlay.IsDisposed)
+                _bluetoothDiscoveryOverlay.HideLoading();
             if (!_discoverBluetoothDevicesButton.IsDisposed)
                 _discoverBluetoothDevicesButton.Enabled = true;
         }
