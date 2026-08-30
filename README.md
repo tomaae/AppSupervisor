@@ -267,6 +267,8 @@ Registrations store AppSupervisor's own stable device ID plus the remote device'
 
 Connected devices and devices that Windows reports as present count as nearby. Bluetooth Classic devices normally need to be connected or discoverable; Low Energy devices can be observed through advertisements. The global scan interval controls how often Windows discovery runs, and the presence timeout is applied independently to each registration. A multi-device trigger becomes absent only after every selected device has exceeded that timeout; the profile's close timeout begins afterward. The presence timeout must be at least the scan interval.
 
+Continuous Bluetooth scanning runs only when at least one enabled Bluetooth-triggered profile exists. It tracks only registrations referenced by enabled profiles; keeping discovered devices in the global registry or configuring Bluetooth only in disabled profiles does not start the presence scanner.
+
 Bluetooth presence requires a working Windows Bluetooth adapter and driver. If Windows aborts every Classic and Low Energy watcher, AppSupervisor reports the discovery failure and leaves existing cached presence to expire normally.
 
 ### SteamVR device monitoring

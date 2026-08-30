@@ -100,6 +100,96 @@ public sealed class BluetoothPresenceTests
         Assert.True(scanner.CallCount >= 2);
     }
 
+    [Fact]
+    public async Task Monitor_NoEnabledProfileDeviceIds_DoesNotStartScanner()
+    {
+        var scanner = new SequencedScanner([]);
+        var configuration = new BluetoothIntegrationConfig
+        {
+            Devices =
+            [
+                CreateConfiguredDevice("registered-id", "Registered", "AABBCCDDEEFF")
+            ]
+        };
+        using var monitor = new BluetoothPresenceMonitor(
+            configuration,
+            scanner,
+            scanInterval: TimeSpan.FromMilliseconds(10),
+            monitoredDeviceIds: []
+        );
+
+        await Task.Delay(80);
+
+        Assert.Equal(0, scanner.CallCount);
+        Assert.False(monitor.IsPresent("registered-id"));
+    }
+
+    [Fact]
+    public async Task Monitor_TracksOnlyDeviceIdsUsedByEnabledProfiles()
+    {
+        var scanner = new SequencedScanner(
+        [
+            CreatePresentSnapshot("selected-windows-id", "Selected", "AABBCCDDEE01"),
+            CreatePresentSnapshot("unused-windows-id", "Unused", "AABBCCDDEE02")
+        ]);
+        var configuration = new BluetoothIntegrationConfig
+        {
+            Devices =
+            [
+                CreateConfiguredDevice("selected-id", "Selected", "AABBCCDDEE01"),
+                CreateConfiguredDevice("unused-id", "Unused", "AABBCCDDEE02")
+            ]
+        };
+        using var monitor = new BluetoothPresenceMonitor(
+            configuration,
+            scanner,
+            scanInterval: TimeSpan.FromMilliseconds(15),
+            presenceTimeout: TimeSpan.FromMilliseconds(100),
+            monitoredDeviceIds: ["selected-id"]
+        );
+
+        await WaitUntilAsync(() => monitor.IsPresent("selected-id"));
+
+        Assert.False(monitor.IsPresent("unused-id"));
+    }
+
+    [Fact]
+    public void SelectMonitoredDeviceIds_UsesOnlyEnabledBluetoothProfiles()
+    {
+        SupervisorProfileConfig[] profiles =
+        [
+            new()
+            {
+                Enabled = true,
+                TriggerType = ProfileTriggerType.BluetoothDevice,
+                MonitorBluetoothDeviceIds = ["first-id", "second-id"]
+            },
+            new()
+            {
+                Enabled = false,
+                TriggerType = ProfileTriggerType.BluetoothDevice,
+                MonitorBluetoothDeviceIds = ["disabled-id"]
+            },
+            new()
+            {
+                Enabled = true,
+                TriggerType = ProfileTriggerType.Process,
+                MonitorBluetoothDeviceIds = ["process-id"]
+            },
+            new()
+            {
+                Enabled = true,
+                TriggerType = ProfileTriggerType.BluetoothDevice,
+                MonitorBluetoothDeviceIds = ["SECOND-ID"]
+            }
+        ];
+
+        Assert.Equal(
+            ["first-id", "second-id"],
+            BluetoothPresenceMonitor.SelectMonitoredDeviceIds(profiles)
+        );
+    }
+
     [Theory]
     [InlineData("AA:BB:CC:DD:EE:FF", "AABBCCDDEEFF")]
     [InlineData("aa-bb-cc-dd-ee-ff", "AABBCCDDEEFF")]

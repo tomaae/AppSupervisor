@@ -19,12 +19,18 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
         BluetoothIntegrationConfig configuration,
         IBluetoothDeviceScanner? scanner = null,
         TimeSpan? scanInterval = null,
-        TimeSpan? presenceTimeout = null)
+        TimeSpan? presenceTimeout = null,
+        IReadOnlyCollection<string>? monitoredDeviceIds = null)
     {
-        _devices = configuration.Devices.ToDictionary(
-            device => device.DeviceId,
+        HashSet<string>? monitoredIds = monitoredDeviceIds?.ToHashSet(
             StringComparer.OrdinalIgnoreCase
         );
+        _devices = configuration.Devices
+            .Where(device => monitoredIds is null || monitoredIds.Contains(device.DeviceId))
+            .ToDictionary(
+                device => device.DeviceId,
+                StringComparer.OrdinalIgnoreCase
+            );
         // Continuous presence matching needs addresses and sightings, not the slower
         // optional name enrichment used by the configuration editor.
         _scanner = scanner ?? new BluetoothDeviceScanner(resolveNames: false);
@@ -35,6 +41,15 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
             ? Task.CompletedTask
             : Task.Run(() => MonitorAsync(_cancellation.Token));
     }
+
+    /// <summary>Returns distinct device IDs referenced by enabled Bluetooth-triggered profiles.</summary>
+    internal static string[] SelectMonitoredDeviceIds(
+        IEnumerable<SupervisorProfileConfig> profiles) => profiles
+            .Where(profile => profile.Enabled &&
+                profile.TriggerType == ProfileTriggerType.BluetoothDevice)
+            .SelectMany(profile => profile.MonitorBluetoothDeviceIds ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     /// <inheritdoc />
     public bool IsPresent(string deviceId)

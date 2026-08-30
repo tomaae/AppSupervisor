@@ -704,8 +704,11 @@ public partial class TrayApplicationContext : ApplicationContext
                 return;
             }
 
+            string[] monitoredBluetoothDeviceIds =
+                BluetoothPresenceMonitor.SelectMonitoredDeviceIds(newConfig.Profiles);
             newBluetoothPresenceMonitor = new BluetoothPresenceMonitor(
-                newConfig.Integrations.Bluetooth
+                newConfig.Integrations.Bluetooth,
+                monitoredDeviceIds: monitoredBluetoothDeviceIds
             );
 
             await Task.Run(() =>
