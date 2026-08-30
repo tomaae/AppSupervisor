@@ -350,7 +350,10 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 IsPaired = existing.IsPaired || snapshot.IsPaired,
                 IsConnected = existing.IsConnected || snapshot.IsConnected,
                 IsPresent = existing.IsPresent || snapshot.IsPresent,
-                SignalStrengthDbm = snapshot.SignalStrengthDbm ?? existing.SignalStrengthDbm,
+                SignalStrengthDbm = SelectStrongestSignal(
+                    existing.SignalStrengthDbm,
+                    snapshot.SignalStrengthDbm
+                ),
                 ManufacturerCompanyIds = MergeManufacturerCompanyIds(
                     existing.ManufacturerCompanyIds,
                     snapshot.ManufacturerCompanyIds
@@ -373,6 +376,13 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
             .Distinct()
             .OrderBy(companyId => companyId)
             .ToArray();
+
+    internal static short? SelectStrongestSignal(short? first, short? second) =>
+        first is null
+            ? second
+            : second is null
+                ? first
+                : Math.Max(first.Value, second.Value);
 
     private static async Task<(bool Connected, string Name)>
         ResolveLowEnergyDeviceByAddressAsync(

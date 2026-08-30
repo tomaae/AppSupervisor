@@ -231,6 +231,14 @@ public sealed partial class ConfigurationEditorForm
             ReadOnly = true,
             Width = 75
         });
+        _bluetoothDevices.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            DataPropertyName = nameof(BluetoothDeviceEditorRow.Proximity),
+            HeaderText = "Proximity estimate",
+            ReadOnly = true,
+            Width = 115,
+            ToolTipText = "Broad estimate from the strongest signal in this scan; walls, interference, device power, and antenna orientation affect it."
+        });
         _bluetoothDevices.DataSource = _bluetoothDeviceRows;
     }
 
@@ -405,6 +413,7 @@ public sealed partial class ConfigurationEditorForm
         public List<ushort> ManufacturerCompanyIds { get; set; } = [];
         public string Status { get; set; } = "Not checked";
         public string Signal { get; set; } = "—";
+        public string Proximity { get; set; } = "Unknown";
         public string KindText => Kind == BluetoothDeviceKind.Classic ? "Classic" : "Low Energy";
         public string CompanyHint => BluetoothCompanyIdentifiers.Format(ManufacturerCompanyIds);
         public string FormattedAddress => string.Join(":", Enumerable.Range(0, 6)
@@ -430,7 +439,8 @@ public sealed partial class ConfigurationEditorForm
             Kind = device.Kind,
             ManufacturerCompanyIds = device.ManufacturerCompanyIds?.ToList() ?? [],
             Status = GetStatus(device),
-            Signal = GetSignal(device)
+            Signal = GetSignal(device),
+            Proximity = BluetoothProximityEstimator.Format(device.SignalStrengthDbm)
         };
 
         public void UpdateFromSnapshot(BluetoothDeviceSnapshot device)
@@ -448,6 +458,7 @@ public sealed partial class ConfigurationEditorForm
             ).ToList();
             Status = GetStatus(device);
             Signal = GetSignal(device);
+            Proximity = BluetoothProximityEstimator.Format(device.SignalStrengthDbm);
         }
 
         private static string CreateUnidentifiedName(BluetoothDeviceKind kind, string address)

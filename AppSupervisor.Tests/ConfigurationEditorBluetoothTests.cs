@@ -242,6 +242,7 @@ public sealed class ConfigurationEditorBluetoothTests
                             IsPaired: false,
                             IsConnected: false,
                             IsPresent: true,
+                            SignalStrengthDbm: -60,
                             ManufacturerCompanyIds: [76]
                         )
                     ]);
@@ -274,6 +275,17 @@ public sealed class ConfigurationEditorBluetoothTests
                         row => string.Equals(
                             row.Cells[0].Value?.ToString(),
                             "Unidentified LE device (31BA)",
+                            StringComparison.Ordinal
+                        )
+                    );
+                    int proximityColumnIndex = grid.Columns.Cast<DataGridViewColumn>()
+                        .Single(column => column.HeaderText == "Proximity estimate")
+                        .Index;
+                    Assert.Contains(
+                        grid.Rows.Cast<DataGridViewRow>(),
+                        row => string.Equals(
+                            row.Cells[proximityColumnIndex].Value?.ToString(),
+                            "Near",
                             StringComparison.Ordinal
                         )
                     );
