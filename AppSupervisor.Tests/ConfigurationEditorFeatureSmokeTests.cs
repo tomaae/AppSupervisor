@@ -62,6 +62,11 @@ public sealed class ConfigurationEditorFeatureSmokeTests
                     Assert.Contains("Test macro", buttonTexts);
                     Assert.Contains("Test helper", buttonTexts);
                     Assert.Contains("Startup macros", visibleTexts);
+                    Assert.NotEmpty(controls.OfType<DataGridView>());
+                    Assert.All(
+                        controls.OfType<DataGridView>(),
+                        grid => Assert.False(grid.AllowUserToResizeRows)
+                    );
                     Assert.DoesNotContain(
                         visibleTexts,
                         text => retiredTerms.Any(term =>

@@ -40,6 +40,7 @@ public sealed partial class ConfigurationEditorForm
         AutoGenerateColumns = false,
         AllowUserToAddRows = false,
         AllowUserToDeleteRows = false,
+        AllowUserToResizeRows = false,
         MultiSelect = true,
         SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         RowHeadersVisible = false
