@@ -1,5 +1,6 @@
 using AppSupervisor.Bluetooth;
 using AppSupervisor.Triggers;
+using System.Threading.Channels;
 
 namespace AppSupervisor.Tests;
 
@@ -33,7 +34,9 @@ public sealed class BluetoothPresenceTests
             "Second",
             "AABBCCDDEE02"
         );
-        var scanner = new HandoffScanner(first, second);
+        var clock = new ManualTimeProvider();
+        var scanner = new ControlledScanner();
+        scanner.AddResult(first);
         var configuration = new BluetoothIntegrationConfig
         {
             Devices =
@@ -45,23 +48,33 @@ public sealed class BluetoothPresenceTests
         using var monitor = new BluetoothPresenceMonitor(
             configuration,
             scanner,
-            scanInterval: TimeSpan.FromMilliseconds(15),
-            presenceTimeout: TimeSpan.FromMilliseconds(100)
+            scanInterval: TimeSpan.Zero,
+            presenceTimeout: TimeSpan.FromSeconds(100),
+            timeProvider: clock
         );
         var trigger = new BluetoothPresenceTrigger(["first-id", "second-id"], monitor);
 
         await WaitUntilAsync(() => monitor.IsPresent("first-id"));
-        await WaitUntilAsync(() => !monitor.IsPresent("first-id"));
+        clock.Advance(TimeSpan.FromSeconds(60));
+        scanner.AddResult(second);
+        await WaitUntilAsync(() => monitor.IsPresent("second-id"));
 
+        // Advance independently of runner scheduling: A expires while B is still fresh.
+        clock.Advance(TimeSpan.FromSeconds(50));
+
+        Assert.False(monitor.IsPresent("first-id"));
         Assert.True(monitor.IsPresent("second-id"));
         Assert.True(trigger.IsActive());
 
-        await WaitUntilAsync(() => !trigger.IsActive());
+        clock.Advance(TimeSpan.FromSeconds(51));
+
+        Assert.False(trigger.IsActive());
     }
 
     [Fact]
     public async Task Monitor_ObservedDeviceBecomesPresentThenExpires()
     {
+        var clock = new ManualTimeProvider();
         var scanner = new SequencedScanner(
         [
             new BluetoothDeviceSnapshot(
@@ -91,13 +104,18 @@ public sealed class BluetoothPresenceTests
             configuration,
             scanner,
             scanInterval: TimeSpan.FromMilliseconds(15),
-            presenceTimeout: TimeSpan.FromMilliseconds(80)
+            presenceTimeout: TimeSpan.FromMilliseconds(80),
+            timeProvider: clock
         );
 
         await WaitUntilAsync(() => monitor.IsPresent("phone-id"));
-        await WaitUntilAsync(() => !monitor.IsPresent("phone-id"));
+        clock.Advance(TimeSpan.FromMilliseconds(80));
 
-        Assert.True(scanner.CallCount >= 2);
+        Assert.True(monitor.IsPresent("phone-id"));
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+
+        Assert.False(monitor.IsPresent("phone-id"));
     }
 
     [Fact]
@@ -145,7 +163,8 @@ public sealed class BluetoothPresenceTests
             scanner,
             scanInterval: TimeSpan.FromMilliseconds(15),
             presenceTimeout: TimeSpan.FromMilliseconds(100),
-            monitoredDeviceIds: ["selected-id"]
+            monitoredDeviceIds: ["selected-id"],
+            timeProvider: new ManualTimeProvider()
         );
 
         await WaitUntilAsync(() => monitor.IsPresent("selected-id"));
@@ -293,25 +312,27 @@ public sealed class BluetoothPresenceTests
         }
     }
 
-    private sealed class HandoffScanner(
-        BluetoothDeviceSnapshot first,
-        BluetoothDeviceSnapshot second) : IBluetoothDeviceScanner
+    private sealed class ManualTimeProvider : TimeProvider
     {
-        private int _callCount;
+        private long _utcTicks = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).Ticks;
 
-        public Task<IReadOnlyList<BluetoothDeviceSnapshot>> DiscoverAsync(
-            CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            int call = Interlocked.Increment(ref _callCount);
-            IReadOnlyList<BluetoothDeviceSnapshot> result = call switch
-            {
-                1 => [first],
-                <= 10 => [second],
-                _ => []
-            };
-            return Task.FromResult(result);
-        }
+        public override DateTimeOffset GetUtcNow() =>
+            new(Interlocked.Read(ref _utcTicks), TimeSpan.Zero);
+
+        internal void Advance(TimeSpan duration) => Interlocked.Add(ref _utcTicks, duration.Ticks);
+    }
+
+    private sealed class ControlledScanner : IBluetoothDeviceScanner
+    {
+        private readonly Channel<IReadOnlyList<BluetoothDeviceSnapshot>> _results =
+            Channel.CreateUnbounded<IReadOnlyList<BluetoothDeviceSnapshot>>();
+
+        internal void AddResult(params BluetoothDeviceSnapshot[] devices) =>
+            _results.Writer.TryWrite(devices);
+
+        public async Task<IReadOnlyList<BluetoothDeviceSnapshot>> DiscoverAsync(
+            CancellationToken cancellationToken) =>
+            await _results.Reader.ReadAsync(cancellationToken);
     }
 
     private sealed class SequencedScanner(

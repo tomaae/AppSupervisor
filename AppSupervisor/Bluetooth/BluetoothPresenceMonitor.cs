@@ -7,6 +7,7 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
     private readonly IBluetoothDeviceScanner _scanner;
     private readonly TimeSpan _scanInterval;
     private readonly TimeSpan _presenceTimeout;
+    private readonly TimeProvider _timeProvider;
     private readonly CancellationTokenSource _cancellation = new();
     private readonly object _stateLock = new();
     private readonly Dictionary<string, DateTime> _lastSeenUtc =
@@ -20,7 +21,8 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
         IBluetoothDeviceScanner? scanner = null,
         TimeSpan? scanInterval = null,
         TimeSpan? presenceTimeout = null,
-        IReadOnlyCollection<string>? monitoredDeviceIds = null)
+        IReadOnlyCollection<string>? monitoredDeviceIds = null,
+        TimeProvider? timeProvider = null)
     {
         HashSet<string>? monitoredIds = monitoredDeviceIds?.ToHashSet(
             StringComparer.OrdinalIgnoreCase
@@ -37,6 +39,7 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
         _scanInterval = scanInterval ?? TimeSpan.FromSeconds(configuration.ScanIntervalSeconds);
         _presenceTimeout = presenceTimeout ??
             TimeSpan.FromSeconds(configuration.PresenceTimeoutSeconds);
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _monitorTask = _devices.Count == 0
             ? Task.CompletedTask
             : Task.Run(() => MonitorAsync(_cancellation.Token));
@@ -57,7 +60,7 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
         lock (_stateLock)
         {
             return _lastSeenUtc.TryGetValue(deviceId, out DateTime lastSeenUtc) &&
-                DateTime.UtcNow - lastSeenUtc <= _presenceTimeout;
+                _timeProvider.GetUtcNow().UtcDateTime - lastSeenUtc <= _presenceTimeout;
         }
     }
 
@@ -65,13 +68,13 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            DateTime cycleStartedUtc = DateTime.UtcNow;
+            DateTime cycleStartedUtc = _timeProvider.GetUtcNow().UtcDateTime;
 
             try
             {
                 IReadOnlyList<BluetoothDeviceSnapshot> discovered =
                     await _scanner.DiscoverAsync(cancellationToken).ConfigureAwait(false);
-                DateTime observedUtc = DateTime.UtcNow;
+                DateTime observedUtc = _timeProvider.GetUtcNow().UtcDateTime;
 
                 if (_lastFailureMessage is not null)
                 {
@@ -116,7 +119,8 @@ internal sealed class BluetoothPresenceMonitor : IBluetoothPresenceSource, IDisp
                 }
             }
 
-            TimeSpan remaining = _scanInterval - (DateTime.UtcNow - cycleStartedUtc);
+            TimeSpan remaining = _scanInterval -
+                (_timeProvider.GetUtcNow().UtcDateTime - cycleStartedUtc);
             if (remaining <= TimeSpan.Zero)
                 continue;
 
