@@ -372,25 +372,28 @@ internal sealed class SteamVrDeviceMonitor : IDisposable
         {
             if (_states.TryGetValue(device.SerialNumber, out DeviceState? state))
             {
-                state.Device = device;
-                if (refreshRoles)
+                // An unrelated settings reload must not replace a newer observed
+                // assignment. An explicit saved assignment change still takes effect.
+                if (refreshRoles && state.Device.Role != device.Role)
                     state.Role = device.Role;
+                state.Device = device;
             }
             else
                 _states.Add(device.SerialNumber, new DeviceState(device));
         }
     }
 
-    /// <summary>Refreshes role labels from the live snapshot without rewriting the saved configuration.</summary>
+    /// <summary>Remembers usable live assignments without clearing saved or observed labels on an unavailable read.</summary>
     private void UpdateObservedRoles(IEnumerable<SteamVrDeviceSnapshot> devices)
     {
         foreach (SteamVrDeviceSnapshot device in devices)
         {
             if (_states.TryGetValue(device.SerialNumber, out DeviceState? state) &&
-                (device.Connected ||
-                    device.Role != SteamVrDeviceRole.None ||
-                    state.Role == SteamVrDeviceRole.None))
+                device.Role != SteamVrDeviceRole.None &&
+                Enum.IsDefined(device.Role))
             {
+                // None also means OpenVR could not read the role, even while the
+                // device is connected. It is not evidence of an assignment removal.
                 state.Role = device.Role;
             }
         }

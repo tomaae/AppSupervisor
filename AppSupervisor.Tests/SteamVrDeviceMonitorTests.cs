@@ -127,12 +127,31 @@ public sealed class SteamVrDeviceMonitorTests
         Assert.Equal(SteamVrDeviceRole.LeftKnee, Assert.Single(monitor.OfflineDevices).Role);
     }
 
-    [Fact]
-    public void ProcessSnapshot_ConnectedUnassignedTracker_ClearsStaleRoleInAlert()
+    [Theory]
+    [InlineData(false, SteamVrDeviceRole.None)]
+    [InlineData(true, SteamVrDeviceRole.None)]
+    [InlineData(false, (SteamVrDeviceRole)999)]
+    [InlineData(true, (SteamVrDeviceRole)999)]
+    public void ProcessSnapshot_UnavailableRole_PreservesAssignmentInAlertsAndRecovery(
+        bool observeNewAssignment,
+        SteamVrDeviceRole unavailableRole)
     {
-        using var monitor = CreateMonitor([NotificationTarget.XsOverlay]);
-        SupervisorNotification? alert = null;
-        monitor.AlertRequested += notification => alert = notification;
+        using var monitor = CreateMonitor([NotificationTarget.XsOverlay], seenConnectedThisSession: false);
+        var notifications = new List<SupervisorNotification>();
+        monitor.AlertRequested += notifications.Add;
+        monitor.NotificationRequested += notifications.Add;
+        SteamVrDeviceRole expectedRole = observeNewAssignment
+            ? SteamVrDeviceRole.LeftKnee
+            : SteamVrDeviceRole.Waist;
+
+        if (observeNewAssignment)
+        {
+            monitor.ProcessSnapshot(
+                CreateSnapshot(connected: true, role: expectedRole),
+                SessionStartUtc + TimeSpan.FromSeconds(1)
+            );
+        }
+
         var connectedUnassigned = new SteamVrSnapshot(
             true,
             SessionStartUtc,
@@ -142,7 +161,7 @@ public sealed class SteamVrDeviceMonitorTests
                     "Test tracker",
                     SteamVrDeviceClass.GenericTracker,
                     true,
-                    SteamVrDeviceRole.None
+                    unavailableRole
                 )
             ]
         );
@@ -154,10 +173,84 @@ public sealed class SteamVrDeviceMonitorTests
         );
         monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(30));
         monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromSeconds(60));
+        monitor.ProcessSnapshot(missing, SessionStartUtc + TimeSpan.FromMinutes(6));
+
+        Assert.Equal(expectedRole, Assert.Single(monitor.OfflineDevices).Role);
+        monitor.ProcessSnapshot(connectedUnassigned, SessionStartUtc + TimeSpan.FromMinutes(7));
+
+        Assert.False(monitor.HasOfflineDevices);
+        Assert.Equal(3, notifications.Count);
+        Assert.All(notifications, notification => Assert.Contains(
+            $"— {SteamVrDeviceDisplay.RoleName(expectedRole)} tracker",
+            notification.Message,
+            StringComparison.Ordinal
+        ));
+    }
+
+    [Fact]
+    public void ProcessSnapshot_NoSavedOrObservedAssignment_ReportsUnassigned()
+    {
+        using var monitor = new SteamVrDeviceMonitor(new UnusedSource());
+        SteamVrIntegrationConfig configuration = CreateConfiguration([]);
+        configuration.Devices[0].Role = SteamVrDeviceRole.None;
+        monitor.ApplyConfiguration(configuration);
+        SupervisorNotification? alert = null;
+        monitor.AlertRequested += notification => alert = notification;
+
+        monitor.ProcessSnapshot(
+            CreateSnapshot(connected: true, role: SteamVrDeviceRole.None),
+            SessionStartUtc + TimeSpan.FromSeconds(1)
+        );
+        monitor.ProcessSnapshot(CreateSnapshot(connected: false), SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(CreateSnapshot(connected: false), SessionStartUtc + TimeSpan.FromSeconds(60));
 
         Assert.NotNull(alert);
         Assert.Contains("Unassigned tracker", alert.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(SteamVrDeviceRole.None, Assert.Single(monitor.OfflineDevices).Role);
+    }
+
+    [Theory]
+    [InlineData(SteamVrDeviceRole.None)]
+    [InlineData(SteamVrDeviceRole.Waist)]
+    public void ApplyConfiguration_UnchangedSavedRole_PreservesObservedAssignment(
+        SteamVrDeviceRole savedRole)
+    {
+        using var monitor = new SteamVrDeviceMonitor(new UnusedSource());
+        SteamVrIntegrationConfig configuration = CreateConfiguration([]);
+        configuration.Devices[0].Role = savedRole;
+        monitor.ApplyConfiguration(configuration);
+        monitor.ProcessSnapshot(
+            CreateSnapshot(connected: true, role: SteamVrDeviceRole.LeftKnee),
+            SessionStartUtc + TimeSpan.FromSeconds(1)
+        );
+        configuration.ReminderIntervalMinutes = 10;
+        monitor.ApplyConfiguration(configuration);
+        monitor.ProcessSnapshot(CreateSnapshot(connected: false), SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(CreateSnapshot(connected: false), SessionStartUtc + TimeSpan.FromSeconds(60));
+
+        Assert.Equal(SteamVrDeviceRole.LeftKnee, Assert.Single(monitor.OfflineDevices).Role);
+    }
+
+    [Theory]
+    [InlineData(SteamVrDeviceRole.None)]
+    [InlineData(SteamVrDeviceRole.LeftFoot)]
+    public void ApplyConfiguration_ChangedSavedRole_UpdatesIncidentAssignment(
+        SteamVrDeviceRole replacementRole)
+    {
+        using var monitor = CreateMonitor();
+        monitor.ProcessSnapshot(CreateSnapshot(connected: false), SessionStartUtc + TimeSpan.FromSeconds(30));
+        monitor.ProcessSnapshot(CreateSnapshot(connected: false), SessionStartUtc + TimeSpan.FromSeconds(60));
+        SteamVrOfflineDevice original = Assert.Single(monitor.OfflineDevices);
+        monitor.Silence(["LHR-TEST"]);
+        SteamVrIntegrationConfig configuration = CreateConfiguration([]);
+        configuration.Devices[0].Role = replacementRole;
+
+        monitor.ApplyConfiguration(configuration);
+
+        SteamVrOfflineDevice updated = Assert.Single(monitor.OfflineDevices);
+        Assert.Equal(replacementRole, updated.Role);
+        Assert.Equal(original.OfflineSinceUtc, updated.OfflineSinceUtc);
+        Assert.True(updated.Silenced);
     }
 
     [Fact]
@@ -377,7 +470,8 @@ public sealed class SteamVrDeviceMonitorTests
 
     private static SteamVrSnapshot CreateSnapshot(
         bool connected,
-        DateTime? sessionStartUtc = null)
+        DateTime? sessionStartUtc = null,
+        SteamVrDeviceRole role = SteamVrDeviceRole.Waist)
     {
         IReadOnlyList<SteamVrDeviceSnapshot> devices = connected
             ?
@@ -387,7 +481,7 @@ public sealed class SteamVrDeviceMonitorTests
                     "Test tracker",
                     SteamVrDeviceClass.GenericTracker,
                     true,
-                    SteamVrDeviceRole.Waist
+                    role
                 )
             ]
             : [];
