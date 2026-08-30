@@ -13,11 +13,14 @@ public sealed partial class ConfigurationEditorForm
         DropDownStyle = ComboBoxStyle.DropDownList,
         FormattingEnabled = true
     };
-    private readonly ComboBox _monitorBluetoothDevice = new()
+    private readonly CheckedListBox _monitorBluetoothDevices = new()
     {
+        Name = "MonitorBluetoothDevicesList",
         Dock = DockStyle.Fill,
-        DropDownStyle = ComboBoxStyle.DropDownList,
-        FormattingEnabled = true
+        CheckOnClick = true,
+        FormattingEnabled = true,
+        Height = 100,
+        IntegralHeight = false
     };
     private readonly NumericUpDown _bluetoothScanInterval = new()
     {
@@ -62,7 +65,7 @@ public sealed partial class ConfigurationEditorForm
                     : "Bluetooth device presence";
             }
         };
-        _monitorBluetoothDevice.Format += (_, args) =>
+        _monitorBluetoothDevices.Format += (_, args) =>
         {
             if (args.ListItem is BluetoothDeviceEditorRow row)
                 args.Value = $"{row.Name} ({row.KindText}, {row.FormattedAddress})";
@@ -70,42 +73,46 @@ public sealed partial class ConfigurationEditorForm
         return _profileTriggerType;
     }
 
-    private void BindProfileBluetoothDeviceSelector(string? preferredDeviceId)
+    private void BindProfileBluetoothDeviceSelector(IEnumerable<string>? selectedDeviceIds)
     {
-        string selectedId = preferredDeviceId?.Trim() ?? "";
-        _monitorBluetoothDevice.Items.Clear();
+        var selectedIds = (selectedDeviceIds ?? [])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _monitorBluetoothDevices.BeginUpdate();
 
-        foreach (BluetoothDeviceEditorRow row in _bluetoothDeviceRows)
-            _monitorBluetoothDevice.Items.Add(row);
+        try
+        {
+            _monitorBluetoothDevices.Items.Clear();
 
-        BluetoothDeviceEditorRow? selected = _bluetoothDeviceRows.FirstOrDefault(row =>
-            string.Equals(row.DeviceId, selectedId, StringComparison.OrdinalIgnoreCase)
-        );
-        _monitorBluetoothDevice.SelectedItem = selected;
+            foreach (BluetoothDeviceEditorRow row in _bluetoothDeviceRows)
+            {
+                _monitorBluetoothDevices.Items.Add(
+                    row,
+                    selectedIds.Contains(row.DeviceId)
+                );
+            }
+        }
+        finally
+        {
+            _monitorBluetoothDevices.EndUpdate();
+        }
     }
 
     private void RefreshProfileBluetoothDeviceSelector()
     {
-        string preferred = SelectedProfile?.MonitorBluetoothDeviceId ?? "";
+        IReadOnlyList<string> selectedIds =
+            SelectedProfile?.MonitorBluetoothDeviceIds ?? [];
         bool wasLoading = _loadingControls;
         _loadingControls = true;
 
         try
         {
-            BindProfileBluetoothDeviceSelector(preferred);
+            BindProfileBluetoothDeviceSelector(selectedIds);
         }
         finally
         {
             _loadingControls = wasLoading;
         }
 
-        if (!wasLoading &&
-            SelectedProfile?.TriggerType == ProfileTriggerType.BluetoothDevice &&
-            _monitorBluetoothDevice.SelectedItem is null &&
-            _monitorBluetoothDevice.Items.Count > 0)
-        {
-            _monitorBluetoothDevice.SelectedIndex = 0;
-        }
     }
 
     private void UpdateProfileTriggerControlAvailability()
@@ -113,8 +120,32 @@ public sealed partial class ConfigurationEditorForm
         bool processTrigger = _profileTriggerType.SelectedItem is not ProfileTriggerType type ||
             type == ProfileTriggerType.Process;
         _monitorProcessPanel.Enabled = processTrigger;
-        _monitorBluetoothDevice.Enabled = !processTrigger &&
-            _monitorBluetoothDevice.Items.Count > 0;
+        _monitorBluetoothDevices.Enabled = !processTrigger &&
+            _monitorBluetoothDevices.Items.Count > 0;
+    }
+
+    private void ProfileBluetoothDeviceItemCheck(object? sender, ItemCheckEventArgs e)
+    {
+        if (_loadingControls || SelectedProfile is not SupervisorProfileConfig profile)
+            return;
+
+        var selectedIds = new List<string>();
+        for (int index = 0; index < _monitorBluetoothDevices.Items.Count; index++)
+        {
+            CheckState state = index == e.Index
+                ? e.NewValue
+                : _monitorBluetoothDevices.GetItemCheckState(index);
+            if (state == CheckState.Checked &&
+                _monitorBluetoothDevices.Items[index] is BluetoothDeviceEditorRow row)
+            {
+                selectedIds.Add(row.DeviceId);
+            }
+        }
+
+        profile.MonitorBluetoothDeviceIds = selectedIds;
+        profile.LegacyMonitorBluetoothDeviceId = null;
+        _profileSelector.Refresh();
+        UpdateStatus();
     }
 
     private Control BuildBluetoothIntegrationGroup()
@@ -376,7 +407,7 @@ public sealed partial class ConfigurationEditorForm
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         string[] referencedProfiles = _profiles
             .Where(profile => profile.TriggerType == ProfileTriggerType.BluetoothDevice &&
-                selectedIds.Contains(profile.MonitorBluetoothDeviceId))
+                (profile.MonitorBluetoothDeviceIds ?? []).Any(selectedIds.Contains))
             .Select(profile => DisplayName(profile.Name, "Unnamed profile"))
             .ToArray();
 

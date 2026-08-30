@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace AppSupervisor;
 
 /// <summary>Configures one process- or Bluetooth-triggered profile and its ordered managed resources.</summary>
@@ -18,8 +20,26 @@ public class SupervisorProfileConfig
     /// <summary>Gets or sets the executable filename whose running state activates the profile.</summary>
     public string MonitorProcess { get; set; } = "";
 
-    /// <summary>Gets or sets the globally registered Bluetooth device that activates this profile.</summary>
-    public string MonitorBluetoothDeviceId { get; set; } = "";
+    /// <summary>Gets or sets the globally registered Bluetooth devices that activate this profile in ANY mode.</summary>
+    public List<string> MonitorBluetoothDeviceIds { get; set; } = [];
+
+    /// <summary>Receives the retired singular JSON property during backward-compatible loading.</summary>
+    [JsonPropertyName("monitorBluetoothDeviceId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyMonitorBluetoothDeviceId { get; set; }
+
+    /// <summary>Gets or sets the first selected device for source compatibility with older callers.</summary>
+    [JsonIgnore]
+    public string MonitorBluetoothDeviceId
+    {
+        get => MonitorBluetoothDeviceIds?.FirstOrDefault() ??
+            LegacyMonitorBluetoothDeviceId ?? "";
+        set
+        {
+            MonitorBluetoothDeviceIds = string.IsNullOrWhiteSpace(value) ? [] : [value];
+            LegacyMonitorBluetoothDeviceId = null;
+        }
+    }
 
     /// <summary>Gets or sets how long the selected trigger may remain absent before resources are closed.</summary>
     public int? CloseTimeoutSeconds { get; set; }

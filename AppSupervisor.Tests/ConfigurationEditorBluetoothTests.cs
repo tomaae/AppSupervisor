@@ -39,6 +39,12 @@ public sealed class ConfigurationEditorBluetoothTests
                         combo => combo.Items.Cast<object>().OfType<ProfileTriggerType>().Any()
                     );
                     Assert.Equal(ProfileTriggerType.BluetoothDevice, triggerSelector.SelectedItem);
+                    CheckedListBox selectedDevices = Assert.Single(
+                        controls.OfType<CheckedListBox>(),
+                        list => list.Name == "MonitorBluetoothDevicesList"
+                    );
+                    Assert.Equal(2, selectedDevices.Items.Count);
+                    Assert.Equal(2, selectedDevices.CheckedItems.Count);
                     Assert.Contains(
                         controls.OfType<DataGridView>(),
                         grid => grid.Columns.Cast<DataGridViewColumn>().Any(column =>
@@ -53,6 +59,61 @@ public sealed class ConfigurationEditorBluetoothTests
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
             Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "Bluetooth editor test timed out.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        Assert.Null(threadException);
+    }
+
+    [Fact]
+    public void BluetoothDeviceChecklist_ChangesAndSavesAllSelectedIds()
+    {
+        string directory = CreateConfiguration(out string configPath);
+        Exception? threadException = null;
+
+        try
+        {
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    using var form = CreateForm(configPath, new StubScanner([]));
+                    form.ShowInTaskbar = false;
+                    form.Opacity = 0;
+                    form.Show();
+                    Application.DoEvents();
+                    CheckedListBox selectedDevices = EnumerateControls(form)
+                        .OfType<CheckedListBox>()
+                        .Single(list => list.Name == "MonitorBluetoothDevicesList");
+                    Button save = EnumerateControls(form).OfType<Button>()
+                        .Single(button => button.Text == "Save && Apply");
+
+                    selectedDevices.SetItemChecked(1, false);
+                    Application.DoEvents();
+
+                    Assert.True(save.Enabled);
+                    save.PerformClick();
+                    Application.DoEvents();
+
+                    SupervisorProfileConfig profile = Assert.Single(
+                        ConfigLoader.Load(configPath).Profiles
+                    );
+                    Assert.Equal(["phone-id"], profile.MonitorBluetoothDeviceIds);
+                }
+                catch (Exception exception)
+                {
+                    threadException = exception;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            Assert.True(
+                thread.Join(TimeSpan.FromSeconds(10)),
+                "Bluetooth profile checklist save test timed out."
+            );
         }
         finally
         {
@@ -110,7 +171,7 @@ public sealed class ConfigurationEditorBluetoothTests
                     }
 
                     Assert.Equal(1, scanner.CallCount);
-                    Assert.Equal(2, grid.Rows.Count);
+                    Assert.Equal(3, grid.Rows.Count);
                 }
                 catch (Exception exception)
                 {
@@ -269,7 +330,7 @@ public sealed class ConfigurationEditorBluetoothTests
                         Thread.Sleep(10);
                     }
 
-                    Assert.Equal(3, grid.Rows.Count);
+                    Assert.Equal(4, grid.Rows.Count);
                     Assert.Contains(
                         grid.Rows.Cast<DataGridViewRow>(),
                         row => string.Equals(
@@ -349,6 +410,13 @@ public sealed class ConfigurationEditorBluetoothTests
                             Name = "Phone",
                             Address = "AABBCCDDEEFF",
                             Kind = BluetoothDeviceKind.LowEnergy
+                        },
+                        new BluetoothDeviceConfig
+                        {
+                            DeviceId = "tag-id",
+                            Name = "Tag",
+                            Address = "112233445566",
+                            Kind = BluetoothDeviceKind.LowEnergy
                         }
                     ]
                 }
@@ -359,7 +427,7 @@ public sealed class ConfigurationEditorBluetoothTests
                 {
                     Name = "Phone presence",
                     TriggerType = ProfileTriggerType.BluetoothDevice,
-                    MonitorBluetoothDeviceId = "phone-id"
+                    MonitorBluetoothDeviceIds = ["phone-id", "tag-id"]
                 }
             ]
         });

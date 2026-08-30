@@ -138,11 +138,37 @@ public static partial class ConfigValidator
 
         if (profile.TriggerType == ProfileTriggerType.BluetoothDevice)
         {
-            if (string.IsNullOrWhiteSpace(profile.MonitorBluetoothDeviceId))
+            if (profile.MonitorBluetoothDeviceIds is null)
             {
                 errors.Add(
-                    $"{profileLabel} must select a monitorBluetoothDeviceId for its Bluetooth trigger."
+                    $"{profileLabel} must contain a monitorBluetoothDeviceIds array."
                 );
+                return;
+            }
+
+            if (profile.MonitorBluetoothDeviceIds.Count == 0)
+            {
+                errors.Add(
+                    $"{profileLabel} must select at least one monitorBluetoothDeviceIds entry for its Bluetooth trigger."
+                );
+                return;
+            }
+
+            var selectedDeviceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string? deviceId in profile.MonitorBluetoothDeviceIds)
+            {
+                if (string.IsNullOrWhiteSpace(deviceId))
+                {
+                    errors.Add(
+                        $"{profileLabel} contains an empty monitorBluetoothDeviceIds entry."
+                    );
+                }
+                else if (!selectedDeviceIds.Add(deviceId.Trim()))
+                {
+                    errors.Add(
+                        $"{profileLabel} contains duplicate Bluetooth deviceId '{deviceId}'."
+                    );
+                }
             }
 
             return;

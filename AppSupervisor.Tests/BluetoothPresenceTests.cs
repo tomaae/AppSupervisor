@@ -7,13 +7,56 @@ namespace AppSupervisor.Tests;
 public sealed class BluetoothPresenceTests
 {
     [Fact]
-    public void Trigger_DelegatesRegisteredDeviceLookupToPresenceSource()
+    public void Trigger_UsesAnySelectedDevicePresence()
     {
-        var source = new StubPresenceSource("device-id");
-        var trigger = new BluetoothPresenceTrigger("device-id", source);
+        var source = new MutablePresenceSource(["second-id"]);
+        var trigger = new BluetoothPresenceTrigger(["first-id", "second-id"], source);
 
         Assert.True(trigger.IsActive());
-        Assert.Equal("device-id", source.LastRequestedDeviceId);
+        Assert.Equal(["first-id", "second-id"], source.RequestedDeviceIds);
+
+        source.PresentDeviceIds.Clear();
+
+        Assert.False(trigger.IsActive());
+    }
+
+    [Fact]
+    public async Task Trigger_RemainsActiveThroughDeviceHandoffUntilAllPresenceExpires()
+    {
+        BluetoothDeviceSnapshot first = CreatePresentSnapshot(
+            "first-windows-id",
+            "First",
+            "AABBCCDDEE01"
+        );
+        BluetoothDeviceSnapshot second = CreatePresentSnapshot(
+            "second-windows-id",
+            "Second",
+            "AABBCCDDEE02"
+        );
+        var scanner = new HandoffScanner(first, second);
+        var configuration = new BluetoothIntegrationConfig
+        {
+            Devices =
+            [
+                CreateConfiguredDevice("first-id", "First", "AABBCCDDEE01"),
+                CreateConfiguredDevice("second-id", "Second", "AABBCCDDEE02")
+            ]
+        };
+        using var monitor = new BluetoothPresenceMonitor(
+            configuration,
+            scanner,
+            scanInterval: TimeSpan.FromMilliseconds(15),
+            presenceTimeout: TimeSpan.FromMilliseconds(100)
+        );
+        var trigger = new BluetoothPresenceTrigger(["first-id", "second-id"], monitor);
+
+        await WaitUntilAsync(() => monitor.IsPresent("first-id"));
+        await WaitUntilAsync(() => !monitor.IsPresent("first-id"));
+
+        Assert.True(monitor.IsPresent("second-id"));
+        Assert.True(trigger.IsActive());
+
+        await WaitUntilAsync(() => !trigger.IsActive());
     }
 
     [Fact]
@@ -122,14 +165,62 @@ public sealed class BluetoothPresenceTests
         }
     }
 
-    private sealed class StubPresenceSource(string presentDeviceId) : IBluetoothPresenceSource
+    private static BluetoothDeviceSnapshot CreatePresentSnapshot(
+        string windowsId,
+        string name,
+        string address) => new(
+            windowsId,
+            name,
+            address,
+            BluetoothDeviceKind.LowEnergy,
+            IsPaired: false,
+            IsConnected: false,
+            IsPresent: true
+        );
+
+    private static BluetoothDeviceConfig CreateConfiguredDevice(
+        string deviceId,
+        string name,
+        string address) => new()
+        {
+            DeviceId = deviceId,
+            Name = name,
+            Address = address,
+            Kind = BluetoothDeviceKind.LowEnergy
+        };
+
+    private sealed class MutablePresenceSource(IEnumerable<string> presentDeviceIds)
+        : IBluetoothPresenceSource
     {
-        public string? LastRequestedDeviceId { get; private set; }
+        public HashSet<string> PresentDeviceIds { get; } =
+            new(presentDeviceIds, StringComparer.OrdinalIgnoreCase);
+        public List<string> RequestedDeviceIds { get; } = [];
 
         public bool IsPresent(string deviceId)
         {
-            LastRequestedDeviceId = deviceId;
-            return string.Equals(deviceId, presentDeviceId, StringComparison.Ordinal);
+            RequestedDeviceIds.Add(deviceId);
+            return PresentDeviceIds.Contains(deviceId);
+        }
+    }
+
+    private sealed class HandoffScanner(
+        BluetoothDeviceSnapshot first,
+        BluetoothDeviceSnapshot second) : IBluetoothDeviceScanner
+    {
+        private int _callCount;
+
+        public Task<IReadOnlyList<BluetoothDeviceSnapshot>> DiscoverAsync(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int call = Interlocked.Increment(ref _callCount);
+            IReadOnlyList<BluetoothDeviceSnapshot> result = call switch
+            {
+                1 => [first],
+                <= 10 => [second],
+                _ => []
+            };
+            return Task.FromResult(result);
         }
     }
 

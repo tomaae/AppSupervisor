@@ -347,7 +347,7 @@ internal static class ProfilePortabilityAnalyzer
     internal const string ProcessTriggerWarning =
         "The activation process name must match an application installed on the importing computer.";
     internal const string BluetoothTriggerWarning =
-        "The Bluetooth activation device must be registered in the importing computer's global Bluetooth integration; the global registry is intentionally not included.";
+        "Every Bluetooth activation device must be registered in the importing computer's global Bluetooth integration; the global registry is intentionally not included.";
     internal const string ApplicationWarning =
         "Helper executable paths, launch URIs, arguments, and Windows package identities may need to be reselected on another computer.";
     internal const string ServiceWarning =

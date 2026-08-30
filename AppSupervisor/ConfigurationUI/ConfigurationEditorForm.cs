@@ -329,7 +329,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _monitorProcessPanel.Controls.Add(CreateButton("Browse...", BrowseMonitorProcessClicked), 1, 0);
         _monitorProcessPanel.Controls.Add(CreateButton("Pick running...", PickMonitorProcessClicked), 2, 0);
         AddEditorRow(layout, "Monitor process", _monitorProcessPanel);
-        AddEditorRow(layout, "Bluetooth device", _monitorBluetoothDevice);
+        AddEditorRow(layout, "Bluetooth devices (ANY)", _monitorBluetoothDevices, alignTop: true);
         AddEditorRow(layout, "Close timeout", _closeTimeout);
         AddEditorRow(layout, "Restart timeout", _restartTimeout);
         AddEditorRow(layout, "", new Label
@@ -337,7 +337,7 @@ public sealed partial class ConfigurationEditorForm : Form
             AutoSize = true,
             MaximumSize = new Size(720, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "The profile is active while its selected process is running or its registered Bluetooth device is present. Resources start in order, remain supervised while it is active, and close after the configured close timeout when the trigger disappears. Add a Delay as the first resource when startup should wait."
+            Text = "The profile is active while its selected process is running or any selected Bluetooth device is present. A Bluetooth trigger becomes absent only after every selected device exceeds the global presence timeout. Resources then close after the profile's close timeout. Add a Delay as the first resource when startup should wait."
         });
         page.Controls.Add(layout);
         return page;
@@ -493,7 +493,7 @@ public sealed partial class ConfigurationEditorForm : Form
         _profileName.TextChanged += ProfileFieldChanged;
         _profileTriggerType.SelectedIndexChanged += ProfileFieldChanged;
         _monitorProcess.TextChanged += ProfileFieldChanged;
-        _monitorBluetoothDevice.SelectedIndexChanged += ProfileFieldChanged;
+        _monitorBluetoothDevices.ItemCheck += ProfileBluetoothDeviceItemCheck;
         _closeTimeout.ValueChanged += ProfileFieldChanged;
         _restartTimeout.ValueChanged += ProfileFieldChanged;
 
@@ -560,7 +560,7 @@ public sealed partial class ConfigurationEditorForm : Form
             _profileName.Text = profile?.Name ?? "";
             _profileTriggerType.SelectedItem = profile?.TriggerType ?? ProfileTriggerType.Process;
             _monitorProcess.Text = profile?.MonitorProcess ?? "";
-            BindProfileBluetoothDeviceSelector(profile?.MonitorBluetoothDeviceId);
+            BindProfileBluetoothDeviceSelector(profile?.MonitorBluetoothDeviceIds);
             UpdateProfileTriggerControlAvailability();
             _closeTimeout.Value = profile?.CloseTimeoutSeconds;
             _restartTimeout.Value = profile?.RestartTimeoutSeconds;
@@ -672,8 +672,6 @@ public sealed partial class ConfigurationEditorForm : Form
             ? triggerType
             : ProfileTriggerType.Process;
         profile.MonitorProcess = _monitorProcess.Text;
-        profile.MonitorBluetoothDeviceId =
-            (_monitorBluetoothDevice.SelectedItem as BluetoothDeviceEditorRow)?.DeviceId ?? "";
         profile.CloseTimeoutSeconds = _closeTimeout.Value;
         profile.RestartTimeoutSeconds = _restartTimeout.Value;
         UpdateProfileTriggerControlAvailability();

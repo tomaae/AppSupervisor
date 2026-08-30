@@ -1,5 +1,6 @@
 using AppSupervisor.Configuration;
 using AppSupervisor.Bluetooth;
+using System.Text.Json;
 
 namespace AppSupervisor.Tests;
 
@@ -12,6 +13,7 @@ public sealed class BluetoothIntegrationTests
         string directory = CreateTemporaryDirectory();
         string path = Path.Combine(directory, "config.json");
         const string deviceId = "phone-id";
+        const string secondDeviceId = "tag-id";
 
         try
         {
@@ -33,6 +35,13 @@ public sealed class BluetoothIntegrationTests
                                 Kind = BluetoothDeviceKind.LowEnergy,
                                 ManufacturerName = " Microsoft ",
                                 ManufacturerCompanyIds = [76, 6, 76]
+                            },
+                            new BluetoothDeviceConfig
+                            {
+                                DeviceId = secondDeviceId,
+                                Name = "Tag",
+                                Address = "112233445566",
+                                Kind = BluetoothDeviceKind.LowEnergy
                             }
                         ]
                     }
@@ -43,13 +52,13 @@ public sealed class BluetoothIntegrationTests
                     {
                         Name = "Nearby phone",
                         TriggerType = ProfileTriggerType.BluetoothDevice,
-                        MonitorBluetoothDeviceId = deviceId
+                        MonitorBluetoothDeviceIds = [$" {deviceId} ", secondDeviceId]
                     }
                 ]
             });
 
             AppSupervisorConfig loaded = ConfigLoader.Load(path);
-            BluetoothDeviceConfig device = Assert.Single(loaded.Integrations.Bluetooth.Devices);
+            BluetoothDeviceConfig device = loaded.Integrations.Bluetooth.Devices[0];
             SupervisorProfileConfig profile = Assert.Single(loaded.Profiles);
 
             Assert.Equal("Phone", device.Name);
@@ -58,9 +67,66 @@ public sealed class BluetoothIntegrationTests
             Assert.Equal("Microsoft", device.ManufacturerName);
             Assert.Equal([6, 76], device.ManufacturerCompanyIds);
             Assert.Equal(ProfileTriggerType.BluetoothDevice, profile.TriggerType);
-            Assert.Equal(deviceId, profile.MonitorBluetoothDeviceId);
+            Assert.Equal([deviceId, secondDeviceId], profile.MonitorBluetoothDeviceIds);
             Assert.Equal(20, loaded.Integrations.Bluetooth.ScanIntervalSeconds);
             Assert.Equal(60, loaded.Integrations.Bluetooth.PresenceTimeoutSeconds);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Load_LegacySingularBluetoothTrigger_MigratesToDeviceList()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "config.json");
+
+        try
+        {
+            File.WriteAllText(path, """
+                {
+                  "profiles": [
+                    {
+                      "name": "Legacy Bluetooth",
+                      "triggerType": "bluetoothDevice",
+                      "monitorBluetoothDeviceId": " phone-id "
+                    }
+                  ],
+                  "integrations": {
+                    "bluetooth": {
+                      "devices": [
+                        {
+                          "deviceId": "phone-id",
+                          "name": "Phone",
+                          "address": "AABBCCDDEEFF",
+                          "kind": "lowEnergy"
+                        }
+                      ]
+                    }
+                  }
+                }
+                """);
+
+            AppSupervisorConfig loaded = ConfigLoader.Load(path);
+            SupervisorProfileConfig profile = Assert.Single(loaded.Profiles);
+
+            Assert.Equal(["phone-id"], profile.MonitorBluetoothDeviceIds);
+            Assert.Null(profile.LegacyMonitorBluetoothDeviceId);
+
+            using JsonDocument saved = JsonDocument.Parse(ConfigFileWriter.Serialize(loaded));
+            JsonElement savedProfile = Assert.Single(
+                saved.RootElement.GetProperty("profiles").EnumerateArray()
+            );
+            Assert.False(savedProfile.TryGetProperty("monitorBluetoothDeviceId", out _));
+            Assert.Equal(
+                ["phone-id"],
+                savedProfile.GetProperty("monitorBluetoothDeviceIds")
+                    .EnumerateArray()
+                    .Select(item => item.GetString()!)
+                    .ToArray()
+            );
         }
         finally
         {
@@ -129,7 +195,7 @@ public sealed class BluetoothIntegrationTests
                 {
                     Name = "Missing device",
                     TriggerType = ProfileTriggerType.BluetoothDevice,
-                    MonitorBluetoothDeviceId = "missing"
+                    MonitorBluetoothDeviceIds = ["missing", "also-missing"]
                 }
             ]
         };
@@ -184,17 +250,22 @@ public sealed class BluetoothIntegrationTests
     public void Factory_BluetoothProfileUsesRegisteredDeviceNameAndPresence()
     {
         const string deviceId = "phone-id";
+        const string secondDeviceId = "tag-id";
         var bluetooth = new BluetoothIntegrationConfig
         {
-            Devices = [CreateDevice(deviceId, "AABBCCDDEEFF")]
+            Devices =
+            [
+                CreateDevice(deviceId, "AABBCCDDEEFF"),
+                CreateDevice(secondDeviceId, "112233445566")
+            ]
         };
-        var source = new StubPresenceSource(deviceId);
+        var source = new StubPresenceSource(secondDeviceId);
         using var profile = SupervisorProfileFactory.Create(
             new SupervisorProfileConfig
             {
                 Name = "Nearby phone",
                 TriggerType = ProfileTriggerType.BluetoothDevice,
-                MonitorBluetoothDeviceId = deviceId
+                MonitorBluetoothDeviceIds = [deviceId, secondDeviceId]
             },
             _ => null,
             new HomeAssistantIntegrationConfig(),
@@ -208,8 +279,8 @@ public sealed class BluetoothIntegrationTests
         profile.Update();
 
         Assert.True(profile.TriggerActive);
-        Assert.Equal(deviceId, profile.TriggerDisplayName);
-        Assert.Equal(deviceId, source.LastRequestedDeviceId);
+        Assert.Equal($"{deviceId} OR {secondDeviceId}", profile.TriggerDisplayName);
+        Assert.Equal([deviceId, secondDeviceId], source.RequestedDeviceIds);
     }
 
     private static BluetoothDeviceConfig CreateDevice(string id, string address) => new()
@@ -232,11 +303,11 @@ public sealed class BluetoothIntegrationTests
 
     private sealed class StubPresenceSource(string presentDeviceId) : IBluetoothPresenceSource
     {
-        public string? LastRequestedDeviceId { get; private set; }
+        public List<string> RequestedDeviceIds { get; } = [];
 
         public bool IsPresent(string deviceId)
         {
-            LastRequestedDeviceId = deviceId;
+            RequestedDeviceIds.Add(deviceId);
             return string.Equals(deviceId, presentDeviceId, StringComparison.Ordinal);
         }
     }

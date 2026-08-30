@@ -16,9 +16,24 @@ internal static class ConfigNormalizer
             profile.ProfileId = NormalizeText(profile.ProfileId);
             profile.Name = NormalizeText(profile.Name);
             profile.MonitorProcess = NormalizeText(profile.MonitorProcess);
-            profile.MonitorBluetoothDeviceId = NormalizeText(
-                profile.MonitorBluetoothDeviceId
-            );
+            if (profile.MonitorBluetoothDeviceIds is not null)
+            {
+                if (profile.MonitorBluetoothDeviceIds.Count == 0 &&
+                    !string.IsNullOrWhiteSpace(profile.LegacyMonitorBluetoothDeviceId))
+                {
+                    profile.MonitorBluetoothDeviceIds.Add(
+                        profile.LegacyMonitorBluetoothDeviceId
+                    );
+                }
+
+                for (int index = 0; index < profile.MonitorBluetoothDeviceIds.Count; index++)
+                {
+                    profile.MonitorBluetoothDeviceIds[index] = NormalizeText(
+                        profile.MonitorBluetoothDeviceIds[index]
+                    );
+                }
+            }
+            profile.LegacyMonitorBluetoothDeviceId = null;
 
             if (profile.Applications is not null)
             {

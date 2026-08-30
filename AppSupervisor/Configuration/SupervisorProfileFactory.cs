@@ -46,30 +46,42 @@ public static class SupervisorProfileFactory
         BluetoothIntegrationConfig bluetoothIntegration,
         IBluetoothPresenceSource bluetoothPresenceSource)
     {
-        BluetoothDeviceConfig? bluetoothDevice = config.TriggerType ==
-            ProfileTriggerType.BluetoothDevice
-                ? bluetoothIntegration.Devices.SingleOrDefault(device => string.Equals(
-                    device.DeviceId,
-                    config.MonitorBluetoothDeviceId,
-                    StringComparison.OrdinalIgnoreCase
-                ))
-                : null;
+        BluetoothDeviceConfig[] bluetoothDevices = [];
+        if (config.TriggerType == ProfileTriggerType.BluetoothDevice)
+        {
+            var registeredById = bluetoothIntegration.Devices.ToDictionary(
+                device => device.DeviceId,
+                StringComparer.OrdinalIgnoreCase
+            );
+            bluetoothDevices = (config.MonitorBluetoothDeviceIds ?? [])
+                .Select(deviceId => registeredById.GetValueOrDefault(deviceId))
+                .OfType<BluetoothDeviceConfig>()
+                .ToArray();
+
+            if (bluetoothDevices.Length != (config.MonitorBluetoothDeviceIds?.Count ?? 0) ||
+                bluetoothDevices.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Profile '{config.Name}' references an unregistered Bluetooth device."
+                );
+            }
+        }
+
         ITrigger trigger = config.TriggerType switch
         {
             ProfileTriggerType.Process => new ProcessTrigger(config.MonitorProcess),
-            ProfileTriggerType.BluetoothDevice when bluetoothDevice is not null =>
+            ProfileTriggerType.BluetoothDevice =>
                 new BluetoothPresenceTrigger(
-                    bluetoothDevice.DeviceId,
+                    bluetoothDevices.Select(device => device.DeviceId).ToArray(),
                     bluetoothPresenceSource
                 ),
-            ProfileTriggerType.BluetoothDevice => throw new InvalidOperationException(
-                $"Profile '{config.Name}' references an unregistered Bluetooth device."
-            ),
             _ => throw new InvalidOperationException(
                 $"Profile '{config.Name}' uses an unsupported trigger type."
             )
         };
-        string triggerDisplayName = bluetoothDevice?.Name ?? config.MonitorProcess;
+        string triggerDisplayName = bluetoothDevices.Length > 0
+            ? string.Join(" OR ", bluetoothDevices.Select(device => device.Name))
+            : config.MonitorProcess;
 
         int restartTimeoutSeconds =
             config.RestartTimeoutSeconds ?? DefaultRestartTimeoutSeconds;

@@ -24,6 +24,9 @@ public sealed class SupervisorApiTests
             "",
             profile.RootElement.GetProperty("monitorBluetoothDeviceId").GetString()
         );
+        Assert.Empty(
+            profile.RootElement.GetProperty("monitorBluetoothDeviceIds").EnumerateArray()
+        );
         JsonElement helperLink = Assert.Single(profile.RootElement.GetProperty("helpers").EnumerateArray());
         Assert.Equal("helper-id", helperLink.GetProperty("internalId").GetString());
         Assert.True(helperLink.GetProperty("active").GetBoolean());
@@ -110,7 +113,7 @@ public sealed class SupervisorApiTests
         SupervisorApiProfileSnapshot profile = Assert.Single(snapshot.Profiles);
         Assert.Equal("disabled", profile.Status);
         Assert.Equal("process", profile.TriggerType);
-        Assert.Equal("", profile.MonitorBluetoothDeviceId);
+        Assert.Empty(profile.MonitorBluetoothDeviceIds);
         SupervisorApiHelperSnapshot helper = Assert.Single(profile.Helpers);
         Assert.Equal("stable-helper", helper.InternalId);
         Assert.False(helper.Active);
@@ -169,7 +172,7 @@ public sealed class SupervisorApiTests
                 Status: "active",
                 TriggerType: "process",
                 MonitorProcess: "VRChat.exe",
-                MonitorBluetoothDeviceId: "",
+                MonitorBluetoothDeviceIds: [],
                 Helpers:
                 [
                     new SupervisorApiHelperSnapshot(

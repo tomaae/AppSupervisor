@@ -8,7 +8,7 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/tomaae/AppSupervisor/ci.yml?style=flat-square&label=build)](https://github.com/tomaae/AppSupervisor/actions/workflows/ci.yml)
 ![Commits since release](https://img.shields.io/github/commits-since/tomaae/AppSupervisor/latest?style=flat-square)
 
-AppSupervisor is a lightweight Windows tray application that watches for a configured process or registered Bluetooth device and then starts, supervises, restarts, and closes the applications, services, devices, and integrations that belong with it.
+AppSupervisor is a lightweight Windows tray application that watches for a configured process or any selected registered Bluetooth device and then starts, supervises, restarts, and closes the applications, services, devices, and integrations that belong with it.
 
 For example, starting OBS can activate streaming helpers, audio settings, lighting, and Twitch chat modes in one ordered profile. Closing OBS reverses the resources that should be restored and leaves one-shot actions alone.
 
@@ -21,7 +21,7 @@ For example, starting OBS can activate streaming helpers, audio settings, lighti
 2. Install the **.NET 10 Desktop Runtime** if it is not already installed.
 3. Run `AppSupervisor.exe`, approve the UAC prompt, and find AppSupervisor in the notification area.
 4. Double-click the tray icon—or right-click it and choose **Configure...**—to open the editor.
-5. Create a profile, choose the process or globally registered Bluetooth device that activates it, add helpers in startup order, then choose **Validate** and **Save & Apply**.
+5. Create a profile, choose the process or globally registered Bluetooth devices that activate it, add helpers in startup order, then choose **Validate** and **Save & Apply**.
 
 AppSupervisor runs in the notification area rather than opening a permanent main window. Its configuration is stored beside the executable in `config.json`.
 
@@ -41,7 +41,7 @@ The screenshots below use a sanitized copy of a real OBS profile. They contain e
 
 ### 1. Choose what activates a profile
 
-A profile watches either one executable name or one device from the global Bluetooth registry. The optional close and restart timeout overrides apply to everything owned by that profile.
+A profile watches either one executable name or an ANY-mode list from the global Bluetooth registry. The optional close and restart timeout overrides apply to everything owned by that profile.
 
 ![OBS profile settings showing the monitored process and timeout controls](docs/images/configuration-profile.jpg)
 
@@ -107,7 +107,7 @@ The tray icon stays compact while showing the important state. The blue clock me
 
 ## Functionality summary
 
-- Activates profiles when their monitored process starts or their registered Bluetooth device is present, then processes applications, services, delays, Windows audio interfaces, Home Assistant, MQTT, OBS, Stream Deck, and Twitch actions in the configured order.
+- Activates profiles when their monitored process starts or any selected registered Bluetooth device is present, then processes applications, services, delays, Windows audio interfaces, Home Assistant, MQTT, OBS, Stream Deck, and Twitch actions in the configured order.
 - Restarts applications or services that stop unexpectedly, with configurable close and restart timeouts and a universal five-attempt automatic-recovery limit.
 - Gracefully closes applications by default, with optional force-kill only when explicitly enabled.
 - Supports regular executables, Steam applications, Microsoft Store/MSIX applications, and Windows services.
@@ -131,7 +131,7 @@ The tray icon stays compact while showing the important state. The blue clock me
 
 ### Profiles and resources
 
-Each profile watches one process or one globally registered Bluetooth device. When its trigger becomes present, AppSupervisor activates the profile's enabled resources from top to bottom. When the trigger remains absent for the configured **Close timeout**, AppSupervisor closes or stops those resources.
+Each profile watches one process or an ANY-mode list of globally registered Bluetooth devices. When its trigger becomes present, AppSupervisor activates the profile's enabled resources from top to bottom. When the trigger remains absent for the configured **Close timeout**, AppSupervisor closes or stops those resources.
 
 Resources can include:
 
@@ -257,7 +257,7 @@ Windows can replace an audio endpoint ID after a driver update, reconnect, or de
 
 ### Bluetooth device presence
 
-Use **Integrations → Global — Bluetooth device presence** to discover nearby or paired Bluetooth Classic and Low Energy devices and register them once for the whole application. A profile can then select **Bluetooth device presence** as its activation trigger and reference any registered device. Several profiles may reuse the same registration.
+Use **Integrations → Global — Bluetooth device presence** to discover nearby or paired Bluetooth Classic and Low Energy devices and register them once for the whole application. A profile can then select **Bluetooth device presence** as its activation trigger and check one or more registered devices. Selection uses ANY mode: one present device keeps the profile active, and several profiles may reuse the same registrations.
 
 Discovery shows a **Looking for Bluetooth devices...** activity overlay while it uses Windows association-endpoint names and actively requests standard and extended Bluetooth Low Energy advertisements and scan responses. It reads both Windows' decoded local name and the raw complete/shortened-name data sections. Every result remains available for registration. A device whose adapter/driver path exposes no usable name receives an editable **Unidentified Classic/LE device** label plus its address suffix instead of presenting the address as a name. Pairing an intended device in Windows can make additional naming metadata available. A name edited in AppSupervisor is preserved by later scans.
 
@@ -265,7 +265,7 @@ The grid combines signal strength reported by Windows endpoint discovery with ra
 
 Registrations store AppSupervisor's own stable device ID plus the remote device's 48-bit Bluetooth address and transport. They do not depend on the USB adapter's Windows identity, so replacing a Bluetooth dongle does not invalidate profile references. Discovery and monitoring never pair, connect to, or control a remote device.
 
-Connected devices and devices that Windows reports as present count as nearby. Bluetooth Classic devices normally need to be connected or discoverable; Low Energy devices can be observed through advertisements. The global scan interval controls how often Windows discovery runs, and the presence timeout keeps a brief missed scan or advertisement from immediately deactivating profiles. The presence timeout must be at least the scan interval.
+Connected devices and devices that Windows reports as present count as nearby. Bluetooth Classic devices normally need to be connected or discoverable; Low Energy devices can be observed through advertisements. The global scan interval controls how often Windows discovery runs, and the presence timeout is applied independently to each registration. A multi-device trigger becomes absent only after every selected device has exceeded that timeout; the profile's close timeout begins afterward. The presence timeout must be at least the scan interval.
 
 Bluetooth presence requires a working Windows Bluetooth adapter and driver. If Windows aborts every Classic and Low Energy watcher, AppSupervisor reports the discovery failure and leaves existing cached presence to expire normally.
 
@@ -413,6 +413,7 @@ Status values are:
   "triggerType": "process",
   "monitorProcess": "VRChat.exe",
   "monitorBluetoothDeviceId": "",
+  "monitorBluetoothDeviceIds": [],
   "helpers": [
     {
       "name": "helper.exe",

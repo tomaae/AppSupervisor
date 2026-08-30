@@ -176,9 +176,12 @@ public static class IntegrationConfigValidator
             if (profile is null || profile.TriggerType != ProfileTriggerType.BluetoothDevice)
                 continue;
 
-            string deviceId = profile.MonitorBluetoothDeviceId?.Trim() ?? "";
-            if (deviceId.Length > 0 && !ids.Contains(deviceId))
+            foreach (string? selectedDeviceId in profile.MonitorBluetoothDeviceIds ?? [])
             {
+                string deviceId = selectedDeviceId?.Trim() ?? "";
+                if (deviceId.Length == 0 || ids.Contains(deviceId))
+                    continue;
+
                 string profileName = string.IsNullOrWhiteSpace(profile.Name)
                     ? "An unnamed profile"
                     : $"Profile '{profile.Name}'";
