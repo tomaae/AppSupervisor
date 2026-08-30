@@ -160,7 +160,7 @@ public sealed partial class ConfigurationEditorForm
         _refreshDiagnosticLogsButton.Click += RefreshDiagnosticLogsClicked;
         _diagnosticLogRecords.CellValueNeeded += DiagnosticLogCellValueNeeded;
         _diagnosticLogRecords.CellFormatting += DiagnosticLogCellFormatting;
-        _diagnosticLogRecords.SelectionChanged += DiagnosticLogRecordSelectionChanged;
+        _diagnosticLogRecords.CurrentCellChanged += DiagnosticLogCurrentCellChanged;
         _diagnosticLogStatus.Text = "Select this tab to load available session logs.";
     }
 
@@ -459,8 +459,8 @@ public sealed partial class ConfigurationEditorForm
         };
     }
 
-    /// <summary>Displays the selected record's complete multiline body without flattening continuations.</summary>
-    private void DiagnosticLogRecordSelectionChanged(object? sender, EventArgs e) =>
+    /// <summary>Reads the current row after it changes; SelectionChanged can still expose the previous cell.</summary>
+    private void DiagnosticLogCurrentCellChanged(object? sender, EventArgs e) =>
         ShowSelectedDiagnosticLogRecord();
 
     private void ShowSelectedDiagnosticLogRecord()
@@ -521,7 +521,7 @@ public sealed partial class ConfigurationEditorForm
         _refreshDiagnosticLogsButton.Click -= RefreshDiagnosticLogsClicked;
         _diagnosticLogRecords.CellValueNeeded -= DiagnosticLogCellValueNeeded;
         _diagnosticLogRecords.CellFormatting -= DiagnosticLogCellFormatting;
-        _diagnosticLogRecords.SelectionChanged -= DiagnosticLogRecordSelectionChanged;
+        _diagnosticLogRecords.CurrentCellChanged -= DiagnosticLogCurrentCellChanged;
         _diagnosticLogOperationCancellation?.Cancel();
         _diagnosticLogOperationCancellation = null;
     }

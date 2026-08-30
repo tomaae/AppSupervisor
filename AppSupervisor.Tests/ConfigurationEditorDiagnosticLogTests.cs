@@ -39,43 +39,44 @@ public sealed class ConfigurationEditorDiagnosticLogTests
                 try
                 {
                     using var form = CreateForm(configPath);
-                    form.Show();
-                    Application.DoEvents();
-                    TabControl tabs = Assert.Single(form.Controls.OfType<TabControl>());
-                    TabPage integrations = Assert.Single(
-                        tabs.TabPages.Cast<TabPage>(),
-                        page => page.Text == "Integrations"
-                    );
-                    TabPage logs = Assert.Single(
-                        tabs.TabPages.Cast<TabPage>(),
-                        page => page.Text == "Diagnostic logs"
-                    );
-                    Assert.Equal(tabs.TabPages.IndexOf(integrations) + 1,
-                        tabs.TabPages.IndexOf(logs));
+                    RunWithMessageLoop(form, async () =>
+                    {
+                        TabControl tabs = Assert.Single(form.Controls.OfType<TabControl>());
+                        TabPage integrations = Assert.Single(
+                            tabs.TabPages.Cast<TabPage>(),
+                            page => page.Text == "Integrations"
+                        );
+                        TabPage logs = Assert.Single(
+                            tabs.TabPages.Cast<TabPage>(),
+                            page => page.Text == "Diagnostic logs"
+                        );
+                        Assert.Equal(tabs.TabPages.IndexOf(integrations) + 1,
+                            tabs.TabPages.IndexOf(logs));
 
-                    tabs.SelectedTab = logs;
-                    ComboBox selector = FindNamedControl<ComboBox>(logs,
-                        "DiagnosticLogSessionSelector");
-                    DataGridView records = FindNamedControl<DataGridView>(logs,
-                        "DiagnosticLogRecords");
-                    RichTextBox detail = FindNamedControl<RichTextBox>(logs,
-                        "DiagnosticLogDetail");
-                    WaitUntil(() => selector.Items.Count == 2 && records.RowCount == 1 &&
-                        detail.Text.Contains("Newer session failed.", StringComparison.Ordinal));
+                        tabs.SelectedTab = logs;
+                        ComboBox selector = FindNamedControl<ComboBox>(logs,
+                            "DiagnosticLogSessionSelector");
+                        DataGridView records = FindNamedControl<DataGridView>(logs,
+                            "DiagnosticLogRecords");
+                        RichTextBox detail = FindNamedControl<RichTextBox>(logs,
+                            "DiagnosticLogDetail");
+                        await WaitUntilAsync(() => selector.Items.Count == 2 && records.RowCount == 1 &&
+                            detail.Text.Contains("Newer session failed.", StringComparison.Ordinal));
 
-                    Assert.Equal(["Time", "Level", "Message"],
-                        records.Columns.Cast<DataGridViewColumn>().Select(column => column.Name));
-                    Assert.Contains("Newer session failed.", detail.Text,
-                        StringComparison.Ordinal);
-                    Assert.Contains(
-                        "TimeoutException: timed out\n   at Session.Load()",
-                        detail.Text.Replace("\r", "", StringComparison.Ordinal),
-                        StringComparison.Ordinal
-                    );
+                        Assert.Equal(["Time", "Level", "Message"],
+                            records.Columns.Cast<DataGridViewColumn>().Select(column => column.Name));
+                        Assert.Contains("Newer session failed.", detail.Text,
+                            StringComparison.Ordinal);
+                        Assert.Contains(
+                            "TimeoutException: timed out\n   at Session.Load()",
+                            detail.Text.Replace("\r", "", StringComparison.Ordinal),
+                            StringComparison.Ordinal
+                        );
 
-                    selector.SelectedIndex = 1;
-                    WaitUntil(() => detail.Text.Contains("Older session.",
-                        StringComparison.Ordinal));
+                        selector.SelectedIndex = 1;
+                        await WaitUntilAsync(() => detail.Text.Contains("Older session.",
+                            StringComparison.Ordinal));
+                    });
                 }
                 catch (Exception exception)
                 {
@@ -116,37 +117,46 @@ public sealed class ConfigurationEditorDiagnosticLogTests
                 try
                 {
                     using var form = CreateForm(configPath);
-                    form.Show();
-                    Application.DoEvents();
-                    TabControl tabs = Assert.Single(form.Controls.OfType<TabControl>());
-                    TabPage profile = tabs.TabPages[0];
-                    TabPage logs = Assert.Single(
-                        tabs.TabPages.Cast<TabPage>(),
-                        page => page.Text == "Diagnostic logs"
-                    );
-                    DataGridView records = FindNamedControl<DataGridView>(logs,
-                        "DiagnosticLogRecords");
-                    RichTextBox detail = FindNamedControl<RichTextBox>(logs,
-                        "DiagnosticLogDetail");
-                    Label status = FindNamedControl<Label>(logs, "DiagnosticLogStatus");
+                    RunWithMessageLoop(form, async () =>
+                    {
+                        TabControl tabs = Assert.Single(form.Controls.OfType<TabControl>());
+                        TabPage profile = tabs.TabPages[0];
+                        TabPage logs = Assert.Single(
+                            tabs.TabPages.Cast<TabPage>(),
+                            page => page.Text == "Diagnostic logs"
+                        );
+                        DataGridView records = FindNamedControl<DataGridView>(logs,
+                            "DiagnosticLogRecords");
+                        RichTextBox detail = FindNamedControl<RichTextBox>(logs,
+                            "DiagnosticLogDetail");
+                        Label status = FindNamedControl<Label>(logs, "DiagnosticLogStatus");
 
-                    tabs.SelectedTab = logs;
-                    WaitUntil(() => records.RowCount == 1);
-                    File.AppendAllText(
-                        logPath,
-                        "2026-08-26T12:00:01+02:00 [WARN] Appended.\r\n\r\n"
-                    );
-                    tabs.SelectedTab = profile;
-                    tabs.SelectedTab = logs;
-                    WaitUntil(() => records.RowCount == 2 &&
-                        detail.Text.Contains("Appended.", StringComparison.Ordinal));
+                        tabs.SelectedTab = logs;
+                        await WaitUntilAsync(() => records.RowCount == 1, () => status.Text);
+                        File.AppendAllText(
+                            logPath,
+                            "2026-08-26T12:00:01+02:00 [WARN] Appended.\r\n\r\n"
+                        );
+                        tabs.SelectedTab = profile;
+                        tabs.SelectedTab = logs;
+                        await WaitUntilAsync(() => records.RowCount == 2 &&
+                            detail.Text.Contains("Appended.", StringComparison.Ordinal),
+                            () => $"{status.Text}; rows={records.RowCount}; detail={detail.Text}");
 
-                    File.Delete(logPath);
-                    tabs.SelectedTab = profile;
-                    tabs.SelectedTab = logs;
-                    WaitUntil(() => records.RowCount == 0 &&
-                        status.Text.Contains("No AppSupervisor session logs",
-                            StringComparison.Ordinal));
+                        // Detail must follow the new current cell, not the previous
+                        // cell exposed while SelectionChanged is still firing.
+                        records.CurrentCell = records.Rows[0].Cells[0];
+                        Assert.Equal("First.", detail.Text);
+                        records.CurrentCell = records.Rows[1].Cells[0];
+                        Assert.Equal("Appended.", detail.Text);
+
+                        File.Delete(logPath);
+                        tabs.SelectedTab = profile;
+                        tabs.SelectedTab = logs;
+                        await WaitUntilAsync(() => records.RowCount == 0 &&
+                            status.Text.Contains("No AppSupervisor session logs",
+                                StringComparison.Ordinal));
+                    });
                 }
                 catch (Exception exception)
                 {
@@ -166,6 +176,36 @@ public sealed class ConfigurationEditorDiagnosticLogTests
         Assert.Null(threadException);
     }
 
+    /// <summary>Keeps the UI context installed throughout asynchronous browsing and closes on the owning thread.</summary>
+    private static void RunWithMessageLoop(Form form, Func<Task> scenario)
+    {
+        Exception? failure = null;
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                Assert.IsType<WindowsFormsSynchronizationContext>(SynchronizationContext.Current);
+                await Task.Yield();
+                await scenario();
+                Assert.IsType<WindowsFormsSynchronizationContext>(SynchronizationContext.Current);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        // A standalone DoEvents loop uninstalls the WinForms context when it exits,
+        // letting await continuations race control creation/disposal on a pool thread.
+        Application.Run(form);
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
     /// <summary>Creates an invisible editor with deterministic service discovery.</summary>
     private static ConfigurationEditorForm CreateForm(string configPath) => new(
         configPath,
@@ -177,17 +217,16 @@ public sealed class ConfigurationEditorDiagnosticLogTests
         Opacity = 0
     };
 
-    /// <summary>Pumps WinForms messages until a bounded asynchronous UI condition is met.</summary>
-    private static void WaitUntil(Func<bool> condition)
+    /// <summary>Yields to the real WinForms loop until a bounded asynchronous UI condition is met.</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, Func<string>? describeState = null)
     {
         DateTime deadline = DateTime.UtcNow.AddSeconds(5);
         while (!condition() && DateTime.UtcNow < deadline)
         {
-            Application.DoEvents();
-            Thread.Sleep(10);
+            await Task.Delay(10);
         }
 
-        Assert.True(condition(), "The asynchronous diagnostic-log UI condition was not met.");
+        Assert.True(condition(), $"The asynchronous diagnostic-log UI condition was not met. {describeState?.Invoke()}");
     }
 
     /// <summary>Finds one named control recursively beneath a tab page.</summary>
