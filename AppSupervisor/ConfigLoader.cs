@@ -78,6 +78,7 @@ public static class ConfigLoader
                 device.DeviceId = device.DeviceId?.Trim() ?? "";
                 device.Name = device.Name?.Trim() ?? "";
                 device.Address = BluetoothDeviceScanner.NormalizeAddress(device.Address);
+                device.ManufacturerName = device.ManufacturerName?.Trim() ?? "";
                 device.ManufacturerCompanyIds = device.ManufacturerCompanyIds?.Distinct()
                     .OrderBy(companyId => companyId)
                     .ToList() ?? [];

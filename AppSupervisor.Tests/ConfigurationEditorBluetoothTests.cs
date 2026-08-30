@@ -289,13 +289,13 @@ public sealed class ConfigurationEditorBluetoothTests
                             StringComparison.Ordinal
                         )
                     );
-                    int companyColumnIndex = grid.Columns.Cast<DataGridViewColumn>()
-                        .Single(column => column.HeaderText == "Company hint")
+                    int manufacturerColumnIndex = grid.Columns.Cast<DataGridViewColumn>()
+                        .Single(column => column.HeaderText == "Manufacturer")
                         .Index;
                     Assert.Contains(
                         grid.Rows.Cast<DataGridViewRow>(),
                         row => string.Equals(
-                            row.Cells[companyColumnIndex].Value?.ToString(),
+                            row.Cells[manufacturerColumnIndex].Value?.ToString(),
                             "Apple, Inc.",
                             StringComparison.Ordinal
                         )

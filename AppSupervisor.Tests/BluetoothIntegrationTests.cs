@@ -31,6 +31,7 @@ public sealed class BluetoothIntegrationTests
                                 Name = " Phone ",
                                 Address = "AA:BB:CC:DD:EE:FF",
                                 Kind = BluetoothDeviceKind.LowEnergy,
+                                ManufacturerName = " Microsoft ",
                                 ManufacturerCompanyIds = [76, 6, 76]
                             }
                         ]
@@ -54,6 +55,7 @@ public sealed class BluetoothIntegrationTests
             Assert.Equal("Phone", device.Name);
             Assert.Equal("AABBCCDDEEFF", device.Address);
             Assert.Equal(BluetoothDeviceKind.LowEnergy, device.Kind);
+            Assert.Equal("Microsoft", device.ManufacturerName);
             Assert.Equal([6, 76], device.ManufacturerCompanyIds);
             Assert.Equal(ProfileTriggerType.BluetoothDevice, profile.TriggerType);
             Assert.Equal(deviceId, profile.MonitorBluetoothDeviceId);
@@ -80,6 +82,39 @@ public sealed class BluetoothIntegrationTests
         Assert.Equal(
             [6, 76, 117],
             BluetoothDeviceScanner.MergeManufacturerCompanyIds([76, 6], [117, 76])
+        );
+    }
+
+    [Theory]
+    [InlineData(-35, -35)]
+    [InlineData(-126, -126)]
+    [InlineData(-127, null)]
+    [InlineData(0, null)]
+    [InlineData(75, null)]
+    [InlineData("-68", -68)]
+    [InlineData("invalid", null)]
+    [InlineData(null, null)]
+    public void NormalizeSignalStrength_AcceptsOnlyPlausibleNegativeDbm(
+        object? value,
+        int? expected)
+    {
+        short? actual = BluetoothDeviceScanner.NormalizeSignalStrength(value);
+        Assert.Equal(expected, actual is short signal ? (int?)signal : null);
+    }
+
+    [Fact]
+    public void ChoosePreferredManufacturer_PreservesExistingWindowsMetadata()
+    {
+        Assert.Equal(
+            "Existing vendor",
+            BluetoothDeviceScanner.ChoosePreferredManufacturer(
+                " Existing vendor ",
+                "New vendor"
+            )
+        );
+        Assert.Equal(
+            "New vendor",
+            BluetoothDeviceScanner.ChoosePreferredManufacturer("", " New vendor ")
         );
     }
 

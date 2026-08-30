@@ -10,4 +10,5 @@ internal sealed record BluetoothDeviceSnapshot(
     bool IsConnected,
     bool IsPresent,
     short? SignalStrengthDbm = null,
+    string ManufacturerName = "",
     IReadOnlyList<ushort>? ManufacturerCompanyIds = null);

@@ -17,6 +17,8 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
         "System.Devices.Aep.Bluetooth.Le.AddressType",
         "System.Devices.Aep.IsConnected",
         "System.Devices.Aep.IsPresent",
+        "System.Devices.Aep.Manufacturer",
+        "System.Devices.Aep.SignalStrength",
         "System.Devices.FriendlyName",
         "System.ItemNameDisplay"
     ];
@@ -246,6 +248,11 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 "System.Devices.Aep.IsPresent"
             );
             bool paired = device.Pairing.IsPaired;
+            string manufacturerName = ReadStringProperty(
+                device,
+                "System.Devices.Aep.Manufacturer"
+            ).Trim();
+            short? signalStrengthDbm = ReadSignalStrengthProperty(device);
             string name = SelectDisplayName(
                 address,
                 ReadStringProperty(device, "System.Devices.FriendlyName"),
@@ -287,7 +294,9 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 kind,
                 paired,
                 isConnected,
-                isPresent || isConnected
+                isPresent || isConnected,
+                SignalStrengthDbm: signalStrengthDbm,
+                ManufacturerName: manufacturerName
             );
             MergeSnapshot(discovered, snapshot);
         }
@@ -354,6 +363,10 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                     existing.SignalStrengthDbm,
                     snapshot.SignalStrengthDbm
                 ),
+                ManufacturerName = ChoosePreferredManufacturer(
+                    existing.ManufacturerName,
+                    snapshot.ManufacturerName
+                ),
                 ManufacturerCompanyIds = MergeManufacturerCompanyIds(
                     existing.ManufacturerCompanyIds,
                     snapshot.ManufacturerCompanyIds
@@ -383,6 +396,25 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
             : second is null
                 ? first
                 : Math.Max(first.Value, second.Value);
+
+    internal static string ChoosePreferredManufacturer(string? first, string? second)
+    {
+        string existing = first?.Trim() ?? "";
+        return existing.Length > 0 ? existing : second?.Trim() ?? "";
+    }
+
+    internal static short? NormalizeSignalStrength(object? value)
+    {
+        try
+        {
+            int signal = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            return signal is > -127 and < 0 ? (short)signal : null;
+        }
+        catch (Exception) when (value is not null)
+        {
+            return null;
+        }
+    }
 
     private static async Task<(bool Connected, string Name)>
         ResolveLowEnergyDeviceByAddressAsync(
@@ -571,6 +603,12 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
 
     private static bool ReadBooleanProperty(DeviceInformation device, string key) =>
         device.Properties.TryGetValue(key, out object? value) && value is true;
+
+    private static short? ReadSignalStrengthProperty(DeviceInformation device) =>
+        device.Properties.TryGetValue(
+            "System.Devices.Aep.SignalStrength",
+            out object? value
+        ) ? NormalizeSignalStrength(value) : null;
 
     private enum BluetoothScanStatus
     {

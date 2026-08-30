@@ -218,11 +218,11 @@ public sealed partial class ConfigurationEditorForm
         });
         _bluetoothDevices.Columns.Add(new DataGridViewTextBoxColumn
         {
-            DataPropertyName = nameof(BluetoothDeviceEditorRow.CompanyHint),
-            HeaderText = "Company hint",
+            DataPropertyName = nameof(BluetoothDeviceEditorRow.Manufacturer),
+            HeaderText = "Manufacturer",
             ReadOnly = true,
             Width = 170,
-            ToolTipText = "Owner of manufacturer-specific Bluetooth advertising data; it may differ from the consumer brand."
+            ToolTipText = "Windows manufacturer metadata when available; otherwise the owner of manufacturer-specific advertising data, which may differ from the consumer brand."
         });
         _bluetoothDevices.Columns.Add(new DataGridViewTextBoxColumn
         {
@@ -410,12 +410,15 @@ public sealed partial class ConfigurationEditorForm
         public string Name { get; set; } = "";
         public string Address { get; set; } = "";
         public BluetoothDeviceKind Kind { get; set; }
+        public string ManufacturerName { get; set; } = "";
         public List<ushort> ManufacturerCompanyIds { get; set; } = [];
         public string Status { get; set; } = "Not checked";
         public string Signal { get; set; } = "—";
         public string Proximity { get; set; } = "Unknown";
         public string KindText => Kind == BluetoothDeviceKind.Classic ? "Classic" : "Low Energy";
-        public string CompanyHint => BluetoothCompanyIdentifiers.Format(ManufacturerCompanyIds);
+        public string Manufacturer => ManufacturerName.Length > 0
+            ? ManufacturerName
+            : BluetoothCompanyIdentifiers.Format(ManufacturerCompanyIds);
         public string FormattedAddress => string.Join(":", Enumerable.Range(0, 6)
             .Select(index => Address.Length == 12 ? Address.Substring(index * 2, 2) : "??"));
 
@@ -427,6 +430,7 @@ public sealed partial class ConfigurationEditorForm
                 : CreateUnidentifiedName(device.Kind, device.Address),
             Address = device.Address,
             Kind = device.Kind,
+            ManufacturerName = device.ManufacturerName,
             ManufacturerCompanyIds = device.ManufacturerCompanyIds.ToList()
         };
 
@@ -437,6 +441,7 @@ public sealed partial class ConfigurationEditorForm
                 : CreateUnidentifiedName(device.Kind, device.Address),
             Address = device.Address,
             Kind = device.Kind,
+            ManufacturerName = device.ManufacturerName,
             ManufacturerCompanyIds = device.ManufacturerCompanyIds?.ToList() ?? [],
             Status = GetStatus(device),
             Signal = GetSignal(device),
@@ -452,6 +457,10 @@ public sealed partial class ConfigurationEditorForm
             if (Name.Length == 0)
                 Name = generatedName;
 
+            ManufacturerName = BluetoothDeviceScanner.ChoosePreferredManufacturer(
+                ManufacturerName,
+                device.ManufacturerName
+            );
             ManufacturerCompanyIds = BluetoothDeviceScanner.MergeManufacturerCompanyIds(
                 ManufacturerCompanyIds,
                 device.ManufacturerCompanyIds
@@ -485,6 +494,7 @@ public sealed partial class ConfigurationEditorForm
             Name = Name,
             Address = Address,
             Kind = Kind,
+            ManufacturerName = ManufacturerName,
             ManufacturerCompanyIds = ManufacturerCompanyIds.ToList()
         };
     }
