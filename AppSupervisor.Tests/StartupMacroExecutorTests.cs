@@ -163,7 +163,7 @@ public sealed class StartupMacroExecutorTests
     {
         List<StartupMacroActionConfig> actions =
         [
-            new() { Type = StartupMacroActionType.Minimize }
+            new() { Type = StartupMacroActionType.Maximize }
         ];
         var failures = new List<string>();
         bool windowAvailable = false;
@@ -174,7 +174,7 @@ public sealed class StartupMacroExecutorTests
             failures.Add,
             succeeded => completed = succeeded,
             (_, _) => windowAvailable
-                ? StartupMacroWindowActions.ExecutionResult.Success("minimized")
+                ? StartupMacroWindowActions.ExecutionResult.Success("maximized")
                 : StartupMacroWindowActions.ExecutionResult.Unavailable("not ready")
         );
         DateTime started = new(2026, 8, 21, 12, 0, 0, DateTimeKind.Utc);
@@ -192,5 +192,106 @@ public sealed class StartupMacroExecutorTests
         Assert.False(executor.Pending);
         Assert.True(completed);
         Assert.Empty(failures);
+    }
+
+    [Fact]
+    public void Advance_Minimize_WaitsForRegularRetriesBeforeNextAction()
+    {
+        var executed = new List<StartupMacroActionType?>();
+        bool? completed = null;
+        var executor = new StartupMacroExecutor(
+            [new() { Type = StartupMacroActionType.Minimize }, new() { Type = StartupMacroActionType.Restore }],
+            () => new HashSet<int> { 42 },
+            _ => throw new Xunit.Sdk.XunitException("Unexpected macro failure."),
+            succeeded => completed = succeeded,
+            (action, _) =>
+            {
+                executed.Add(action.Type);
+                return StartupMacroWindowActions.ExecutionResult.Success("applied");
+            }
+        );
+        DateTime started = new(2026, 8, 30, 12, 0, 0, DateTimeKind.Utc);
+        executor.Start();
+        executor.Advance(started);
+        Assert.Empty(executed);
+        for (int milliseconds = 250; milliseconds <= 750; milliseconds += 250)
+            executor.Advance(started.AddMilliseconds(milliseconds));
+        Assert.True(executor.Pending);
+        Assert.Null(completed);
+        Assert.DoesNotContain(StartupMacroActionType.Restore, executed);
+
+        executor.Advance(started.AddSeconds(1));
+
+        Assert.True(completed);
+        Assert.False(executor.Pending);
+        Assert.Equal(4, executed.Count(type => type == StartupMacroActionType.Minimize));
+        Assert.Equal(StartupMacroActionType.Restore, executed[^1]);
+    }
+
+    [Fact]
+    public void Advance_MinimizeTimeout_ReportsOnceAndContinues()
+    {
+        var failures = new List<string>();
+        bool restored = false;
+        bool? completed = null;
+        var executor = new StartupMacroExecutor(
+            [new() { Type = StartupMacroActionType.Minimize }, new() { Type = StartupMacroActionType.Restore }],
+            () => new HashSet<int> { 42 },
+            failures.Add,
+            succeeded => completed = succeeded,
+            (action, _) =>
+            {
+                if (action.Type == StartupMacroActionType.Minimize)
+                    return StartupMacroWindowActions.ExecutionResult.Unavailable("no window");
+                restored = true;
+                return StartupMacroWindowActions.ExecutionResult.Success("restored");
+            }
+        );
+        DateTime started = new(2026, 8, 30, 12, 0, 0, DateTimeKind.Utc);
+        executor.Start();
+        executor.Advance(started);
+        executor.Advance(started.AddMilliseconds(9_999));
+        Assert.True(executor.Pending);
+        Assert.False(restored);
+        Assert.Empty(failures);
+
+        executor.Advance(started.AddMilliseconds(10_250));
+        executor.Advance(started.AddSeconds(11));
+
+        Assert.False(executor.Pending);
+        Assert.False(completed);
+        Assert.True(restored);
+        Assert.Contains("action 1 (Minimize)", Assert.Single(failures));
+        Assert.Contains("10 seconds", failures[0]);
+    }
+
+    [Fact]
+    public void Start_AfterPartialMinimize_DiscardsPreviousRetryState()
+    {
+        bool? completed = null;
+        var executor = new StartupMacroExecutor(
+            [new() { Type = StartupMacroActionType.Minimize }],
+            () => new HashSet<int> { 42 },
+            _ => throw new Xunit.Sdk.XunitException("Unexpected macro failure."),
+            succeeded => completed = succeeded,
+            (_, _) => StartupMacroWindowActions.ExecutionResult.Success("minimized")
+        );
+        DateTime started = new(2026, 8, 30, 12, 0, 0, DateTimeKind.Utc);
+        executor.Start();
+        for (int milliseconds = 0; milliseconds <= 750; milliseconds += 250)
+            executor.Advance(started.AddMilliseconds(milliseconds));
+
+        executor.Cancel();
+        executor.Advance(started.AddSeconds(1));
+        Assert.Null(completed);
+        executor.Start();
+        for (int milliseconds = 20_000; milliseconds <= 20_750; milliseconds += 250)
+            executor.Advance(started.AddMilliseconds(milliseconds));
+        Assert.True(executor.Pending);
+        Assert.Null(completed);
+
+        executor.Advance(started.AddSeconds(21));
+        Assert.True(completed);
+        Assert.False(executor.Pending);
     }
 }

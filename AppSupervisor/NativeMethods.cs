@@ -10,7 +10,6 @@ internal static class NativeMethods
     public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public const int SW_MINIMIZE = 6;
     public const uint WM_SYSCOMMAND = 0x0112;
-    public const uint SC_MINIMIZE = 0xF020;
     public const uint SC_MAXIMIZE = 0xF030;
     public const uint SC_RESTORE = 0xF120;
     public const uint INPUT_KEYBOARD = 1;

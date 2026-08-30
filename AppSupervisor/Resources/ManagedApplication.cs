@@ -27,7 +27,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     private readonly string _runtimePath;
 
     private CloseOperation? _closeOperation;
-    private MinimizeOperation? _minimizeOperation;
+    private WindowMinimizeOperation? _minimizeOperation;
     private HashSet<int>? _failedMultipleProcessIds;
     private DateTime? _missingSince;
     private DateTime? _closeObservationStartedUtc;
@@ -922,11 +922,7 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     /// </summary>
     private void StartMinimizeAfterStart(DateTime nowUtc)
     {
-        _minimizeOperation = new MinimizeOperation
-        {
-            StartedUtc = nowUtc,
-            NextCheckUtc = nowUtc + TimeSpan.FromMilliseconds(250)
-        };
+        _minimizeOperation = new WindowMinimizeOperation(nowUtc);
     }
 
     /// <summary>
@@ -938,102 +934,41 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
     }
 
     /// <summary>
-    /// Minimizes all visible top-level windows that belong to the supplied process.
-    /// </summary>
-    /// <param name="process">The process whose windows should be minimized.</param>
-    /// <returns><see langword="true"/> when at least one matching window is minimized.</returns>
-    private static bool MinimizeProcessWindows(Process process)
-    {
-        uint processId = (uint)process.Id;
-        bool minimized = false;
-
-        NativeMethods.EnumWindows((hWnd, lParam) =>
-        {
-            uint windowThreadId = NativeMethods.GetWindowThreadProcessId(
-                hWnd,
-                out uint windowProcessId
-            );
-
-            if (windowThreadId == 0 ||
-                windowProcessId != processId ||
-                !NativeMethods.IsWindowVisible(hWnd))
-                return true;
-
-            if (NativeMethods.IsIconic(hWnd))
-            {
-                minimized = true;
-                return true;
-            }
-
-            NativeMethods.ShowWindow(hWnd, NativeMethods.SW_MINIMIZE);
-
-            if (NativeMethods.IsIconic(hWnd))
-                minimized = true;
-
-            return true;
-        }, IntPtr.Zero);
-
-        return minimized;
-    }
-
-    /// <summary>
     /// Advances one nonblocking post-launch minimization check.
     /// </summary>
     private void AdvanceMinimizeAfterStart(DateTime nowUtc)
     {
-        const int timeoutMilliseconds = 10000;
-        const int checkIntervalMilliseconds = 250;
-        const int stableMillisecondsRequired = 1000;
-
-        MinimizeOperation? operation = _minimizeOperation;
-        if (operation is null || nowUtc < operation.NextCheckUtc)
+        WindowMinimizeOperation? operation = _minimizeOperation;
+        if (operation is null)
             return;
 
         try
         {
-            if (nowUtc - operation.StartedUtc >= TimeSpan.FromMilliseconds(timeoutMilliseconds))
+            bool? result = operation.Advance(nowUtc, () =>
             {
-                _minimizeOperation = null;
-                ReportError(
-                    $"Could not keep {DisplayName} minimized within {timeoutMilliseconds / 1000} seconds."
-                );
+                var processes = FindRunningProcesses(fresh: true);
+
+                try
+                {
+                    return CountIndependentInstances(processes) == 1 &&
+                        processes.Any(process => WindowMinimizeOperation.MinimizeProcessWindows(process.Id));
+                }
+                finally
+                {
+                    DisposeProcesses(processes);
+                }
+            });
+
+            if (result is null)
                 return;
-            }
 
-            var processes = FindRunningProcesses(fresh: true);
-
-            try
+            _minimizeOperation = null;
+            if (result == false)
             {
-                if (CountIndependentInstances(processes) == 1)
-                {
-                    bool minimized = processes.Any(MinimizeProcessWindows);
-
-                    if (minimized)
-                    {
-                        operation.MinimizedStableMilliseconds += checkIntervalMilliseconds;
-
-                        if (operation.MinimizedStableMilliseconds >= stableMillisecondsRequired)
-                        {
-                            _minimizeOperation = null;
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        operation.MinimizedStableMilliseconds = 0;
-                    }
-                }
-                else
-                {
-                    operation.MinimizedStableMilliseconds = 0;
-                }
+                ReportError(
+                    $"Could not keep {DisplayName} minimized within {WindowMinimizeOperation.TimeoutMilliseconds / 1000} seconds."
+                );
             }
-            finally
-            {
-                DisposeProcesses(processes);
-            }
-
-            operation.NextCheckUtc = nowUtc + TimeSpan.FromMilliseconds(checkIntervalMilliseconds);
         }
         catch (Exception ex)
         {
@@ -1233,15 +1168,5 @@ public sealed class ManagedApplication : IManagedApplicationLifecycle, IRecovera
 
         /// <summary>Gets or sets the one background tray Exit request batch started for this operation.</summary>
         public Task? TrayExitTask { get; set; }
-    }
-
-    /// <summary>Stores timer-owned post-launch minimization progress.</summary>
-    private sealed class MinimizeOperation
-    {
-        public DateTime StartedUtc { get; set; }
-
-        public DateTime NextCheckUtc { get; set; }
-
-        public int MinimizedStableMilliseconds { get; set; }
     }
 }

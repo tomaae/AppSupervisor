@@ -1,5 +1,6 @@
 using AppSupervisor.Health;
 using AppSupervisor.Configuration;
+using AppSupervisor.Resources;
 
 namespace AppSupervisor.ConfigurationUI;
 
@@ -243,6 +244,32 @@ public sealed partial class ConfigurationEditorForm
                     continue;
                 }
 
+                if (action.Type == StartupMacroActionType.Minimize)
+                {
+                    string? failure = null;
+                    var executor = new StartupMacroExecutor(
+                        [action],
+                        () => ProcessPathDiscovery.FindRunningProcessIds(runtimePath, useSharedCache: false),
+                        detail => failure = detail,
+                        _ => { }
+                    );
+                    executor.Start();
+                    while (executor.Pending && !IsDisposed && !Disposing)
+                    {
+                        executor.Advance(DateTime.UtcNow);
+                        if (executor.Pending)
+                            await Task.Delay(WindowMinimizeOperation.CheckIntervalMilliseconds);
+                    }
+
+                    if (IsDisposed || Disposing)
+                        return;
+
+                    if (failure is not null)
+                        throw new InvalidOperationException($"Action {index + 1} (Minimize) failed.\n\n{failure}");
+
+                    continue;
+                }
+
                 IReadOnlySet<int> processIds = ProcessPathDiscovery.FindRunningProcessIds(
                     runtimePath,
                     useSharedCache: false
@@ -277,7 +304,8 @@ public sealed partial class ConfigurationEditorForm
         }
         finally
         {
-            UpdateStartupMacroControls();
+            if (!IsDisposed && !Disposing)
+                UpdateStartupMacroControls();
         }
     }
 

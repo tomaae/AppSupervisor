@@ -1,10 +1,11 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using AppSupervisor.Resources;
 
 namespace AppSupervisor;
 
-/// <summary>Executes focus-preserving native window actions for startup macros and editor tests.</summary>
+/// <summary>Executes native window actions for startup macros and editor tests.</summary>
 internal static class StartupMacroWindowActions
 {
     internal enum ExecutionStatus
@@ -33,7 +34,7 @@ internal static class StartupMacroWindowActions
             new(ExecutionStatus.Failed, detail);
     }
 
-    /// <summary>Executes one non-delay action against exactly one visible helper window.</summary>
+    /// <summary>Executes one action, sharing regular minimization for all visible helper windows.</summary>
     internal static ExecutionResult Execute(
         StartupMacroActionConfig action,
         IReadOnlySet<int> processIds)
@@ -52,6 +53,13 @@ internal static class StartupMacroWindowActions
             return SendHotkey(action.Keys ?? []);
         }
 
+        if (type == StartupMacroActionType.Minimize)
+        {
+            return processIds.Any(WindowMinimizeOperation.MinimizeProcessWindows)
+                ? ExecutionResult.Success("Helper windows minimized.")
+                : ExecutionResult.Unavailable("No minimized helper window is available yet.");
+        }
+
         ExecutionResult targetResult = FindUniqueWindow(processIds, out IntPtr window);
         if (targetResult.Status != ExecutionStatus.Succeeded)
             return targetResult;
@@ -62,7 +70,6 @@ internal static class StartupMacroWindowActions
             {
                 StartupMacroActionType.MoveWindow => MoveWindow(window, action),
                 StartupMacroActionType.ResizeWindow => ResizeWindow(window, action),
-                StartupMacroActionType.Minimize => ChangeWindowState(window, NativeMethods.SC_MINIMIZE, "minimize"),
                 StartupMacroActionType.Maximize => ChangeWindowState(window, NativeMethods.SC_MAXIMIZE, "maximize"),
                 StartupMacroActionType.Restore => ChangeWindowState(window, NativeMethods.SC_RESTORE, "restore"),
                 StartupMacroActionType.BringToFront => BringToFront(window),

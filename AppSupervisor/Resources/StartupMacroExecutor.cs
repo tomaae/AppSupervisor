@@ -15,6 +15,7 @@ internal sealed class StartupMacroExecutor
 
     private int _actionIndex;
     private DateTime? _delayUntilUtc;
+    private WindowMinimizeOperation? _minimizeOperation;
     private DateTime? _geometryStableSinceUtc;
     private int _geometryStableObservations;
     private bool _failed;
@@ -56,6 +57,7 @@ internal sealed class StartupMacroExecutor
         Pending = false;
         _actionIndex = 0;
         _delayUntilUtc = null;
+        _minimizeOperation = null;
         ResetGeometryStability();
         _failed = false;
     }
@@ -78,8 +80,34 @@ internal sealed class StartupMacroExecutor
                 continue;
             }
 
-            StartupMacroWindowActions.ExecutionResult result =
-                _execute(action, _processIdProvider());
+            StartupMacroWindowActions.ExecutionResult result;
+            if (action.Type == StartupMacroActionType.Minimize)
+            {
+                _minimizeOperation ??= new WindowMinimizeOperation(nowUtc);
+                try
+                {
+                    bool? minimized = _minimizeOperation.Advance(
+                        nowUtc,
+                        () => _execute(action, _processIdProvider()).AppliedSuccessfully
+                    );
+                    if (minimized is null)
+                        return;
+
+                    result = minimized.Value
+                        ? StartupMacroWindowActions.ExecutionResult.Success("Helper windows remain minimized.")
+                        : StartupMacroWindowActions.ExecutionResult.Failure(
+                            $"Could not keep helper windows minimized within {WindowMinimizeOperation.TimeoutMilliseconds / 1000} seconds."
+                        );
+                }
+                catch (Exception exception)
+                {
+                    result = StartupMacroWindowActions.ExecutionResult.Failure(exception.Message);
+                }
+            }
+            else
+            {
+                result = _execute(action, _processIdProvider());
+            }
             bool moveOrResize = IsMoveOrResize(action);
 
             if (result.Status == StartupMacroWindowActions.ExecutionStatus.WindowUnavailable)
@@ -130,6 +158,7 @@ internal sealed class StartupMacroExecutor
     {
         _actionIndex++;
         _delayUntilUtc = null;
+        _minimizeOperation = null;
         ResetGeometryStability();
     }
 
