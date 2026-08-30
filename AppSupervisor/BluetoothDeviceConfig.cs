@@ -14,4 +14,7 @@ public sealed class BluetoothDeviceConfig
 
     /// <summary>Gets or sets the transport used to detect the device.</summary>
     public BluetoothDeviceKind Kind { get; set; }
+
+    /// <summary>Gets or sets company identifiers observed in manufacturer-specific advertisements.</summary>
+    public List<ushort> ManufacturerCompanyIds { get; set; } = [];
 }

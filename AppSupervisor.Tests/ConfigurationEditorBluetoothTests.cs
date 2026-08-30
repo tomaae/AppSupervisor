@@ -241,7 +241,8 @@ public sealed class ConfigurationEditorBluetoothTests
                             BluetoothDeviceKind.LowEnergy,
                             IsPaired: false,
                             IsConnected: false,
-                            IsPresent: true
+                            IsPresent: true,
+                            ManufacturerCompanyIds: [76]
                         )
                     ]);
                     using var form = CreateForm(configPath, scanner);
@@ -273,6 +274,17 @@ public sealed class ConfigurationEditorBluetoothTests
                         row => string.Equals(
                             row.Cells[0].Value?.ToString(),
                             "Unidentified LE device (31BA)",
+                            StringComparison.Ordinal
+                        )
+                    );
+                    int companyColumnIndex = grid.Columns.Cast<DataGridViewColumn>()
+                        .Single(column => column.HeaderText == "Company hint")
+                        .Index;
+                    Assert.Contains(
+                        grid.Rows.Cast<DataGridViewRow>(),
+                        row => string.Equals(
+                            row.Cells[companyColumnIndex].Value?.ToString(),
+                            "Apple, Inc.",
                             StringComparison.Ordinal
                         )
                     );

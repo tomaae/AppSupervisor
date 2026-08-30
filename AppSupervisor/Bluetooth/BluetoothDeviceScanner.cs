@@ -318,7 +318,10 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 IsPaired: false,
                 IsConnected: false,
                 IsPresent: true,
-                SignalStrengthDbm: advertisement.RawSignalStrengthInDBm
+                SignalStrengthDbm: advertisement.RawSignalStrengthInDBm,
+                ManufacturerCompanyIds: ReadManufacturerCompanyIds(
+                    advertisement.Advertisement
+                )
             );
             MergeSnapshot(discovered, snapshot);
         }
@@ -347,10 +350,29 @@ internal sealed class BluetoothDeviceScanner : IBluetoothDeviceScanner
                 IsPaired = existing.IsPaired || snapshot.IsPaired,
                 IsConnected = existing.IsConnected || snapshot.IsConnected,
                 IsPresent = existing.IsPresent || snapshot.IsPresent,
-                SignalStrengthDbm = snapshot.SignalStrengthDbm ?? existing.SignalStrengthDbm
+                SignalStrengthDbm = snapshot.SignalStrengthDbm ?? existing.SignalStrengthDbm,
+                ManufacturerCompanyIds = MergeManufacturerCompanyIds(
+                    existing.ManufacturerCompanyIds,
+                    snapshot.ManufacturerCompanyIds
+                )
             }
         );
     }
+
+    private static IReadOnlyList<ushort> ReadManufacturerCompanyIds(
+        BluetoothLEAdvertisement advertisement) => advertisement.ManufacturerData
+            .Select(data => data.CompanyId)
+            .Distinct()
+            .OrderBy(companyId => companyId)
+            .ToArray();
+
+    internal static IReadOnlyList<ushort> MergeManufacturerCompanyIds(
+        IReadOnlyList<ushort>? first,
+        IReadOnlyList<ushort>? second) => (first ?? [])
+            .Concat(second ?? [])
+            .Distinct()
+            .OrderBy(companyId => companyId)
+            .ToArray();
 
     private static async Task<(bool Connected, string Name)>
         ResolveLowEnergyDeviceByAddressAsync(

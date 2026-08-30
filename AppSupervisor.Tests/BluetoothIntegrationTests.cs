@@ -30,7 +30,8 @@ public sealed class BluetoothIntegrationTests
                                 DeviceId = deviceId,
                                 Name = " Phone ",
                                 Address = "AA:BB:CC:DD:EE:FF",
-                                Kind = BluetoothDeviceKind.LowEnergy
+                                Kind = BluetoothDeviceKind.LowEnergy,
+                                ManufacturerCompanyIds = [76, 6, 76]
                             }
                         ]
                     }
@@ -53,6 +54,7 @@ public sealed class BluetoothIntegrationTests
             Assert.Equal("Phone", device.Name);
             Assert.Equal("AABBCCDDEEFF", device.Address);
             Assert.Equal(BluetoothDeviceKind.LowEnergy, device.Kind);
+            Assert.Equal([6, 76], device.ManufacturerCompanyIds);
             Assert.Equal(ProfileTriggerType.BluetoothDevice, profile.TriggerType);
             Assert.Equal(deviceId, profile.MonitorBluetoothDeviceId);
             Assert.Equal(20, loaded.Integrations.Bluetooth.ScanIntervalSeconds);
@@ -62,6 +64,23 @@ public sealed class BluetoothIntegrationTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public void CompanyIdentifiers_KnownAndUnknownValues_AreFormattedAsHints()
+    {
+        Assert.Equal("Apple, Inc.", BluetoothCompanyIdentifiers.Format([76]));
+        Assert.Equal("Company ID 0xEA60", BluetoothCompanyIdentifiers.Format([60000]));
+        Assert.Equal("—", BluetoothCompanyIdentifiers.Format([]));
+    }
+
+    [Fact]
+    public void MergeManufacturerCompanyIds_DeduplicatesAndSortsValues()
+    {
+        Assert.Equal(
+            [6, 76, 117],
+            BluetoothDeviceScanner.MergeManufacturerCompanyIds([76, 6], [117, 76])
+        );
     }
 
     [Fact]
