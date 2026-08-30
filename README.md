@@ -1,11 +1,11 @@
 # AppSupervisor
 
-**Keep a complete Windows setup in sync with the application that needs it.**
+**Keep a complete Windows setup in sync with the application or nearby Bluetooth devices that need it.**
 
 [![Latest release](https://img.shields.io/github/v/release/tomaae/AppSupervisor?style=flat-square)](https://github.com/tomaae/AppSupervisor/releases/latest)
-![Project stage](https://img.shields.io/badge/project%20stage-development-yellow.svg?style=flat-square)
+![Project stage](https://img.shields.io/badge/release-1.0-green.svg?style=flat-square)
 ![Total downloads](https://img.shields.io/github/downloads/tomaae/AppSupervisor/total?style=flat-square)
-[![Build](https://img.shields.io/github/actions/workflow/status/tomaae/AppSupervisor/ci.yml?style=flat-square&label=build)](https://github.com/tomaae/AppSupervisor/actions/workflows/ci.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/tomaae/AppSupervisor/build.yml?branch=main&style=flat-square&label=tests)](https://github.com/tomaae/AppSupervisor/actions/workflows/build.yml)
 ![Commits since release](https://img.shields.io/github/commits-since/tomaae/AppSupervisor/latest?style=flat-square)
 
 AppSupervisor is a lightweight Windows tray application that watches for a configured process or any selected registered Bluetooth device and then starts, supervises, restarts, and closes the applications, services, devices, and integrations that belong with it.
@@ -17,7 +17,7 @@ For example, starting OBS can activate streaming helpers, audio settings, lighti
 
 ## Quick start
 
-1. Download and extract the [latest release](https://github.com/tomaae/AppSupervisor/releases/latest).
+1. Download **AppSupervisor-win-x64.zip** from the [latest release](https://github.com/tomaae/AppSupervisor/releases/latest) and extract it to a permanent writable folder.
 2. Install the **.NET 10 Desktop Runtime** if it is not already installed.
 3. Run `AppSupervisor.exe`, approve the UAC prompt, and find AppSupervisor in the notification area.
 4. Double-click the tray icon—or right-click it and choose **Configure...**—to open the editor.
@@ -25,14 +25,16 @@ For example, starting OBS can activate streaming helpers, audio settings, lighti
 
 AppSupervisor runs in the notification area rather than opening a permanent main window. Its configuration is stored beside the executable in `config.json`.
 
+The release also includes the optional **com.tomaae.appsupervisor.streamDeckPlugin** installer for the [Stream Deck status button](#stream-deck-status-button). It is not required to run AppSupervisor or monitor Bluetooth devices.
+
 ## How profiles work
 
 | Event | What AppSupervisor does |
 | --- | --- |
-| The selected process starts or Bluetooth device becomes present | Activates the profile and processes enabled resources from top to bottom. |
+| The selected process starts or any selected Bluetooth device becomes present | Activates the profile and processes enabled resources from top to bottom. |
 | A helper or service becomes unavailable unexpectedly | Reports the problem and optionally restarts it after the configured timeout. |
 | A health check confirms a failure | Notifies the configured destinations and can gracefully restart the affected helper. |
-| The selected process remains closed or Bluetooth device remains absent | Waits for the profile's close timeout, then closes, stops, or restores reversible resources. |
+| The selected process remains closed or all selected Bluetooth devices exceed their presence timeout | Waits for the profile's close timeout, then closes, stops, or restores reversible resources. |
 | Supervision is paused or AppSupervisor exits | Leaves external applications, services, devices, and integration state untouched. |
 
 ## Configuration tour
@@ -147,7 +149,7 @@ Resources can include:
 
 A resource may depend on one earlier application or service being ready. Profiles operate independently, so a delay or slow resource in one profile does not hold up another. Pausing or exiting AppSupervisor leaves external applications and services untouched.
 
-The selected process or Bluetooth device only controls whether its profile is active; appearing or disappearing does not itself produce a notification. Notification destinations configured on a helper apply only to that helper, and destinations configured on a health check apply only to that check. AppSupervisor-level configuration and startup messages use their own popup channel instead of borrowing destinations from profile resources.
+The selected process or Bluetooth device list only controls whether its profile is active; appearing or disappearing does not itself produce a notification. Notification destinations configured on a helper apply only to that helper, and destinations configured on a health check apply only to that check. AppSupervisor-level configuration and startup messages use their own popup channel instead of borrowing destinations from profile resources.
 
 ### Helper applications
 
@@ -269,6 +271,12 @@ Connected devices and devices that Windows reports as present count as nearby. B
 
 Continuous Bluetooth scanning runs only when at least one enabled Bluetooth-triggered profile exists. It tracks only registrations referenced by enabled profiles; keeping discovered devices in the global registry or configuring Bluetooth only in disabled profiles does not start the presence scanner.
 
+Defaults are a **15-second scan interval** and **45-second presence timeout**. A scan observes Windows endpoints and LE advertisements concurrently for approximately 10 seconds, then waits for the remainder of the interval. Scanning runs asynchronously in the background; the one-second profile evaluation reads cached presence instead of waiting for discovery. An enabled but currently inactive Bluetooth profile still needs scanning to detect activation. The editor's explicit discovery button also works without an enabled Bluetooth profile.
+
+**Signal** shows `—` and **Proximity estimate** shows **Unknown** when neither Windows endpoint metadata nor advertisements supply a usable RSSI value. These are not precise distance measurements. A device that rotates its private Bluetooth address may no longer match its saved registration; persistent identity across address rotation is not guaranteed.
+
+Older single-device `monitorBluetoothDeviceId` settings load automatically into the new `monitorBluetoothDeviceIds` list. Saving writes the list form; existing one-device profiles retain their behavior.
+
 Bluetooth presence requires a working Windows Bluetooth adapter and driver. If Windows aborts every Classic and Low Energy watcher, AppSupervisor reports the discovery failure and leaves existing cached presence to expire normally.
 
 ### SteamVR device monitoring
@@ -287,7 +295,7 @@ Twitch uses one global broadcaster connection and allows Twitch resources in onl
 
 ### Notifications
 
-Helper applications, Windows services, health checks, Windows audio interfaces, Home Assistant actions, OBS actions, Stream Deck actions, Twitch actions, and SteamVR devices can report through:
+Helper applications, Windows services, health checks, Windows audio interfaces, Home Assistant actions, MQTT actions, OBS actions, Stream Deck actions, Twitch actions, and SteamVR devices can report through:
 
 - Popup dialogs.
 - Windows notifications.
@@ -303,13 +311,15 @@ Open the editor from **Configure...** in the tray menu or by double-clicking the
 
 Use **Export profile...** to save the selected profile as a versioned `*.appsupervisor-profile.json` document, or **Import profile...** to add one of those documents as a new profile. The transfer preserves the profile trigger, timeouts, ordered resources, dependencies, helper health checks, startup macros, notification choices, and every resource-specific setting. Profile and resource internal IDs are regenerated during import and dependency links are remapped; a duplicate visible name receives an `(Imported)` suffix.
 
-Portable profile files contain only the selected profile. Application-wide Bluetooth registration, Home Assistant, MQTT, OBS, Twitch, SteamVR, Stream Deck, API, and logging configuration is never included, so integration credentials and connection settings remain local. Values that belong to the profile but may be computer-specific—such as the activation process name or Bluetooth registry reference, executable paths, Windows service names, audio endpoint identities, Stream Deck action IDs, Home Assistant entities, MQTT topics and payloads, OBS object names, health-check endpoints, and monitor names/coordinates—are preserved rather than silently discarded. The export records applicable warnings, both export and import show them, and every imported profile starts **disabled**. Register and reselect a Bluetooth device on the importing computer when applicable, review the other transferred values, then enable the profile and choose **Save & Apply**; normal validation still prevents an unusable enabled profile from replacing the active configuration.
+Portable profile files contain only the selected profile. Application-wide Bluetooth registration, Home Assistant, MQTT, OBS, Twitch, SteamVR, Stream Deck, API, and logging configuration is never included, so integration credentials and connection settings remain local. Values that belong to the profile but may be computer-specific—such as the activation process name or Bluetooth registry references, executable paths, Windows service names, audio endpoint identities, Stream Deck action IDs, Home Assistant entities, MQTT topics and payloads, OBS object names, health-check endpoints, and monitor names/coordinates—are preserved rather than silently discarded. The export records applicable warnings, both export and import show them, and every imported profile starts **disabled**. Register and reselect every required Bluetooth device on the importing computer when applicable, review the other transferred values, then enable the profile and choose **Save & Apply**; normal validation still prevents an unusable enabled profile from replacing the active configuration.
 
 The editor provides pickers for running processes, executables, Steam applications, Microsoft Store applications, Windows services, Windows playback and recording interfaces, Bluetooth devices, SteamVR devices, and live VRChat OSCQuery parameter names. Running, Steam, and Store application pickers show a loading overlay that prevents selecting incomplete results and provide text filtering after results are ready. The running-process picker excludes Windows service processes and hides Microsoft/Windows applications by default; the Store picker similarly hides Microsoft/system applications unless requested. The running and Store picker status text reports visible and filtered counts.
 
 Steam and Microsoft Store catalog discovery retries transient failures up to four total attempts before reporting a distinct **Application discovery error**. If discovery fails while applying a reload, the previous valid configuration and its supervision remain active. The unified resource list uses each helper executable's icon when available and dedicated type pictograms for services, delays, Windows audio, Home Assistant, MQTT, OBS, Stream Deck, and Twitch resources.
 
 Connections such as Home Assistant, MQTT, OBS WebSocket, and Twitch, plus Bluetooth registration and SteamVR monitoring, are configured globally rather than inside a profile.
+
+Grid row heights are fixed throughout the application to prevent accidental resizing; column widths remain adjustable.
 
 The **Diagnostic logs** tab immediately after **Integrations** provides a parsed viewer for every available current-format session log and the legacy `AppSupervisor.log`, ordered newest first. Its record table separates time, severity, and message, while the detail pane retains multiline exception and continuation text. Selecting the tab always rediscovers and reloads the logs; changing the session or using **Refresh** also reloads without blocking the editor.
 
@@ -367,7 +377,7 @@ An abbreviated configuration therefore looks like:
 | Method and path | Response |
 | --- | --- |
 | `GET /` | All profiles with `name`, `internalId`, `enabled`, cached `status`, and `endpoint`. |
-| `GET /<profileId>` | One profile and all its helpers, including active/enabled state, trigger type and process/device reference, configured health-check and macro counts, and helper endpoints. |
+| `GET /<profileId>` | One profile and all its helpers, including active/enabled state, trigger type and process/device references, configured health-check and macro counts, and helper endpoints. |
 | `GET /<profileId>/<resourceId>` | Helper identity, cached activity, lifecycle settings, configuration counts, and links to its health-check and macro endpoints. |
 | `GET /<profileId>/<resourceId>/healthcheck` | Every configured health check, including application-responsiveness monitoring, timing, recovery settings, and cached status/detail. |
 | `GET /<profileId>/<resourceId>/macro` | Whether a Startup macro is configured, its cached execution status, and its ordered actions. |
@@ -375,6 +385,8 @@ An abbreviated configuration therefore looks like:
 Unknown profiles, helpers, or child endpoints return HTTP `404`. A helper executable filename may also be accepted in place of `resourceId` when it is unique within the profile, but clients should always use the returned `internalId`; ambiguous filenames return HTTP `409`.
 
 `updatedUtc` identifies when the one-second timer published the returned snapshot. A helper's `active` value means the profile startup sequence has activated that resource; it is not a fresh process query.
+
+For Bluetooth profiles, `monitorBluetoothDeviceIds` contains the full ANY-mode selection. The legacy `monitorBluetoothDeviceId` response field exposes only the first selected ID (or an empty string) for older clients; new clients should use the list.
 
 Status values are:
 
@@ -488,13 +500,15 @@ key shows **Offline**. The pipe connection is the sole online/offline signal, so
 events cannot overwrite a live status. AppSupervisor waits for the pipe without consuming CPU and
 reconnects after either application restarts.
 
-To install the development package:
+To install the release plugin (Windows, Stream Deck 6.6 or later):
 
-1. Double-click `artifacts/StreamDeck/com.tomaae.appsupervisor.streamDeckPlugin` and accept the
-   Stream Deck installation prompt.
-2. In the Stream Deck application, expand **AppSupervisor** and drag **Status** onto a key.
-3. Start the matching AppSupervisor build. The key should adopt the tray status; press it to open
+1. Download **com.tomaae.appsupervisor.streamDeckPlugin** from the [latest release](https://github.com/tomaae/AppSupervisor/releases/latest).
+2. Double-click the downloaded file and accept the Stream Deck installation prompt.
+3. In the Stream Deck application, expand **AppSupervisor** and drag **Status** onto a key.
+4. Start the matching AppSupervisor build. The key should adopt the tray status; press it to open
    configuration.
+
+The Status plugin does not require MCP Deck or the Elgato MCP Server. Those are used only by the separate [Stream Deck actions](#stream-deck-actions) integration.
 
 Building the installer from source requires Node.js 24 or later. Run
 `.\StreamDeckPlugin\Build.ps1`; it installs the locked dependencies, runs plugin tests, bundles and
@@ -526,12 +540,14 @@ LICENSE
 THIRD-PARTY-NOTICES.txt
 ```
 
+To upgrade, exit AppSupervisor from its tray menu, back up `config.json` and `config.json.old`, then extract the new ZIP into the existing installation folder. The release contains no personal configuration or credentials. Keep your configuration files and all packaged files together; start AppSupervisor again after extraction. Install the companion Stream Deck file separately if you use the Status key.
+
 ## Building from source
 
 ### Requirements
 
 - Windows on x64 hardware.
-- .NET 10 SDK.
+- .NET 10 SDK (GitHub Actions currently uses 10.0.302).
 - PowerShell for the packaging script.
 - Administrator access for runtime integration testing involving services.
 
