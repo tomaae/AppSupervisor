@@ -142,7 +142,7 @@ public sealed class ConfigurationEditorResourceLayoutTests
                     );
                     ComboBox dependency = Assert.Single(
                         controls.OfType<ComboBox>(),
-                        comboBox => comboBox.DisplayMember == "DisplayName" &&
+                        comboBox => comboBox.Name == "ResourceDependencySelector" &&
                             comboBox.Items.Count == 1 &&
                             comboBox.GetItemText(comboBox.Items[0]) == "(none)"
                     );

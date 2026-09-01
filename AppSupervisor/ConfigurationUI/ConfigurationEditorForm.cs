@@ -43,6 +43,13 @@ public sealed partial class ConfigurationEditorForm : Form
 
     private readonly CheckBox _profileEnabled = new() { Text = "Profile enabled", AutoSize = true };
     private readonly TextBox _profileName = new() { Dock = DockStyle.Fill };
+    private readonly ComboBox _profileDependency = new()
+    {
+        Name = "ProfileDependencySelector",
+        Dock = DockStyle.Fill,
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        DisplayMember = nameof(ProfileDependencyChoice.DisplayName)
+    };
     private readonly TextBox _monitorProcess = new() { Dock = DockStyle.Fill };
     private readonly TableLayoutPanel _monitorProcessPanel = new()
     {
@@ -320,6 +327,7 @@ public sealed partial class ConfigurationEditorForm : Form
         AddEditorRow(layout, "", _profileEnabled);
         AddEditorRow(layout, "Name", _profileName);
         AddEditorRow(layout, "Activation trigger", BuildProfileTriggerSelector());
+        AddEditorRow(layout, "Dependency profile", _profileDependency);
 
         _monitorProcessPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         _monitorProcessPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -337,7 +345,7 @@ public sealed partial class ConfigurationEditorForm : Form
             AutoSize = true,
             MaximumSize = new Size(720, 0),
             ForeColor = SystemColors.GrayText,
-            Text = "The profile is active while its selected process is running or any selected Bluetooth device is present. A Bluetooth trigger becomes absent only after every selected device exceeds the global presence timeout. Resources then close after the profile's close timeout. Add a Delay as the first resource when startup should wait."
+            Text = "The profile is active while its selected process is running or any selected Bluetooth device is present. When a dependency profile is selected, this trigger is not monitored until that profile is active and all reached startup resources are ready. A Bluetooth trigger becomes absent only after every selected device exceeds the global presence timeout. Resources then close after the profile's close timeout. Add a Delay as the first resource when startup should wait."
         });
         page.Controls.Add(layout);
         return page;
@@ -491,6 +499,7 @@ public sealed partial class ConfigurationEditorForm : Form
 
         _profileEnabled.CheckedChanged += ProfileFieldChanged;
         _profileName.TextChanged += ProfileFieldChanged;
+        _profileDependency.SelectedIndexChanged += ProfileFieldChanged;
         _profileTriggerType.SelectedIndexChanged += ProfileFieldChanged;
         _monitorProcess.TextChanged += ProfileFieldChanged;
         _monitorBluetoothDevices.ItemCheck += ProfileBluetoothDeviceItemCheck;
@@ -547,6 +556,35 @@ public sealed partial class ConfigurationEditorForm : Form
         LoadSelectedProfile();
     }
 
+    /// <summary>Populates the selected profile's optional cross-profile prerequisite.</summary>
+    private void BindProfileDependency(SupervisorProfileConfig? profile)
+    {
+        _profileDependency.Items.Clear();
+        _profileDependency.Items.Add(new ProfileDependencyChoice("", "(none)"));
+
+        if (profile is not null)
+        {
+            foreach (SupervisorProfileConfig candidate in _profiles.Where(candidate =>
+                !ReferenceEquals(candidate, profile)))
+            {
+                _profileDependency.Items.Add(new ProfileDependencyChoice(
+                    candidate.ProfileId,
+                    DisplayName(candidate.Name, "Profile")
+                ));
+            }
+        }
+
+        string selectedId = profile?.DependencyProfileId ?? "";
+        ProfileDependencyChoice? selected = _profileDependency.Items
+            .Cast<ProfileDependencyChoice>()
+            .FirstOrDefault(choice => string.Equals(
+                choice.ProfileId,
+                selectedId,
+                StringComparison.OrdinalIgnoreCase
+            ));
+        _profileDependency.SelectedItem = selected ?? _profileDependency.Items[0];
+    }
+
     /// <summary>Loads the selected profile's fields and child collections into the editor.</summary>
     private void LoadSelectedProfile()
     {
@@ -558,6 +596,7 @@ public sealed partial class ConfigurationEditorForm : Form
             _tabs.Enabled = true;
             _profileEnabled.Checked = profile?.Enabled ?? false;
             _profileName.Text = profile?.Name ?? "";
+            BindProfileDependency(profile);
             _profileTriggerType.SelectedItem = profile?.TriggerType ?? ProfileTriggerType.Process;
             _monitorProcess.Text = profile?.MonitorProcess ?? "";
             BindProfileBluetoothDeviceSelector(profile?.MonitorBluetoothDeviceIds);
@@ -668,6 +707,8 @@ public sealed partial class ConfigurationEditorForm : Form
 
         profile.Enabled = _profileEnabled.Checked;
         profile.Name = _profileName.Text;
+        profile.DependencyProfileId =
+            (_profileDependency.SelectedItem as ProfileDependencyChoice)?.ProfileId ?? "";
         profile.TriggerType = _profileTriggerType.SelectedItem is ProfileTriggerType triggerType
             ? triggerType
             : ProfileTriggerType.Process;
@@ -844,6 +885,13 @@ public sealed partial class ConfigurationEditorForm : Form
         }
 
         _profiles.Remove(selected);
+        foreach (SupervisorProfileConfig profile in _profiles.Where(profile => string.Equals(
+            profile.DependencyProfileId,
+            selected.ProfileId,
+            StringComparison.OrdinalIgnoreCase)))
+        {
+            profile.DependencyProfileId = "";
+        }
         BindProfileSelector();
     }
 
@@ -1477,4 +1525,7 @@ public sealed partial class ConfigurationEditorForm : Form
     /// <summary>Gets the currently selected health check.</summary>
     private HealthCheckConfig? SelectedHealthCheck =>
         _healthCheckList.SelectedItem as HealthCheckConfig;
+
+    /// <summary>Represents one optional profile prerequisite in the editor.</summary>
+    private sealed record ProfileDependencyChoice(string ProfileId, string DisplayName);
 }

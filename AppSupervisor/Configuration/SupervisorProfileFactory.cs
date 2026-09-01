@@ -27,7 +27,8 @@ public static class SupervisorProfileFactory
             new ObsIntegrationConfig(),
             new TwitchIntegrationConfig(),
             new BluetoothIntegrationConfig(),
-            NullBluetoothPresenceSource.Instance
+            NullBluetoothPresenceSource.Instance,
+            profileDependencyReady: null
         );
 
     /// <summary>
@@ -44,7 +45,8 @@ public static class SupervisorProfileFactory
         ObsIntegrationConfig obsIntegration,
         TwitchIntegrationConfig twitchIntegration,
         BluetoothIntegrationConfig bluetoothIntegration,
-        IBluetoothPresenceSource bluetoothPresenceSource)
+        IBluetoothPresenceSource bluetoothPresenceSource,
+        Func<bool>? profileDependencyReady)
     {
         BluetoothDeviceConfig[] bluetoothDevices = [];
         if (config.TriggerType == ProfileTriggerType.BluetoothDevice)
@@ -79,6 +81,15 @@ public static class SupervisorProfileFactory
                 $"Profile '{config.Name}' uses an unsupported trigger type."
             )
         };
+        if (!string.IsNullOrWhiteSpace(config.DependencyProfileId))
+        {
+            trigger = new ProfileDependencyTrigger(
+                trigger,
+                profileDependencyReady ?? throw new InvalidOperationException(
+                    $"Profile '{config.Name}' requires a dependency resolver."
+                )
+            );
+        }
         string triggerDisplayName = bluetoothDevices.Length > 0
             ? string.Join(" OR ", bluetoothDevices.Select(device => device.Name))
             : config.MonitorProcess;

@@ -115,6 +115,8 @@ public static partial class ConfigValidator
             ValidateResourceStartup(profile, profileLabel, errors);
         }
 
+        ValidateProfileDependencies(profiles, errors);
+
         if (errors.Count > 0)
             throw new ConfigValidationException(errors);
     }

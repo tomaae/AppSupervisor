@@ -19,13 +19,20 @@ public static class ProfileTransferService
         ArgumentNullException.ThrowIfNull(profile);
 
         SupervisorProfileConfig exportProfile = ConfigJson.Clone(profile);
+        bool requiresProfileDependencySelection =
+            !string.IsNullOrWhiteSpace(exportProfile.DependencyProfileId);
+        exportProfile.DependencyProfileId = "";
         ConfigNormalizer.Normalize([exportProfile]);
         ConfigValidator.ValidatePortableProfile(exportProfile);
-        IReadOnlyList<string> warnings = ProfilePortabilityAnalyzer.Analyze(exportProfile);
+        IReadOnlyList<string> warnings = ProfilePortabilityAnalyzer.Analyze(
+            exportProfile,
+            requiresProfileDependencySelection
+        );
         var document = new ProfileTransferDocument
         {
             Format = DocumentFormat,
             Version = DocumentVersion,
+            RequiresProfileDependencySelection = requiresProfileDependencySelection,
             PortabilityWarnings = [.. warnings],
             Profile = exportProfile
         };
@@ -123,7 +130,10 @@ public static class ProfileTransferService
         RegenerateIdentities(imported, existingProfiles);
         imported.Enabled = false;
 
-        IReadOnlyList<string> warnings = ProfilePortabilityAnalyzer.Analyze(imported);
+        IReadOnlyList<string> warnings = ProfilePortabilityAnalyzer.Analyze(
+            imported,
+            document.RequiresProfileDependencySelection
+        );
         return new ProfileImportResult(
             imported,
             warnings,
@@ -338,6 +348,7 @@ internal sealed class ProfileTransferDocument
 {
     public string? Format { get; set; }
     public int Version { get; set; }
+    public bool RequiresProfileDependencySelection { get; set; }
     public List<string>? PortabilityWarnings { get; set; }
     public SupervisorProfileConfig? Profile { get; set; }
 }
@@ -360,8 +371,12 @@ internal static class ProfilePortabilityAnalyzer
         "Windows audio actions preserve endpoint and hardware identifiers; reselect unavailable devices before enabling the profile.";
     internal const string IntegrationWarning =
         "Home Assistant, MQTT, OBS, Stream Deck, and Twitch resources require application-wide integration settings; credentials and connection settings are intentionally not included.";
+    internal const string ProfileDependencyWarning =
+        "The source profile depended on another profile. Standalone exports cannot include that profile, so select the dependency again before enabling the imported profile.";
 
-    public static IReadOnlyList<string> Analyze(SupervisorProfileConfig profile)
+    public static IReadOnlyList<string> Analyze(
+        SupervisorProfileConfig profile,
+        bool requiresProfileDependencySelection = false)
     {
         var warnings = new List<string>
         {
@@ -389,6 +404,8 @@ internal static class ProfilePortabilityAnalyzer
         {
             warnings.Add(IntegrationWarning);
         }
+        if (requiresProfileDependencySelection)
+            warnings.Add(ProfileDependencyWarning);
 
         return warnings;
     }

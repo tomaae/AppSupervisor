@@ -126,6 +126,10 @@ public sealed class SupervisorProfile : IDisposable
     /// </summary>
     internal bool StartupPending => TriggerActive && _startupPending;
 
+    /// <summary>Gets whether this profile can currently satisfy another profile's prerequisite.</summary>
+    internal bool IsActiveAndRunning =>
+        TriggerActive && !_startupPending && AreActivatedResourcesStarted();
+
     /// <summary>Gets whether the missing trigger is still within its configured close timeout.</summary>
     internal bool WaitingForCloseTimeout =>
         !TriggerActive && _triggerMissingSince is not null;

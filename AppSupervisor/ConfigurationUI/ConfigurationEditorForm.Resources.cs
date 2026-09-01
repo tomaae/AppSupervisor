@@ -26,6 +26,7 @@ public sealed partial class ConfigurationEditorForm
     private readonly Label _resourceTypeLabel = new() { AutoSize = true };
     private readonly ComboBox _resourceDependency = new()
     {
+        Name = "ResourceDependencySelector",
         Dock = DockStyle.Fill,
         DropDownStyle = ComboBoxStyle.DropDownList,
         DrawMode = DrawMode.OwnerDrawFixed,

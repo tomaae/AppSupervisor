@@ -14,6 +14,9 @@ public class SupervisorProfileConfig
     /// <summary>Gets or sets whether the profile participates in supervision.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>Gets or sets the optional profile that must be active and running before this trigger is monitored.</summary>
+    public string DependencyProfileId { get; set; } = "";
+
     /// <summary>Gets or sets the kind of condition that activates this profile.</summary>
     public ProfileTriggerType TriggerType { get; set; } = ProfileTriggerType.Process;
 

@@ -124,11 +124,16 @@ public sealed class StartupSequencingTests
 
         Assert.Equal(1, resource.ActivateCalls);
         Assert.True(profile.StartupPending);
+        Assert.False(profile.IsActiveAndRunning);
 
         resource.Started = true;
         profile.AdvanceStartup(SupervisorTime.UtcNow);
 
         Assert.False(profile.StartupPending);
+        Assert.True(profile.IsActiveAndRunning);
+
+        resource.Started = false;
+        Assert.False(profile.IsActiveAndRunning);
     }
 
     /// <summary>Confirms one profile's wait cannot prevent another profile from activating.</summary>

@@ -713,6 +713,10 @@ public partial class TrayApplicationContext : ApplicationContext
 
             await Task.Run(() =>
             {
+                var runtimeProfilesById = new Dictionary<string, SupervisorProfile>(
+                    StringComparer.OrdinalIgnoreCase
+                );
+
                 foreach (var profileConfig in newConfig.Profiles.Where(profile => profile.Enabled))
                 {
                     SupervisorProfile? profile = null;
@@ -730,12 +734,19 @@ public partial class TrayApplicationContext : ApplicationContext
                         newConfig.Integrations.Obs,
                         newConfig.Integrations.Twitch,
                         newConfig.Integrations.Bluetooth,
-                        newBluetoothPresenceMonitor
+                        newBluetoothPresenceMonitor,
+                        string.IsNullOrWhiteSpace(profileConfig.DependencyProfileId)
+                            ? null
+                            : () => runtimeProfilesById.TryGetValue(
+                                profileConfig.DependencyProfileId,
+                                out SupervisorProfile? dependencyProfile
+                            ) && dependencyProfile.IsActiveAndRunning
                     );
                     profile.ResourceRestarted += OnResourceRestarted;
                     profile.ErrorOccurred += OnSupervisionError;
                     profile.ResourceNotificationRequested += OnResourceNotificationRequested;
                     newProfiles.Add(profile);
+                    runtimeProfilesById.Add(profileConfig.ProfileId, profile);
                     newApplicationUsageRegistry.RegisterProfile(profileConfig, profile);
                     profile.ErrorCleared += OnSupervisionErrorCleared;
                 }

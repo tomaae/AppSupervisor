@@ -273,7 +273,8 @@ public sealed class BluetoothIntegrationTests
             new ObsIntegrationConfig(),
             new TwitchIntegrationConfig(),
             bluetooth,
-            source
+            source,
+            profileDependencyReady: null
         );
 
         profile.Update();

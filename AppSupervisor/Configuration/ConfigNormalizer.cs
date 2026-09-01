@@ -15,6 +15,7 @@ internal static class ConfigNormalizer
 
             profile.ProfileId = NormalizeText(profile.ProfileId);
             profile.Name = NormalizeText(profile.Name);
+            profile.DependencyProfileId = NormalizeNullableText(profile.DependencyProfileId);
             profile.MonitorProcess = NormalizeText(profile.MonitorProcess);
             if (profile.MonitorBluetoothDeviceIds is not null)
             {

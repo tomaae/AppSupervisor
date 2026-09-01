@@ -7,6 +7,26 @@ namespace AppSupervisor.Tests;
 public sealed class ProfileTransferServiceTests
 {
     [Fact]
+    public void RoundTrip_ProfileDependency_RequiresExplicitReselection()
+    {
+        SupervisorProfileConfig source = CreateCompleteProfile();
+        source.DependencyProfileId = "external-profile";
+
+        ProfileExportResult exported = ProfileTransferService.Serialize(source);
+        ProfileTransferDocument document = System.Text.Json.JsonSerializer.Deserialize<ProfileTransferDocument>(
+            exported.Json,
+            ConfigJson.CreateOptions()
+        )!;
+        ProfileImportResult imported = ProfileTransferService.Deserialize(exported.Json, []);
+
+        Assert.True(document.RequiresProfileDependencySelection);
+        Assert.Equal("", document.Profile!.DependencyProfileId);
+        Assert.Equal("", imported.Profile.DependencyProfileId);
+        Assert.Contains(ProfilePortabilityAnalyzer.ProfileDependencyWarning, exported.Warnings);
+        Assert.Contains(ProfilePortabilityAnalyzer.ProfileDependencyWarning, imported.Warnings);
+    }
+
+    [Fact]
     public void RoundTrip_CompleteProfile_PreservesAllProfileOwnedConfiguration()
     {
         SupervisorProfileConfig source = CreateCompleteProfile();
