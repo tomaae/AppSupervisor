@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 
 namespace AppSupervisor.StreamDeck;
 
@@ -45,10 +47,10 @@ internal sealed class StreamDeckStatusImages
 
         try
         {
-            executableIcon = new Icon(executablePath, new Size(ImageSize, ImageSize));
+            executableIcon = ExtractExecutableIcon(executablePath, ImageSize);
         }
         catch (Exception exception) when (
-            exception is ArgumentException or IOException or System.Runtime.InteropServices.ExternalException
+            exception is ArgumentException or IOException or Win32Exception or ExternalException
         )
         {
             SupervisorLog.WriteWarning(
@@ -58,6 +60,59 @@ internal sealed class StreamDeckStatusImages
 
         using Icon sourceIcon = executableIcon ?? (Icon)fallbackIcon.Clone();
         return Create(sourceIcon);
+    }
+
+    /// <summary>Extracts and owns one exact-size icon from an executable's native resources.</summary>
+    internal static Icon ExtractExecutableIcon(string executablePath, int imageSize)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            throw new ArgumentException(
+                "The executable path cannot be empty.",
+                nameof(executablePath)
+            );
+        }
+        if (imageSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(imageSize));
+        if (!File.Exists(executablePath))
+            throw new FileNotFoundException("The executable icon source does not exist.", executablePath);
+
+        IntPtr[] iconHandles = [IntPtr.Zero];
+        uint[] iconIds = [0];
+        uint extracted = NativeMethods.PrivateExtractIcons(
+            executablePath,
+            iconIndex: 0,
+            imageSize,
+            imageSize,
+            iconHandles,
+            iconIds,
+            iconCount: 1,
+            flags: 0
+        );
+        IntPtr iconHandle = iconHandles[0];
+
+        if (extracted != 1 || iconHandle == IntPtr.Zero)
+        {
+            int error = Marshal.GetLastWin32Error();
+
+            if (iconHandle != IntPtr.Zero)
+                _ = NativeMethods.DestroyIcon(iconHandle);
+
+            throw new Win32Exception(
+                error,
+                $"Could not extract a {imageSize}x{imageSize} icon from the executable."
+            );
+        }
+
+        try
+        {
+            using Icon borrowedIcon = Icon.FromHandle(iconHandle);
+            return (Icon)borrowedIcon.Clone();
+        }
+        finally
+        {
+            _ = NativeMethods.DestroyIcon(iconHandle);
+        }
     }
 
     /// <summary>Creates every icon variant from a caller-supplied source icon.</summary>

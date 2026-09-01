@@ -330,4 +330,26 @@ internal static class NativeMethods
     /// <returns><see langword="true"/> when the handle was destroyed successfully.</returns>
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool DestroyIcon(IntPtr hIcon);
+
+    /// <summary>Extracts an icon resource from an executable or icon file at an exact size.</summary>
+    /// <param name="fileName">The executable, DLL, or icon file containing the resource.</param>
+    /// <param name="iconIndex">The zero-based icon resource index.</param>
+    /// <param name="iconWidth">The requested icon width.</param>
+    /// <param name="iconHeight">The requested icon height.</param>
+    /// <param name="iconHandles">Receives native icon handles owned by the caller.</param>
+    /// <param name="iconIds">Receives the extracted resource identifiers.</param>
+    /// <param name="iconCount">The number of icons to extract.</param>
+    /// <param name="flags">Load-resource flags.</param>
+    /// <returns>The number of icons extracted.</returns>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern uint PrivateExtractIcons(
+        string fileName,
+        int iconIndex,
+        int iconWidth,
+        int iconHeight,
+        [Out] IntPtr[] iconHandles,
+        [Out] uint[] iconIds,
+        uint iconCount,
+        uint flags
+    );
 }

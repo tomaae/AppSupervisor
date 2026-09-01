@@ -83,6 +83,20 @@ public sealed class StreamDeckStatusClientTests
         }
     }
 
+    [Fact]
+    public void ExtractExecutableIcon_AppHost_ReturnsRequestedHighResolutionIcon()
+    {
+        string appHostPath = Path.ChangeExtension(
+            typeof(StreamDeckStatusImages).Assembly.Location,
+            ".exe"
+        );
+        Assert.True(File.Exists(appHostPath), $"Expected app host was not found: {appHostPath}");
+
+        using Icon icon = StreamDeckStatusImages.ExtractExecutableIcon(appHostPath, 144);
+
+        Assert.Equal(new Size(144, 144), icon.Size);
+    }
+
     private static StreamDeckStatusSnapshot CreateSnapshot(
         StreamDeckVisualState state,
         string title)
