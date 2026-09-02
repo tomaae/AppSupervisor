@@ -378,7 +378,7 @@ public sealed partial class ConfigurationEditorForm
         return panel;
     }
 
-    /// <summary>Lets the user select a monitored executable and stores only its filename as the process trigger.</summary>
+    /// <summary>Lets the user select a monitored executable and retains its launchable full path.</summary>
     /// <param name="sender">The monitored-process Browse button.</param>
     /// <param name="e">The click event data.</param>
     private void BrowseMonitorProcessClicked(object? sender, EventArgs e)
@@ -392,7 +392,7 @@ public sealed partial class ConfigurationEditorForm
         };
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
-            _monitorProcess.Text = Path.GetFileName(dialog.FileName);
+            _monitorProcess.Text = dialog.FileName;
     }
 
     /// <summary>Lets the user use the full executable path of a currently running helper process.</summary>

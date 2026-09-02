@@ -24,7 +24,14 @@ internal sealed record StreamDeckStatusSnapshot(
     StreamDeckVisualState State,
     string Title,
     string Tooltip,
-    string Image);
+    string Image)
+{
+    /// <summary>Gets the enabled process-triggered profiles selectable by launch actions.</summary>
+    public IReadOnlyList<StreamDeckLaunchProfile> LaunchProfiles { get; init; } = [];
+}
+
+/// <summary>Identifies one process-triggered profile exposed to the Stream Deck plugin.</summary>
+internal sealed record StreamDeckLaunchProfile(string Id, string Name);
 
 /// <summary>Pre-renders the tray icon variants once at Stream Deck's high-DPI key size.</summary>
 internal sealed class StreamDeckStatusImages

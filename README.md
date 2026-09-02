@@ -25,7 +25,7 @@ For example, starting OBS can activate streaming helpers, audio settings, lighti
 
 AppSupervisor runs in the notification area rather than opening a permanent main window. Its configuration is stored beside the executable in `config.json`.
 
-The release also includes the optional **com.tomaae.appsupervisor.streamDeckPlugin** installer for the [Stream Deck status button](#stream-deck-status-button). It is not required to run AppSupervisor or monitor Bluetooth devices.
+The release also includes the optional **com.tomaae.appsupervisor.streamDeckPlugin** installer for the [Stream Deck companion plugin](#stream-deck-companion-plugin). It is not required to run AppSupervisor or monitor Bluetooth devices.
 
 ## How profiles work
 
@@ -104,7 +104,7 @@ The tray icon stays compact while showing the important state. The blue clock me
 - [Configuration editor](#configuration-editor)
 - [Diagnostic logging](#diagnostic-logging)
 - [Supervisor API](#supervisor-api)
-- [Stream Deck status button](#stream-deck-status-button)
+- [Stream Deck companion plugin](#stream-deck-companion-plugin)
 - [Installation and building](#running-a-packaged-build)
 
 ## Functionality summary
@@ -251,7 +251,7 @@ In Stream Deck 7.4 or later, enable **MCP Deck** under Stream Deck Preferences a
 npm install -g @elgato/mcp-server
 ```
 
-AppSupervisor starts one shared local stdio bridge only when discovery or execution is requested, serializes calls through it, and performs no polling. The separate AppSupervisor Stream Deck plugin described below remains responsible only for the tray-style Status key.
+AppSupervisor starts one shared local stdio bridge only when discovery or execution is requested, serializes calls through it, and performs no polling. The separate AppSupervisor Stream Deck companion plugin described below provides tray-style status and monitored-app launch keys without using MCP.
 
 ### Windows audio interfaces
 
@@ -489,30 +489,41 @@ curl.exe -sS -o NUL -w '%{http_code}\n' http://127.0.0.1:17834/not-a-profile
 curl.exe -sS -o NUL -w '%{http_code}\n' -X POST http://127.0.0.1:17834/
 ```
 
-### Stream Deck status button
+### Stream Deck companion plugin
 
-The companion Stream Deck plugin provides one **Status** action that behaves like an accessible
-copy of the tray icon. Its image and short title follow the same waiting, supervising, starting,
-stopping, paused, and error states as the Windows notification-area icon. Pressing the key opens
-the same configuration editor as double-clicking the tray icon. Multiple Status keys share one
-connection and always display the same current state.
+The companion Stream Deck plugin provides two actions:
+
+- **Status** behaves like an accessible copy of the tray icon. Its image and short title follow the
+  same waiting, supervising, starting, stopping, paused, and error states as the Windows
+  notification-area icon. Pressing the key opens the configuration editor.
+- **Launch monitored app** launches the monitored executable for the enabled process-triggered
+  profile selected in the action's property inspector. AppSupervisor skips the launch when that
+  process is already running. Disabled and Bluetooth-triggered profiles are not offered.
+
+Multiple companion keys share one connection. A launch key sends only its selected profile ID;
+AppSupervisor validates that ID against the active configuration and launches its configured
+monitored process. Browsing or picking a monitored process now retains its full executable path for
+reliable launching. Existing filename-only configurations remain compatible, although Windows must
+be able to resolve the filename for the launch to succeed.
 
 The connection is automatic and does not require enabling the Supervisor API. The unelevated plugin
 hosts a current-user Windows named pipe and elevated AppSupervisor connects to it, pushing only
-deduplicated state changes; neither side polls for status. When AppSupervisor is unavailable, the
-key shows **Offline**. The pipe connection is the sole online/offline signal, so elevation-launcher
-events cannot overwrite a live status. AppSupervisor waits for the pipe without consuming CPU and
-reconnects after either application restarts.
+deduplicated state and profile-catalog changes; neither side polls for status. When AppSupervisor is
+unavailable, its keys show **Offline**. The pipe connection is the sole online/offline signal, so
+elevation-launcher events cannot overwrite a live status. AppSupervisor waits for the pipe without
+consuming CPU and reconnects after either application restarts.
 
 To install the release plugin (Windows, Stream Deck 6.6 or later):
 
 1. Download **com.tomaae.appsupervisor.streamDeckPlugin** from the [latest release](https://github.com/tomaae/AppSupervisor/releases/latest).
 2. Double-click the downloaded file and accept the Stream Deck installation prompt.
-3. In the Stream Deck application, expand **AppSupervisor** and drag **Status** onto a key.
-4. Start the matching AppSupervisor build. The key should adopt the tray status; press it to open
-   configuration.
+3. In the Stream Deck application, expand **AppSupervisor** and drag **Status** or **Launch monitored
+   app** onto a key.
+4. For a launch key, select an enabled process-triggered profile in its property inspector.
+5. Start the matching AppSupervisor build. Status keys adopt the tray status; launch keys show the
+   selected profile name.
 
-The Status plugin does not require MCP Deck or the Elgato MCP Server. Those are used only by the separate [Stream Deck actions](#stream-deck-actions) integration.
+The companion plugin does not require MCP Deck or the Elgato MCP Server. Those are used only by the separate [Stream Deck actions](#stream-deck-actions) integration.
 
 Building the installer from source requires Node.js 24 or later. Run
 `.\StreamDeckPlugin\Build.ps1`; it installs the locked dependencies, runs plugin tests, bundles and
@@ -544,7 +555,7 @@ LICENSE
 THIRD-PARTY-NOTICES.txt
 ```
 
-To upgrade, exit AppSupervisor from its tray menu, back up `config.json` and `config.json.old`, then extract the new ZIP into the existing installation folder. The release contains no personal configuration or credentials. Keep your configuration files and all packaged files together; start AppSupervisor again after extraction. Install the companion Stream Deck file separately if you use the Status key.
+To upgrade, exit AppSupervisor from its tray menu, back up `config.json` and `config.json.old`, then extract the new ZIP into the existing installation folder. The release contains no personal configuration or credentials. Keep your configuration files and all packaged files together; start AppSupervisor again after extraction. Install the companion Stream Deck file separately if you use its Status or monitored-app launch keys.
 
 ## Building from source
 

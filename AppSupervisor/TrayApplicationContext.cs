@@ -133,6 +133,7 @@ public partial class TrayApplicationContext : ApplicationContext
             _streamDeckStatusImages[StreamDeckVisualState.Idle]
         ));
         _streamDeckStatusClient.ConfigurationRequested += StreamDeckConfigurationRequested;
+        _streamDeckStatusClient.ProfileLaunchRequested += StreamDeckProfileLaunchRequested;
 
         string executablePath = Environment.ProcessPath
             ?? throw new InvalidOperationException("The AppSupervisor executable path could not be determined.");
@@ -1182,6 +1183,11 @@ public partial class TrayApplicationContext : ApplicationContext
             _profiles.Any(profile => profile.ResourceDeactivationPending);
         bool shutdownPending = waitingForCloseTimeout || resourceDeactivationPending;
         bool supervisionActive = _profiles.Any(profile => profile.TriggerActive);
+        StreamDeckLaunchProfile[] streamDeckLaunchProfiles = _configuration.Profiles
+            .Where(profile => profile.Enabled &&
+                profile.TriggerType == ProfileTriggerType.Process)
+            .Select(profile => new StreamDeckLaunchProfile(profile.ProfileId, profile.Name))
+            .ToArray();
         string shutdownText = resourceDeactivationPending
             ? "closing helpers"
             : "waiting to close helpers";
@@ -1310,7 +1316,8 @@ public partial class TrayApplicationContext : ApplicationContext
             icon,
             text,
             streamDeckState,
-            streamDeckTitle
+            streamDeckTitle,
+            streamDeckLaunchProfiles
         );
 
         lock (_trayStateLock)
@@ -1398,7 +1405,10 @@ public partial class TrayApplicationContext : ApplicationContext
             state.StreamDeckTitle,
             state.Text,
             _streamDeckStatusImages[state.StreamDeckState]
-        ));
+        )
+        {
+            LaunchProfiles = state.StreamDeckLaunchProfiles
+        });
 
         if (transition)
             SupervisorLog.WriteTrace($"Tray transition applied: '{state.Text}'.");
@@ -1411,7 +1421,8 @@ public partial class TrayApplicationContext : ApplicationContext
         Icon Icon,
         string Text,
         StreamDeckVisualState StreamDeckState,
-        string StreamDeckTitle)
+        string StreamDeckTitle,
+        IReadOnlyList<StreamDeckLaunchProfile> StreamDeckLaunchProfiles)
     {
         /// <summary>Compares stable tray values without relying on native icon-handle equality.</summary>
         public bool Matches(TrayStateSnapshot other)
@@ -1421,7 +1432,8 @@ public partial class TrayApplicationContext : ApplicationContext
                 ReferenceEquals(Icon, other.Icon) &&
                 string.Equals(Text, other.Text, StringComparison.Ordinal) &&
                 StreamDeckState == other.StreamDeckState &&
-                string.Equals(StreamDeckTitle, other.StreamDeckTitle, StringComparison.Ordinal);
+                string.Equals(StreamDeckTitle, other.StreamDeckTitle, StringComparison.Ordinal) &&
+                StreamDeckLaunchProfiles.SequenceEqual(other.StreamDeckLaunchProfiles);
         }
     }
 

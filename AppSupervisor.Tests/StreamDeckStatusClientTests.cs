@@ -10,7 +10,7 @@ namespace AppSupervisor.Tests;
 public sealed class StreamDeckStatusClientTests
 {
     [Fact]
-    public async Task ConnectedServer_ReceivesLatestStatusAndCanRequestConfiguration()
+    public async Task ConnectedServer_ReceivesLatestStatusAndCanDispatchCommands()
     {
         string pipeName = $"AppSupervisor.StreamDeck.Tests.{Guid.NewGuid():N}";
         await using var server = new NamedPipeServerStream(
@@ -26,7 +26,15 @@ public sealed class StreamDeckStatusClientTests
             TaskCreationOptions.RunContinuationsAsynchronously
         );
         client.ConfigurationRequested += () => configurationRequested.TrySetResult();
-        var latest = CreateSnapshot(StreamDeckVisualState.Supervising, "Supervising");
+        var profileLaunchRequested = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        client.ProfileLaunchRequested += profileId =>
+            profileLaunchRequested.TrySetResult(profileId);
+        var latest = CreateSnapshot(StreamDeckVisualState.Supervising, "Supervising") with
+        {
+            LaunchProfiles = [new StreamDeckLaunchProfile("profile/one", "VR profile")]
+        };
         client.Publish(latest);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -48,6 +56,11 @@ public sealed class StreamDeckStatusClientTests
         Assert.Equal(1, first.RootElement.GetProperty("version").GetInt32());
         Assert.Equal("supervising", first.RootElement.GetProperty("state").GetString());
         Assert.Equal("Supervising", first.RootElement.GetProperty("title").GetString());
+        JsonElement profile = Assert.Single(
+            first.RootElement.GetProperty("profiles").EnumerateArray()
+        );
+        Assert.Equal("profile/one", profile.GetProperty("id").GetString());
+        Assert.Equal("VR profile", profile.GetProperty("name").GetString());
 
         var error = CreateSnapshot(StreamDeckVisualState.Error, "Error");
         client.Publish(error);
@@ -59,6 +72,12 @@ public sealed class StreamDeckStatusClientTests
 
         await writer.WriteLineAsync(StreamDeckStatusClient.OpenConfigurationCommand);
         await configurationRequested.Task.WaitAsync(timeout.Token);
+
+        string encodedProfileId = Uri.EscapeDataString("profile/one");
+        await writer.WriteLineAsync(
+            $"{StreamDeckStatusClient.LaunchProfileCommandPrefix}{encodedProfileId}"
+        );
+        Assert.Equal("profile/one", await profileLaunchRequested.Task.WaitAsync(timeout.Token));
     }
 
     [Fact]

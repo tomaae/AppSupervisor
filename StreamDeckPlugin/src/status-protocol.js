@@ -3,6 +3,7 @@ import { createServer } from "node:net";
 export const PIPE_PATH = String.raw`\\.\pipe\AppSupervisor.StreamDeck.v1`;
 export const PROTOCOL_VERSION = 1;
 export const OPEN_CONFIGURATION_COMMAND = "openConfiguration\n";
+export const LAUNCH_PROFILE_COMMAND_PREFIX = "launchProfile:";
 export const MAXIMUM_STATUS_BYTES = 512 * 1024;
 
 const validStates = new Set([
@@ -27,6 +28,8 @@ export function parseStatusLine(line) {
     return undefined;
   }
 
+  const profiles = value?.profiles ?? [];
+
   if (
     value === null ||
     value.version !== PROTOCOL_VERSION ||
@@ -37,7 +40,17 @@ export function parseStatusLine(line) {
     value.tooltip.length > 256 ||
     typeof value.image !== "string" ||
     !value.image.startsWith("data:image/png;base64,") ||
-    value.image.length > MAXIMUM_STATUS_BYTES
+    value.image.length > MAXIMUM_STATUS_BYTES ||
+    !Array.isArray(profiles) ||
+    profiles.some((profile) =>
+      profile === null ||
+      typeof profile.id !== "string" ||
+      profile.id.length === 0 ||
+      profile.id.length > 128 ||
+      typeof profile.name !== "string" ||
+      profile.name.length === 0 ||
+      profile.name.length > 128
+    )
   ) {
     return undefined;
   }
@@ -47,6 +60,10 @@ export function parseStatusLine(line) {
     title: value.title,
     tooltip: value.tooltip,
     image: value.image,
+    profiles: profiles.map((profile) => Object.freeze({
+      id: profile.id,
+      name: profile.name,
+    })),
   });
 }
 
@@ -208,6 +225,22 @@ export class AppSupervisorPipeServer {
     }
 
     this.#socket.write(OPEN_CONFIGURATION_COMMAND);
+    return true;
+  }
+
+  launchProfile(profileId) {
+    if (
+      !this.connected ||
+      typeof profileId !== "string" ||
+      profileId.length === 0 ||
+      profileId.length > 128
+    ) {
+      return false;
+    }
+
+    this.#socket.write(
+      `${LAUNCH_PROFILE_COMMAND_PREFIX}${encodeURIComponent(profileId)}\n`,
+    );
     return true;
   }
 

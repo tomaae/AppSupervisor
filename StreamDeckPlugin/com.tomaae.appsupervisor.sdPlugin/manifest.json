@@ -18,13 +18,32 @@
       "Tooltip": "Shows AppSupervisor status and opens configuration when pressed.",
       "UUID": "com.tomaae.appsupervisor.status",
       "UserTitleEnabled": false
+    },
+    {
+      "Controllers": [
+        "Keypad"
+      ],
+      "Icon": "static/imgs/action-list/launch",
+      "Name": "Launch monitored app",
+      "PropertyInspectorPath": "static/property-inspector/launch.html",
+      "States": [
+        {
+          "Image": "static/imgs/keys/launch",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#FFFFFF",
+          "FontSize": 12
+        }
+      ],
+      "Tooltip": "Launches the monitored process for a selected enabled profile.",
+      "UUID": "com.tomaae.appsupervisor.launch-profile",
+      "UserTitleEnabled": false
     }
   ],
   "Author": "Tomaae",
   "Category": "AppSupervisor",
   "CategoryIcon": "static/imgs/category/appsupervisor",
   "CodePath": "bin/plugin.js",
-  "Description": "Mirrors the AppSupervisor tray status on a Stream Deck key and opens configuration when pressed.",
+  "Description": "Shows AppSupervisor status and launches monitored profile applications from Stream Deck keys.",
   "Icon": "static/imgs/plugin/appsupervisor",
   "Name": "AppSupervisor",
   "Nodejs": {
@@ -41,5 +60,5 @@
     "MinimumVersion": "6.6"
   },
   "UUID": "com.tomaae.appsupervisor",
-  "Version": "1.0.0.3"
+  "Version": "1.0.0.4"
 }

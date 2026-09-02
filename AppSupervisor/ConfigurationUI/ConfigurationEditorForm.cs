@@ -1111,7 +1111,11 @@ public sealed partial class ConfigurationEditorForm : Form
         using var picker = new RunningProcessPickerDialog();
 
         if (picker.ShowDialog(this) == DialogResult.OK)
-            _monitorProcess.Text = picker.SelectedProcessName ?? "";
+        {
+            _monitorProcess.Text = string.IsNullOrWhiteSpace(picker.SelectedExecutablePath)
+                ? picker.SelectedProcessName ?? ""
+                : picker.SelectedExecutablePath;
+        }
     }
 
     /// <summary>Validates the complete document and reports success without writing it.</summary>

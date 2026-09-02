@@ -15,7 +15,8 @@ internal sealed class StreamDeckStatusClient : IAsyncDisposable
     public const string PipeName = "AppSupervisor.StreamDeck.v1";
     public const int ProtocolVersion = 1;
     public const string OpenConfigurationCommand = "openConfiguration";
-    private const int MaximumCommandLength = 64;
+    public const string LaunchProfileCommandPrefix = "launchProfile:";
+    private const int MaximumCommandLength = 256;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -48,8 +49,11 @@ internal sealed class StreamDeckStatusClient : IAsyncDisposable
         _clientTask = Task.Run(() => RunClientAsync(_shutdown.Token));
     }
 
-    /// <summary>Raised when the user presses any visible AppSupervisor Stream Deck action.</summary>
+    /// <summary>Raised when the user presses a companion Stream Deck Status action.</summary>
     public event Action? ConfigurationRequested;
+
+    /// <summary>Raised when a launch action requests one configured process profile.</summary>
+    public event Action<string>? ProfileLaunchRequested;
 
     /// <summary>Stores the latest presentation and wakes a connected writer only when it changed.</summary>
     public void Publish(StreamDeckStatusSnapshot snapshot)
@@ -181,7 +185,8 @@ internal sealed class StreamDeckStatusClient : IAsyncDisposable
             snapshot.State,
             snapshot.Title,
             snapshot.Tooltip,
-            snapshot.Image
+            snapshot.Image,
+            profiles = snapshot.LaunchProfiles
         }, JsonOptions);
         await pipe.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
         await pipe.WriteAsync(NewLine, cancellationToken).ConfigureAwait(false);
@@ -226,17 +231,49 @@ internal sealed class StreamDeckStatusClient : IAsyncDisposable
 
     private void ProcessCommand(string command)
     {
-        if (!string.Equals(command, OpenConfigurationCommand, StringComparison.Ordinal))
+        if (string.Equals(command, OpenConfigurationCommand, StringComparison.Ordinal))
+        {
+            DispatchCommand(ConfigurationRequested, "configuration request");
+            return;
+        }
+
+        if (!command.StartsWith(LaunchProfileCommandPrefix, StringComparison.Ordinal))
+            return;
+
+        string encodedProfileId = command[LaunchProfileCommandPrefix.Length..];
+        if (encodedProfileId.Length == 0)
             return;
 
         try
         {
-            ConfigurationRequested?.Invoke();
+            string profileId = Uri.UnescapeDataString(encodedProfileId);
+            if (profileId.Length is 0 or > 128 ||
+                profileId.Any(character => char.IsControl(character)))
+            {
+                return;
+            }
+
+            ProfileLaunchRequested?.Invoke(profileId);
         }
         catch (Exception exception)
         {
             SupervisorLog.WriteError(
-                "The Stream Deck configuration request could not be dispatched.",
+                "The Stream Deck profile launch request could not be dispatched.",
+                exception
+            );
+        }
+    }
+
+    private static void DispatchCommand(Action? handler, string description)
+    {
+        try
+        {
+            handler?.Invoke();
+        }
+        catch (Exception exception)
+        {
+            SupervisorLog.WriteError(
+                $"The Stream Deck {description} could not be dispatched.",
                 exception
             );
         }

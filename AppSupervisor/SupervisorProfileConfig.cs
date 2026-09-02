@@ -20,7 +20,7 @@ public class SupervisorProfileConfig
     /// <summary>Gets or sets the kind of condition that activates this profile.</summary>
     public ProfileTriggerType TriggerType { get; set; } = ProfileTriggerType.Process;
 
-    /// <summary>Gets or sets the executable filename whose running state activates the profile.</summary>
+    /// <summary>Gets or sets the executable path or filename whose running state activates the profile.</summary>
     public string MonitorProcess { get; set; } = "";
 
     /// <summary>Gets or sets the globally registered Bluetooth devices that activate this profile in ANY mode.</summary>

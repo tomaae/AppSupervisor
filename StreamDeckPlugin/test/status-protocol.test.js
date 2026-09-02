@@ -4,6 +4,7 @@ import { createConnection } from "node:net";
 import { describe, it } from "node:test";
 import {
   AppSupervisorPipeServer,
+  LAUNCH_PROFILE_COMMAND_PREFIX,
   MAXIMUM_STATUS_BYTES,
   OPEN_CONFIGURATION_COMMAND,
   StatusLineDecoder,
@@ -23,10 +24,15 @@ function validMessage(overrides = {}) {
 
 describe("Stream Deck status protocol", () => {
   it("accepts a valid version-one status", () => {
-    const status = parseStatusLine(validMessage());
+    const status = parseStatusLine(validMessage({
+      profiles: [{ id: "profile/one", name: "VR profile" }],
+    }));
 
     assert.equal(status.state, "supervising");
     assert.equal(status.title, "Supervising");
+    assert.deepEqual(status.profiles, [
+      { id: "profile/one", name: "VR profile" },
+    ]);
   });
 
   it("rejects malformed, unsupported, and non-PNG messages", () => {
@@ -35,6 +41,10 @@ describe("Stream Deck status protocol", () => {
     assert.equal(parseStatusLine(validMessage({ state: "unknown" })), undefined);
     assert.equal(
       parseStatusLine(validMessage({ image: "https://example.test/status.png" })),
+      undefined,
+    );
+    assert.equal(
+      parseStatusLine(validMessage({ profiles: [{ id: "", name: "Invalid" }] })),
       undefined,
     );
   });
@@ -91,6 +101,14 @@ describe("Stream Deck status protocol", () => {
         assert.equal(server.openConfiguration(), true);
         const [data] = await command;
         assert.equal(data.toString("utf8"), OPEN_CONFIGURATION_COMMAND);
+
+        const launchCommand = once(client, "data");
+        assert.equal(server.launchProfile("profile/one"), true);
+        const [launchData] = await launchCommand;
+        assert.equal(
+          launchData.toString("utf8"),
+          `${LAUNCH_PROFILE_COMMAND_PREFIX}profile%2Fone\n`,
+        );
       } finally {
         client.destroy();
       }

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Launch monitored app</title>
+  <style>
+    body { margin: 0; padding: 12px; color: #d8d8d8; background: #2d2d2d; font: 12px Arial, sans-serif; }
+    label { display: block; margin-bottom: 6px; }
+    select { box-sizing: border-box; width: 100%; padding: 5px; color: #eee; background: #3d3d3d; border: 1px solid #666; border-radius: 3px; }
+    p { color: #aaa; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <label for="profile">Profile</label>
+  <select id="profile" disabled>
+    <option value="">AppSupervisor is offline</option>
+  </select>
+  <p>Only enabled process-triggered profiles are listed. Browse or pick the monitored process in AppSupervisor to retain a reliable executable path.</p>
+  <script>
+    let websocket;
+    let context;
+    let action;
+    let settings = {};
+    const profileSelect = document.getElementById("profile");
+
+    function send(message) {
+      if (websocket?.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify(message));
+      }
+    }
+
+    function renderProfiles(payload) {
+      const selectedId = settings.profileId ?? "";
+      profileSelect.replaceChildren();
+
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = payload.connected ? "Select a profile" : "AppSupervisor is offline";
+      profileSelect.appendChild(placeholder);
+
+      for (const profile of payload.profiles ?? []) {
+        const option = document.createElement("option");
+        option.value = profile.id;
+        option.textContent = profile.name;
+        profileSelect.appendChild(option);
+      }
+
+      profileSelect.value = [...profileSelect.options].some((option) => option.value === selectedId)
+        ? selectedId
+        : "";
+      profileSelect.disabled = !payload.connected;
+    }
+
+    profileSelect.addEventListener("change", () => {
+      settings = { ...settings, profileId: profileSelect.value };
+      send({ event: "setSettings", context, payload: settings });
+    });
+
+    window.connectElgatoStreamDeckSocket = function (
+      port,
+      propertyInspectorUUID,
+      registerEvent,
+      info,
+      actionInfo
+    ) {
+      const parsedAction = JSON.parse(actionInfo);
+      context = parsedAction.context;
+      action = parsedAction.action;
+      settings = parsedAction.payload?.settings ?? {};
+      websocket = new WebSocket(`ws://127.0.0.1:${port}`);
+      websocket.onopen = () => {
+        send({ event: registerEvent, uuid: propertyInspectorUUID });
+        send({ event: "sendToPlugin", action, context, payload: { type: "requestProfiles" } });
+      };
+      websocket.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.event === "sendToPropertyInspector" && message.payload?.type === "profiles") {
+          renderProfiles(message.payload);
+        }
+      };
+    };
+  </script>
+</body>
+</html>
