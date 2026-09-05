@@ -21,11 +21,41 @@ internal sealed class SupervisorApiServer : IDisposable
     };
 
     private readonly object _lifecycleLock = new();
+    private readonly int _port;
+    private readonly TimeSpan _requestTimeout;
+    private readonly int _maximumConcurrentClients;
+    private int _activeClientCount;
     private SupervisorApiSnapshot _snapshot = SupervisorApiSnapshot.Empty;
     private TcpListener? _listener;
     private CancellationTokenSource? _cancellation;
     private Task? _acceptLoop;
     private bool _disposed;
+
+    internal SupervisorApiServer(
+        int port = Port,
+        TimeSpan? requestTimeout = null,
+        int maximumConcurrentClients = 16)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(port);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(port, 65535);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumConcurrentClients, 1);
+        _port = port;
+        _requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(5);
+        if (_requestTimeout <= TimeSpan.Zero || _requestTimeout.TotalMilliseconds > uint.MaxValue - 1)
+            throw new ArgumentOutOfRangeException(nameof(requestTimeout));
+        _maximumConcurrentClients = maximumConcurrentClients;
+    }
+
+    internal int ActiveClientCount => Volatile.Read(ref _activeClientCount);
+
+    internal int ListeningPort
+    {
+        get
+        {
+            lock (_lifecycleLock)
+                return (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? 0;
+        }
+    }
 
     /// <summary>Atomically replaces the complete document available to API request threads.</summary>
     public void Publish(SupervisorApiSnapshot snapshot) =>
@@ -204,36 +234,54 @@ internal sealed class SupervisorApiServer : IDisposable
         if (_listener is not null)
             return;
 
-        var listener = new TcpListener(IPAddress.Loopback, Port);
+        var listener = new TcpListener(IPAddress.Loopback, _port);
         listener.Start(backlog: 16);
         var cancellation = new CancellationTokenSource();
         _listener = listener;
         _cancellation = cancellation;
-        _acceptLoop = Task.Run(() => AcceptLoopAsync(listener, cancellation.Token));
-        SupervisorLog.WriteInformation($"Supervisor API listening at {BaseAddress}");
+        CancellationToken token = cancellation.Token;
+        _acceptLoop = Task.Run(() => AcceptLoopAsync(listener, token));
+        SupervisorLog.WriteInformation($"Supervisor API listening at http://{listener.LocalEndpoint}/");
     }
 
     private void StopLocked()
     {
         TcpListener? listener = _listener;
         CancellationTokenSource? cancellation = _cancellation;
+        Task? acceptLoop = _acceptLoop;
         _listener = null;
         _cancellation = null;
         _acceptLoop = null;
         cancellation?.Cancel();
         listener?.Stop();
-        cancellation?.Dispose();
+        if (cancellation is not null)
+        {
+            if (acceptLoop is null)
+                cancellation.Dispose();
+            else
+                _ = acceptLoop.ContinueWith(_ => cancellation.Dispose(),
+                    CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+        }
     }
 
     private async Task AcceptLoopAsync(TcpListener listener, CancellationToken cancellationToken)
     {
+        var clients = new HashSet<Task>();
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                clients.RemoveWhere(task => task.IsCompleted);
+                if (clients.Count >= _maximumConcurrentClients)
+                {
+                    await Task.WhenAny(clients).ConfigureAwait(false);
+                    continue;
+                }
+
                 TcpClient client = await listener.AcceptTcpClientAsync(cancellationToken)
                     .ConfigureAwait(false);
-                _ = HandleClientSafelyAsync(client, cancellationToken);
+                clients.Add(HandleClientSafelyAsync(client, cancellationToken));
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -246,12 +294,20 @@ internal sealed class SupervisorApiServer : IDisposable
         {
             SupervisorLog.WriteError("Supervisor API listener stopped unexpectedly.", exception);
         }
+        finally
+        {
+            await Task.WhenAll(clients).ConfigureAwait(false);
+        }
     }
 
     private async Task HandleClientSafelyAsync(TcpClient client, CancellationToken cancellationToken)
     {
         using (client)
+        using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
+            deadline.CancelAfter(_requestTimeout);
+            CancellationToken requestToken = deadline.Token;
+            Interlocked.Increment(ref _activeClientCount);
             try
             {
                 client.NoDelay = true;
@@ -261,7 +317,7 @@ internal sealed class SupervisorApiServer : IDisposable
 
                 while (length < buffer.Length)
                 {
-                    int read = await stream.ReadAsync(buffer.AsMemory(length), cancellationToken)
+                    int read = await stream.ReadAsync(buffer.AsMemory(length), requestToken)
                         .ConfigureAwait(false);
                     if (read == 0)
                         return;
@@ -276,9 +332,9 @@ internal sealed class SupervisorApiServer : IDisposable
                 SupervisorApiResponse response = parts.Length == 3
                     ? Route(parts[0], ExtractPath(parts[1]))
                     : Error(400, "invalidRequest", "A valid HTTP request line is required.");
-                await WriteResponseAsync(stream, response, cancellationToken).ConfigureAwait(false);
+                await WriteResponseAsync(stream, response, requestToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (requestToken.IsCancellationRequested)
             {
             }
             catch (IOException)
@@ -288,6 +344,10 @@ internal sealed class SupervisorApiServer : IDisposable
             catch (Exception exception)
             {
                 SupervisorLog.WriteError("Supervisor API request failed.", exception);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeClientCount);
             }
         }
     }

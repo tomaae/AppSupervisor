@@ -347,6 +347,8 @@ http://127.0.0.1:17834/
 
 The listener accepts connections only from the same computer. It has no password, allows cross-origin reads, disables response caching, and accepts only `GET`; unsupported methods return HTTP `405`. It never performs work on behalf of a request. Responses serialize the last immutable snapshot published by the existing one-second supervision timer, so requesting API data does not inspect processes, services, listeners, windows, health probes, or integrations.
 
+The API handles at most 16 connections concurrently. Each accepted connection has a five-second deadline for receiving the request and sending its response; stalled connections are closed automatically.
+
 #### Internal IDs
 
 Routes use stable internal IDs rather than visible names:
