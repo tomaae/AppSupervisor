@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AppSupervisor.Core;
 using AppSupervisor.SupervisorApi;
 
 namespace AppSupervisor.Tests;
@@ -6,6 +7,46 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies the read-only cached Supervisor API route contract.</summary>
 public sealed class SupervisorApiTests
 {
+    [Fact]
+    public void SnapshotFactory_ApiDisabled_SkipsTraversalAndRefreshesWhenEnabled()
+    {
+        var configuration = new AppSupervisorConfig
+        {
+            Profiles = [new SupervisorProfileConfig { Name = "Before", ProfileId = "profile" }]
+        };
+        var runtimeProfiles = new CountingRuntimeProfiles();
+        for (int tick = 0; tick < 100; tick++)
+        {
+            Assert.Same(SupervisorApiSnapshot.Empty,
+                SupervisorApiSnapshotFactory.Create(configuration, runtimeProfiles, paused: false));
+        }
+        Assert.Equal(0, runtimeProfiles.Enumerations);
+
+        configuration.Profiles[0].Name = "After";
+        configuration.Integrations.SupervisorApi.Enabled = true;
+        var refreshed = SupervisorApiSnapshotFactory.Create(configuration, runtimeProfiles, paused: false);
+        Assert.Equal("After", Assert.Single(refreshed.Profiles).Name);
+        Assert.Equal(1, runtimeProfiles.Enumerations);
+
+        configuration.Integrations.SupervisorApi.Enabled = false;
+        Assert.Same(SupervisorApiSnapshot.Empty,
+            SupervisorApiSnapshotFactory.Create(configuration, runtimeProfiles, paused: false));
+        Assert.Equal(1, runtimeProfiles.Enumerations);
+    }
+
+    private sealed class CountingRuntimeProfiles : IReadOnlyList<SupervisorProfile>
+    {
+        public int Enumerations { get; private set; }
+        public int Count => 0;
+        public SupervisorProfile this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
+        public IEnumerator<SupervisorProfile> GetEnumerator()
+        {
+            Enumerations++;
+            return Enumerable.Empty<SupervisorProfile>().GetEnumerator();
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     [Fact]
     public void Route_RequestedHierarchy_ReturnsCachedJsonDocuments()
     {

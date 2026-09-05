@@ -73,6 +73,11 @@ internal static class SupervisorApiSnapshotFactory
         IReadOnlyList<SupervisorProfile> runtimeProfiles,
         bool paused)
     {
+        // Disabled integrations must not walk or clone the runtime/configuration graph
+        // on every supervision tick. Enabling builds fresh state before listening.
+        if (!configuration.Integrations.SupervisorApi.Enabled)
+            return SupervisorApiSnapshot.Empty;
+
         var runtimeByName = runtimeProfiles.ToDictionary(
             profile => profile.Name,
             StringComparer.OrdinalIgnoreCase
