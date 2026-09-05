@@ -12,6 +12,7 @@ public sealed class SupervisorProfile : IDisposable
     private readonly IReadOnlyDictionary<string, ManagedResourceStartup> _startupResourcesById;
     private readonly IReadOnlyList<IManagedResource> _resources;
     private readonly List<IManagedResource> _activatedResources = [];
+    private readonly List<IManagedResource> _ownedResources = [];
     private readonly TimeSpan _closeTimeout;
 
     private DateTime? _triggerMissingSince;
@@ -338,7 +339,7 @@ public sealed class SupervisorProfile : IDisposable
 
         if (_deactivationStarted)
         {
-            foreach (IManagedResource resource in _activatedResources)
+            foreach (IManagedResource resource in _ownedResources)
             {
                 if (resource is IManagedResourceLifecycleWork)
                     continue;
@@ -354,6 +355,7 @@ public sealed class SupervisorProfile : IDisposable
             {
                 _deactivationStarted = false;
                 _activatedResources.Clear();
+                _ownedResources.Clear();
             }
 
             return false;
@@ -369,7 +371,7 @@ public sealed class SupervisorProfile : IDisposable
             );
             DeactivateResources();
             _triggerMissingSince = null;
-            _deactivationStarted = _activatedResources.Count > 0;
+            _deactivationStarted = _ownedResources.Count > 0;
             SupervisorLog.WriteTrace(
                 $"Profile '{Name}': resource deactivation requests completed; " +
                 $"pending={_deactivationStarted}."
@@ -411,6 +413,7 @@ public sealed class SupervisorProfile : IDisposable
         {
             _deactivationStarted = false;
             _activatedResources.Clear();
+            _ownedResources.Clear();
         }
     }
 
@@ -448,6 +451,7 @@ public sealed class SupervisorProfile : IDisposable
 
         CancelStartupSequence();
         _activatedResources.Clear();
+        _ownedResources.Clear();
         _disposed = true;
 
         foreach (IManagedResource resource in _resources)
@@ -501,6 +505,11 @@ public sealed class SupervisorProfile : IDisposable
 
             if (!_activatedResources.Contains(startup.Resource))
                 _activatedResources.Add(startup.Resource);
+
+            // A restarted sequence must retain shutdown ownership of resources reached
+            // by an earlier activation, even before the new sequence reaches them again.
+            if (!_ownedResources.Contains(startup.Resource))
+                _ownedResources.Add(startup.Resource);
 
             _nextStartupIndex++;
             _nextStartupUtc = nowUtc +
@@ -573,10 +582,10 @@ public sealed class SupervisorProfile : IDisposable
         _nextStartupUtc = DateTime.MinValue;
     }
 
-    /// <summary>Begins gracefully closing resources reached by the current activation sequence.</summary>
+    /// <summary>Closes every resource owned since the last completed shutdown.</summary>
     private void DeactivateResources()
     {
-        foreach (IManagedResource resource in _activatedResources)
+        foreach (IManagedResource resource in _ownedResources)
             RunResourceOperation(resource, resource.Deactivate, "deactivation");
     }
 
@@ -584,7 +593,7 @@ public sealed class SupervisorProfile : IDisposable
     /// <returns><see langword="true"/> while at least one resource still needs deactivation supervision.</returns>
     private bool HasPendingResourceDeactivation()
     {
-        return _activatedResources.Any(resource =>
+        return _ownedResources.Any(resource =>
             resource is IManagedResourceDeactivationState state &&
             state.DeactivationPending
         );

@@ -6,6 +6,43 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies ordered, nonblocking helper application and service startup.</summary>
 public sealed class StartupSequencingTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Update_ReactivationInterruptedDuringWait_RetainsPreviousShutdownOwnership(
+        bool shutdownAlreadyStarted)
+    {
+        var trigger = new FakeTrigger { Active = true };
+        var first = new FakeResource();
+        var second = new FakeResource();
+        var neverReached = new FakeResource();
+        using var profile = CreateProfile(
+            trigger,
+            new ManagedResourceStartup(first, "first", 60_000, ""),
+            new ManagedResourceStartup(second, "second", 60_000, ""),
+            new ManagedResourceStartup(neverReached, "third", 0, "")
+        );
+
+        profile.Update();
+        profile.AdvanceStartup(DateTime.UtcNow.AddSeconds(61));
+        trigger.Active = false;
+        profile.Update();
+        if (shutdownAlreadyStarted)
+            profile.Update();
+        trigger.Active = true;
+        profile.Update();
+
+        Assert.False(profile.IsResourceActivated(second));
+        trigger.Active = false;
+        profile.Update();
+        profile.Update();
+
+        Assert.Equal(shutdownAlreadyStarted ? 2 : 1, second.DeactivateCalls);
+        Assert.Equal(1, second.ActivateCalls);
+        Assert.Equal(0, neverReached.DeactivateCalls);
+        Assert.Equal(0, neverReached.ActivateCalls);
+    }
+
     /// <summary>Confirms the lifecycle pass settles an accepted asynchronous start before startup completes.</summary>
     [Fact]
     public void AdvanceLifecycle_PendingStart_DrainsBeforeProfileBecomesIdle()
