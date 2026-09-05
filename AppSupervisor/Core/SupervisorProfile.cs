@@ -139,6 +139,9 @@ public sealed class SupervisorProfile : IDisposable
     internal bool ResourceDeactivationPending =>
         !TriggerActive && _deactivationStarted;
 
+    /// <summary>Blocks detached helper tests until normal profile shutdown has drained.</summary>
+    internal bool IsBusyForHelperTest => ResourceDeactivationPending || KeepsResourcesActive();
+
     /// <summary>Gets whether a resource transition needs an immediate lifecycle pass.</summary>
     internal bool ImmediateLifecycleWorkPending =>
         _resources.Any(resource =>

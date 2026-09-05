@@ -1,4 +1,5 @@
 using AppSupervisor.Core;
+using AppSupervisor.ConfigurationUI;
 using AppSupervisor.Notifications;
 using AppSupervisor.Resources;
 using AppSupervisor.ServiceControl;
@@ -10,6 +11,40 @@ namespace AppSupervisor.Tests;
 /// </summary>
 public sealed class SupervisorProfileTests
 {
+    [Fact]
+    public async Task HelperTest_ShutdownPending_RemainsBlockedUntilResourcesFinish()
+    {
+        var trigger = new FakeTrigger();
+        using var profile = new SupervisorProfile(
+            "Test", "root.exe", trigger, [new FakeResource([])], TimeSpan.Zero);
+        await using var controller = new ManagedApplicationTestController(
+            action => { action(); return Task.CompletedTask; },
+            _ => profile.IsBusyForHelperTest,
+            _ => false,
+            (_, _) => throw new InvalidOperationException("Unexpected test launch.")
+        );
+        profile.Update();
+        Assert.True(await controller.CanStartAsync("profile"));
+        trigger.Active = true;
+        profile.Update();
+        Assert.False(await controller.CanStartAsync("profile"));
+        trigger.Active = false;
+        profile.Update();
+        Assert.False(await controller.CanStartAsync("profile"));
+        profile.Update();
+
+        Assert.True(profile.ResourceDeactivationPending);
+        Assert.False(profile.KeepsResourcesActive());
+        Assert.False(await controller.CanStartAsync("profile"));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            controller.StartAsync("profile", new ManagedApplicationConfig()));
+        Assert.Contains("still completing its normal shutdown", error.Message);
+
+        profile.Update();
+        Assert.False(profile.ResourceDeactivationPending);
+        Assert.True(await controller.CanStartAsync("profile"));
+    }
+
     [Fact]
     public void Update_InactiveProfile_ObservesHelpersOnlyWhileConfigurationIsOpen()
     {

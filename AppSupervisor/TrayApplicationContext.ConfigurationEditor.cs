@@ -106,7 +106,7 @@ public partial class TrayApplicationContext
                 profileId,
                 StringComparison.Ordinal))
             {
-                return runtimeProfile.KeepsResourcesActive();
+                return runtimeProfile.IsBusyForHelperTest;
             }
         }
 
