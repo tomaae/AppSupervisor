@@ -7,6 +7,58 @@ namespace AppSupervisor.Tests;
 /// <summary>Verifies one-shot and reversible MQTT resource lifecycle behavior.</summary>
 public sealed class MqttResourceTests
 {
+    [Theory]
+    [InlineData(MqttDeactivationBehavior.PublishConfiguredPayload, 1)]
+    [InlineData(MqttDeactivationBehavior.RestoreRetainedState, 1)]
+    [InlineData(MqttDeactivationBehavior.PublishConfiguredPayload, 5)]
+    public void Reactivate_FailedInverse_DrainsRetriesBeforeNewActivation(
+        MqttDeactivationBehavior behavior, int failures)
+    {
+        var client = new FakeMqttClient { CapturedState = Encoding.UTF8.GetBytes("OFF") };
+        using var resource = CreateResource(client, behavior);
+        ActivateAndDrain(resource);
+        client.InverseFailuresRemaining = failures;
+        resource.Deactivate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        resource.Activate();
+
+        Assert.False(resource.IsStarted());
+        Assert.NotNull(resource.NextLifecycleDueUtc);
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        Assert.Equal(["ON", "OFF"], client.Attempts);
+
+        Drain(resource);
+        Assert.True(resource.IsStarted());
+        Assert.Equal("ON", client.Attempts.Last());
+        Assert.Equal(failures == 5 ? 5 : 2, client.Attempts.Count(value => value == "OFF"));
+        Assert.Equal(2, client.Attempts.Count(value => value == "ON"));
+        resource.AdvanceLifecycle(DateTime.UtcNow.AddHours(2));
+        Assert.Equal("ON", client.Attempts.Last());
+
+        resource.Deactivate();
+        Drain(resource);
+        Assert.Equal("OFF", Text(client.Messages.Last().Payload));
+    }
+
+    [Fact]
+    public void Reactivate_ActivationStillInFlight_PreservesInverseThenActivationOrder()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new FakeMqttClient { ReleasePublish = release.Task };
+        using var resource = CreateResource(client, MqttDeactivationBehavior.PublishConfiguredPayload);
+        resource.Activate();
+        resource.AdvanceLifecycle(DateTime.UtcNow);
+        resource.Deactivate();
+        resource.Activate();
+        Assert.False(resource.IsStarted());
+
+        release.SetResult();
+        Drain(resource);
+
+        Assert.Equal(["ON", "OFF", "ON"], client.Attempts);
+        Assert.True(resource.IsStarted());
+    }
+
     [Fact]
     public void OneShot_DeactivationDoesNotPublishAgain()
     {
@@ -159,6 +211,8 @@ public sealed class MqttResourceTests
     private sealed class FakeMqttClient : IMqttBrokerClient
     {
         public List<MqttPublishMessage> Messages { get; } = [];
+        public List<string> Attempts { get; } = [];
+        public int InverseFailuresRemaining { get; set; }
         public List<MqttStateCheck?> Verifications { get; } = [];
         public byte[]? CapturedState { get; set; }
         public bool FailBeforePublishAccepted { get; set; }
@@ -176,6 +230,13 @@ public sealed class MqttResourceTests
             Action? publishAccepted,
             CancellationToken cancellationToken)
         {
+            Attempts.Add(Text(message.Payload));
+            if (message.Topic == "device/reverse" && InverseFailuresRemaining > 0)
+            {
+                InverseFailuresRemaining--;
+                throw new InvalidOperationException("Simulated inverse failure.");
+            }
+
             if (capture is not null && CapturedState is not null)
                 stateCaptured?.Invoke([.. CapturedState]);
 

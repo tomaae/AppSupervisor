@@ -78,8 +78,7 @@ internal sealed class MqttResource :
         {
             lock (_stateLock)
             {
-                return _currentOperation is null && _operations.Count == 0 &&
-                    _retryOperation is not null
+                return _currentOperation is null && _retryOperation is not null
                         ? _nextAttemptUtc
                         : null;
             }
@@ -123,7 +122,8 @@ internal sealed class MqttResource :
     public bool IsStarted()
     {
         lock (_stateLock)
-            return !_disposed && _profileActive && _activationComplete;
+            return !_disposed && _profileActive && _activationComplete &&
+                _currentOperation is null && _operations.Count == 0 && _retryOperation is null;
     }
 
     public ManagedResourceUpdate Supervise() => ManagedResourceUpdate.None;
@@ -160,14 +160,19 @@ internal sealed class MqttResource :
 
             MqttOperation? operation = null;
 
-            if (_operations.Count > 0)
+            // A failed inverse belongs before any subsequent activation. Drain its
+            // bounded retry sequence before allowing later mutations to overtake it.
+            if (_retryOperation is not null)
             {
-                operation = _operations.Dequeue();
-            }
-            else if (_retryOperation is not null && nowUtc >= _nextAttemptUtc)
-            {
+                if (nowUtc < _nextAttemptUtc)
+                    return ManagedResourceUpdate.None;
+
                 operation = _retryOperation;
                 _retryOperation = null;
+            }
+            else if (_operations.Count > 0)
+            {
+                operation = _operations.Dequeue();
             }
 
             if (operation is null)
@@ -226,8 +231,10 @@ internal sealed class MqttResource :
 
     private void EnqueueNoLock(MqttOperation operation)
     {
-        if (_currentOperation == operation || _retryOperation == operation ||
-            _operations.Contains(operation))
+        MqttOperation? lastOperation = _operations.Count > 0
+            ? _operations.Last()
+            : _retryOperation ?? _currentOperation;
+        if (lastOperation == operation)
         {
             return;
         }
